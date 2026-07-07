@@ -1,0 +1,11 @@
+services:
+  ai-service:
+    build: .
+    env_file:
+      - .env          # holds OPENAI_API_KEY etc. — gitignored
+    environment:
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      MODEL_NAME: ${MODEL_NAME:-gpt-4o-mini}
+      USE_MOCK_LLM: ${USE_MOCK_LLM:-0}
+    ports:
+      - "8001:8001"
