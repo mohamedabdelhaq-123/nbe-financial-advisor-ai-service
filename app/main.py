@@ -16,6 +16,7 @@ _client = AsyncOpenAI(
 
 # ── request / response schemas ────────────────────────────────────────────────
 
+
 class ChatRequest(BaseModel):
     message: str
 
@@ -25,6 +26,7 @@ class ChatResponse(BaseModel):
 
 
 # ── routes ────────────────────────────────────────────────────────────────────
+
 
 @app.get("/health")
 async def health() -> dict:
