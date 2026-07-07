@@ -75,3 +75,5 @@ async def chat(body: ChatRequest) -> ChatResponse:
 
     reply = completion.choices[0].message.content or ""
     return ChatResponse(reply=reply)
+
+x=1;y=2  # test: bad format for ci gate
