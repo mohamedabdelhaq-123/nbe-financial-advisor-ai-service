@@ -11,14 +11,14 @@ and Alembic will detect only AI-service models (not Django's).
 
 SCOPE BOUNDARY: never alter Django's tables from this migration tree.
 """
+
 from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
 
-
 # revision identifiers, used by Alembic.
-revision: str = 'f4b0592bb954'
+revision: str = "f4b0592bb954"
 down_revision: Union[str, None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None

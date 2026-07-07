@@ -35,6 +35,6 @@ def test_alembic_upgrade_head_is_noop():
         capture_output=True,
         text=True,
     )
-    assert result.returncode == 0, (
-        f"alembic upgrade head failed:\nSTDOUT: {result.stdout}\nSTDERR: {result.stderr}"
-    )
+    assert (
+        result.returncode == 0
+    ), f"alembic upgrade head failed:\nSTDOUT: {result.stdout}\nSTDERR: {result.stderr}"
