@@ -10,6 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       USE_MOCK_LLM: "1"              # all steps run offline — no API key needed
+      AI_SERVICE_TOKEN: "ci-test-token-not-a-real-secret"
     steps:
       - uses: actions/checkout@v4
         with:
