@@ -27,5 +27,5 @@ if not settings.use_mock_llm and settings.openai_api_key == "__mock__":
 if not settings.ai_service_token:
     raise RuntimeError(
         "AI_SERVICE_TOKEN must be set. "
-        "Generate one with: python3 -c \"import secrets; print(secrets.token_urlsafe(48))\""
+        'Generate one with: python3 -c "import secrets; print(secrets.token_urlsafe(48))"'
     )
