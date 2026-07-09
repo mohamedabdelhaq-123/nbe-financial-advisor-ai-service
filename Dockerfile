@@ -1,14 +1,20 @@
-FROM python:3.12-slim AS builder
-WORKDIR /app
-ENV PIP_NO_CACHE_DIR=1
-COPY requirements.txt .
-RUN pip install --prefix=/install -r requirements.txt
-
+# syntax=docker/dockerfile:1
 FROM python:3.12-slim
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+
 WORKDIR /app
-ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
-COPY --from=builder /install /usr/local
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    PATH="/app/.venv/bin:$PATH"
+
+# Install runtime deps first (cached until the lockfile changes).
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-dev --no-install-project
+
 COPY . .
+
 EXPOSE 8001
 HEALTHCHECK --interval=10s --timeout=3s --retries=5 \
   CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')" || exit 1

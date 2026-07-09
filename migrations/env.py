@@ -2,49 +2,39 @@
 Alembic environment configuration for the NBE AI service.
 
 SCOPE BOUNDARY — IMPORTANT:
-    This service manages ONLY its own tables (prefixed `ai_`).
-    It must NEVER create, alter, or drop Django's tables.
-    Django tables are owned exclusively by the backend repo and
-    are modified only via `python manage.py migrate`.
+    This service migrates ONLY its own database. `target_metadata` is
+    `OwnBase.metadata` and nothing else. The backend-owned tables live behind
+    `app.backend_db.BackendBase`, which is deliberately NOT imported here, so
+    Alembic can never create, alter, or drop them.
 
-Connection is built from environment variables — no credentials are
-hardcoded here or in alembic.ini.
+Connection is built from environment variables (via the app settings) — no
+credentials are hardcoded here or in alembic.ini.
 """
 
-import os
+import asyncio
 from logging.config import fileConfig
 
 from alembic import context
-from sqlalchemy import engine_from_config, pool
+from sqlalchemy.engine import Connection
+from sqlalchemy.ext.asyncio import create_async_engine
 
-# ── bring in the AI-service model metadata ────────────────────────────────────
-# Import Base so Alembic autogenerate can detect model changes.
-# When the AI team adds a model, they import it here alongside Base.
-from app.database import Base  # noqa: F401 — metadata registration side-effect
+from app.core.config import settings
 
-# ── Alembic Config object ─────────────────────────────────────────────────────
+# Own-DB metadata only. Importing OwnBase registers the service's models.
+from app.core.db import OwnBase  # noqa: F401 — metadata registration side-effect
+
 config = context.config
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-target_metadata = Base.metadata
+target_metadata = OwnBase.metadata
 
 
-# ── build the DB URL from env vars — never from alembic.ini ──────────────────
-def _get_url() -> str:
-    host = os.environ.get("POSTGRES_HOST", "postgres")
-    port = os.environ.get("POSTGRES_PORT", "5432")
-    db = os.environ.get("POSTGRES_DB", "appdb")
-    user = os.environ.get("POSTGRES_USER", "appuser")
-    password = os.environ.get("POSTGRES_PASSWORD", "apppass")
-    return f"postgresql+psycopg2://{user}:{password}@{host}:{port}/{db}"
-
-
-# ── offline mode (no DB connection; generates SQL instead) ───────────────────
 def run_migrations_offline() -> None:
+    """Emit SQL without a live DB connection."""
     context.configure(
-        url=_get_url(),
+        url=settings.own_database_url,
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
@@ -53,24 +43,21 @@ def run_migrations_offline() -> None:
         context.run_migrations()
 
 
-# ── online mode (real DB connection; used by `alembic upgrade head`) ─────────
-def run_migrations_online() -> None:
-    cfg = config.get_section(config.config_ini_section, {})
-    cfg["sqlalchemy.url"] = _get_url()
+def _do_run_migrations(connection: Connection) -> None:
+    context.configure(connection=connection, target_metadata=target_metadata)
+    with context.begin_transaction():
+        context.run_migrations()
 
-    connectable = engine_from_config(
-        cfg,
-        prefix="sqlalchemy.",
-        poolclass=pool.NullPool,
-    )
 
-    with connectable.connect() as connection:
-        context.configure(connection=connection, target_metadata=target_metadata)
-        with context.begin_transaction():
-            context.run_migrations()
+async def run_migrations_online() -> None:
+    """Run migrations against a live database using an async engine."""
+    connectable = create_async_engine(settings.own_database_url)
+    async with connectable.connect() as connection:
+        await connection.run_sync(_do_run_migrations)
+    await connectable.dispose()
 
 
 if context.is_offline_mode():
     run_migrations_offline()
 else:
-    run_migrations_online()
+    asyncio.run(run_migrations_online())
