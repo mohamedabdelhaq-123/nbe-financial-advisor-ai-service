@@ -7,5 +7,16 @@ services:
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
       MODEL_NAME: ${MODEL_NAME:-gpt-4o-mini}
       USE_MOCK_LLM: ${USE_MOCK_LLM:-0}
+      # Own database (READ-WRITE)
+      POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_DB: ${POSTGRES_DB:-appdb}
+      POSTGRES_USER: ${POSTGRES_USER:-appuser}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-apppass}
+      # Backend database (READ-ONLY) — optional; set to enable read access.
+      # BACKEND_DB_HOST: ${BACKEND_DB_HOST:-}
+      # BACKEND_DB_NAME: ${BACKEND_DB_NAME:-}
+      # BACKEND_DB_USER: ${BACKEND_DB_USER:-}
+      # BACKEND_DB_PASSWORD: ${BACKEND_DB_PASSWORD:-}
     ports:
       - "8001:8001"

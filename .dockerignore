@@ -1,0 +1,15 @@
+# Never copy the host virtualenv — it clobbers the image's own .venv and its
+# interpreter paths don't exist in the container.
+.venv/
+**/__pycache__/
+*.pyc
+
+.git/
+.github/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+.env
+tests/
+*.md
