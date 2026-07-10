@@ -12,8 +12,10 @@ layered:
 
 The engine is created lazily: it is built only when the backend DB is
 configured, so unit tests and CI (which fixture/mock backend data) need no live
-backend. Backend tables are represented as hand-written typed models in
-`app.backend_db.models` — a shared contract used across feature slices.
+backend. Backend tables are represented as generated typed models in
+`app.backend_db.models` — regenerated directly from the live read-only backend by
+`scripts/gen_backend_models.py` (never hand-edited; see Constitution Principle IV)
+— a shared contract used across feature slices.
 """
 
 from collections.abc import AsyncIterator

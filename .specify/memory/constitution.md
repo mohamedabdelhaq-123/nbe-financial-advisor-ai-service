@@ -1,35 +1,49 @@
 <!--
 SYNC IMPACT REPORT
 ==================
-Version change: (template, unversioned) → 1.0.0
-Rationale: Initial ratification. First concrete constitution replacing the
-unfilled template; MAJOR baseline established for the FastAPI AI service of the
-AI-PFM system.
+Version change: 1.0.0 → 2.0.0
+Rationale: MAJOR. Redefinition of a MUST inside two ratified principles. Backend
+mirror models are no longer hand-written; they MUST be code-generated directly
+from the read-only backend database via a pinned code-generator (Principle IV),
+and — because generated models mirror FULL tables — data minimization is
+relocated from the model layer to the query/DTO egress layer (Principle III).
+Both edits travel together: widening the mirror surface without tightening egress
+would silently enlarge the PII surface.
 
-Principle mapping (template slot → ratified principle):
-  - [PRINCIPLE_1_NAME] → I. Mandatory Automated Testing
-  - [PRINCIPLE_2_NAME] → II. Security & Secrets Discipline
-  - [PRINCIPLE_3_NAME] → III. Data Protection & Compliance (NON-NEGOTIABLE)
-  - [PRINCIPLE_4_NAME] → IV. Data Ownership & Access Boundaries
-  - [PRINCIPLE_5_NAME] → V. Feature-Bounded Modular Architecture
-  - (added)           → VI. LLM & Agent Architecture
-  - (added)           → VII. Operational Readiness & Fail-Fast Configuration
+Modified principles (this amendment):
+  - III. Data Protection & Compliance (NON-NEGOTIABLE) — added egress-layer
+    minimization clause: model presence of a column is NOT license to egress it.
+  - IV. Data Ownership & Access Boundaries — "hand-written typed models" →
+    "generated on demand from the read-only backend DB via a pinned code-generator,
+    committed, and never hand-edited"; regeneration is a manual developer step. No
+    committed schema snapshot; no CI gate or scheduled job touches the backend DB.
 
-Added sections:
-  - Technology & Quality Standards (was [SECTION_2_NAME])
-  - Development Workflow & Quality Gates (was [SECTION_3_NAME])
+Unchanged by this amendment: two separate DeclarativeBase registries; backend
+Base excluded from Alembic; read-only DB role; owned models declare no real
+ForeignKey into backend tables (logical backend_*_id only); service never writes
+backend tables.
 
-Removed sections: none
+Principle mapping (stable since 1.0.0):
+  - I. Mandatory Automated Testing
+  - II. Security & Secrets Discipline
+  - III. Data Protection & Compliance (NON-NEGOTIABLE)
+  - IV. Data Ownership & Access Boundaries
+  - V. Feature-Bounded Modular Architecture
+  - VI. LLM & Agent Architecture
+  - VII. Operational Readiness & Fail-Fast Configuration
+
+Sections: unchanged (Technology & Quality Standards; Development Workflow &
+Quality Gates). Removed sections: none.
 
 Templates checked for consistency:
-  ✅ .specify/templates/plan-template.md — Constitution Check gate is generic and
-     aligns; no principle-specific edits required.
+  ✅ .specify/templates/plan-template.md — Constitution Check gate is generic;
+     `backend/` references are directory-layout only, unrelated to Principle IV.
   ✅ .specify/templates/spec-template.md — no mandatory-section conflicts.
   ✅ .specify/templates/tasks-template.md — testing/data/agent task categories
      consistent with Principles I, IV, and VI.
   ✅ .specify/templates/checklist-template.md — no conflicts.
 
-Follow-up TODOs: none. Ratification date set to initial adoption date.
+Follow-up TODOs: none.
 Deferred (by decision, not omission): the Django-facing API shape — this
 constitution is intentionally API-shape-agnostic.
 -->
@@ -71,30 +85,55 @@ serving in an insecure state.
 ### III. Data Protection & Compliance (NON-NEGOTIABLE)
 Personally identifiable and financial data MUST be minimized and redacted before
 it leaves a trust boundary — including before inclusion in LLM prompts and logs.
-Every privileged action MUST be recorded to an audit log in the service's own
-database. Data retention and data-residency rules MUST be defined and enforced;
-data MUST NOT be retained longer than its stated purpose requires.
+Because backend mirror models expose FULL backend tables (see Principle IV), data
+minimization MUST be enforced at the query/DTO **egress layer**, not the model
+layer: queries MUST SELECT and project only the columns a feature needs, and
+values MUST be mapped into purpose-scoped DTOs (with redaction) before crossing
+any trust boundary. The mere presence of a column on a mirror model MUST NOT be
+treated as license to read or egress it. Every privileged action MUST be recorded
+to an audit log in the service's own database. Data retention and data-residency
+rules MUST be defined and enforced; data MUST NOT be retained longer than its
+stated purpose requires.
 
 **Rationale**: This is regulated financial data. PII exposure through prompts,
 logs, or over-retention creates compliance and reputational liability that no
-feature benefit can justify. An immutable audit trail is a baseline expectation
-for a financial system.
+feature benefit can justify. Generated full-table mirrors are convenient but wide,
+so the minimization guarantee has to live where data actually leaves the service
+— the query and DTO boundary — rather than relying on a hand-curated column list.
+An immutable audit trail is a baseline expectation for a financial system.
 
 ### IV. Data Ownership & Access Boundaries
 The service uses two databases behind two separate SQLAlchemy `DeclarativeBase`
 registries. The **own DB** is READ-WRITE and its metadata MUST be the *sole*
 Alembic `target_metadata`. The **backend DB** is READ-ONLY: its Base MUST be
 excluded from Alembic, access MUST go through a dedicated read-only database role
-(DB-enforced), and the application MUST define no write paths against it. Backend
-tables MUST be represented as hand-written typed models in a shared module; own
-tables MUST live in the feature slice that owns them. The service MUST NEVER
-create, alter, drop, or write backend-owned tables; it returns structured results
-to Django, which persists them.
+(DB-enforced), and the application MUST define no write paths against it. Own
+tables MUST live in the feature slice that owns them. Owned models MUST NOT
+declare a real `ForeignKey` into a backend table; a cross-database reference MUST
+be a logical, unconstrained `backend_*_id` column. The service MUST NEVER create,
+alter, drop, or write backend-owned tables; it returns structured results to
+Django, which persists them.
+
+Backend tables MUST be represented as typed models in a shared module that are
+**generated** directly from the read-only backend database via a pinned
+code-generator (e.g. `sqlacodegen`), and MUST NEVER be hand-edited. Regeneration
+is a manual developer step run against the live read-only backend; the generated
+module is the sole committed artifact (there is no checked-in schema snapshot).
+The generated module MUST carry a header marking it generated, and MUST bind its
+models to the backend `DeclarativeBase` so the Alembic exclusion continues to
+hold. Drift against the upstream schema is reconciled whenever a developer
+regenerates and commits the module; no CI gate or scheduled job connects to the
+backend database (CI stays offline, per Principle I).
 
 **Rationale**: Two services writing one database corrupt each other's schema
 unless ownership is explicit and enforced. A read-only role plus a separate,
 Alembic-excluded Base makes the boundary impossible to cross by accident rather
-than merely by convention.
+than merely by convention. Hand-written mirrors accumulate transcription error
+against an upstream schema this service does not own; generating them directly
+from the backend eliminates that error by construction. Regeneration is kept a
+manual, human-reviewed step so that CI never depends on backend availability or
+credentials — the boundary is verified offline by importing the committed module,
+not by reaching across it.
 
 ### V. Feature-Bounded Modular Architecture
 Code MUST be organized as feature-bounded vertical slices, each self-contained
@@ -178,4 +217,4 @@ deviations MUST be justified explicitly in the PR. Runtime development guidance
 lives in repository docs and agent guidance files and MUST stay consistent with
 this constitution.
 
-**Version**: 1.0.0 | **Ratified**: 2026-07-09 | **Last Amended**: 2026-07-09
+**Version**: 2.0.0 | **Ratified**: 2026-07-09 | **Last Amended**: 2026-07-10

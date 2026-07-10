@@ -25,6 +25,14 @@ test = [
     "httpx>=0.28",
     "testcontainers[postgres]>=4.9",
 ]
+# Code-generation only — pinned EXACT for deterministic backend-mirror output.
+# Kept out of default-groups so runtime and CI never install it; activate with
+# `uv run --group codegen ...` when regenerating app/backend_db/models.py.
+# psycopg is the SYNC driver sqlacodegen needs (runtime stays asyncpg-only).
+codegen = [
+    "sqlacodegen==4.0.4",
+    "psycopg[binary]==3.3.4",
+]
 
 [tool.uv]
 default-groups = ["dev", "test"]
