@@ -43,3 +43,48 @@ Review the diff and commit `app/backend_db/models.py`.
 feature needs into a redacted DTO before the data crosses any trust boundary — the models
 mirror full tables, so data minimization lives at the query/DTO layer (Constitution
 Principle III), not the model.
+
+## Phase 2 — `/internal/*` API surface
+
+All endpoints below require a `Bearer <AI_SERVICE_TOKEN>` header unless noted.
+
+### Chat — Conversational assistant
+
+| Endpoint | Description |
+|---|---|
+| `POST /internal/chat` | SSE streaming chat (Maestro intent routing) |
+
+### Analytics — Deterministic insight pipelines
+
+| Endpoint | Description |
+|---|---|
+| `POST /internal/analyze/post-ingestion` | Run all three pipelines at once |
+| `POST /internal/analyze/monthly-summary` | Monthly spend aggregation + embedding |
+| `POST /internal/analyze/anomaly-check` | Per-category IQR outlier detection |
+
+### Budget planning
+
+| Endpoint | Description |
+|---|---|
+| `POST /internal/plan/question` | Get next questionnaire question |
+| `POST /internal/plan/generate` | Generate 100%-sum budget allocation |
+
+### Recommendations
+
+| Endpoint | Description |
+|---|---|
+| `POST /internal/recommendations/match` | RAG product match via pgvector cosine |
+
+### Health probes (no auth)
+
+| Endpoint | Description |
+|---|---|
+| `GET /health` | Liveness check |
+| `GET /ready` | Readiness check |
+
+### Data contract
+
+**This service never writes to the backend (Django-owned) database.** All analytics
+results, embeddings, and computed insights are **returned** to the caller (Django persists
+them). The own-DB holds only AI-specific tables (audit logs, checkpointer state, problem
+statements, recommendation logs) and is the only database this service migrates.

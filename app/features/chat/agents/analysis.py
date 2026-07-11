@@ -3,6 +3,7 @@
 from langchain_core.messages import AIMessage
 
 from app.core.config import settings
+from app.features.chat.guards import with_disclaimer
 from app.features.chat.state import ConversationState
 
 
@@ -69,13 +70,15 @@ async def analysis_node(state: ConversationState) -> dict:
             reply = raw_content
 
         return {
-            "messages": [AIMessage(content=reply)],
+            "messages": [AIMessage(content=with_disclaimer(reply))],
             "message_references": references,
         }
     except Exception:
         return {
             "messages": [
-                AIMessage(content="I don't have that data yet. Backend is unavailable."),
+                AIMessage(
+                    content=with_disclaimer("I don't have that data yet. Backend is unavailable.")
+                ),
             ],
             "message_references": [],
         }
