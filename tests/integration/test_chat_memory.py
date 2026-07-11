@@ -27,7 +27,6 @@ async def test_chat_memory_persists_across_turns():
 
         importlib.reload(config)
 
-
         from app.features.chat.checkpointer import (
             build_checkpointer,
             setup_checkpointer,
