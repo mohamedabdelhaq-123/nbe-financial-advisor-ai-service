@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Regenerate app/backend_db/models.py from the LIVE read-only backend database.
+Regenerate app/backend_db/_generated_models.py from the LIVE read-only backend database.
 
 This is a MANUAL developer step (Constitution Principle IV): the backend-owned
 tables are mirrored as generated typed models rather than hand-written ones. There
@@ -23,6 +23,11 @@ network BACKEND_DB_HOST is `postgres`; from the host use a reachable host/port
 (the postgres container IP, or a published port) — override on the command line
 or in `.env`.
 
+When --tables is omitted (mirror the whole schema), Django's own
+framework-internal tables (auth_group, auth_permission, django_migrations,
+django_content_type, django_admin_log, django_session, and their M2M join
+tables) are excluded by default — pass --include-django to mirror them too.
+
 The generated module is post-processed to bind its models to `BackendBase` (so the
 Alembic exclusion keeps holding) and formatted with the repo's ruff+black so it
 passes CI unchanged.
@@ -39,9 +44,25 @@ from pathlib import Path
 from urllib.parse import quote
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from sqlalchemy import create_engine, inspect
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-OUTPUT = REPO_ROOT / "app" / "backend_db" / "models.py"
+OUTPUT = REPO_ROOT / "app" / "backend_db" / "_generated_models.py"
+
+# Django's own framework-internal tables (auth/session/migration/content-type
+# bookkeeping) — not app data. These are mirrored only with --include-django;
+# by default they're dropped from a full-schema (no --tables) generation.
+DJANGO_INTERNAL_TABLES = {
+    "django_migrations",
+    "django_content_type",
+    "django_admin_log",
+    "django_session",
+    "auth_permission",
+    "auth_group",
+    "auth_group_permissions",
+    "auth_user_groups",
+    "auth_user_user_permissions",
+}
 
 
 class _BackendDBEnv(BaseSettings):
@@ -99,6 +120,24 @@ def _sync_backend_url(env: _BackendDBEnv) -> str:
     if env.backend_db_password:
         auth += f":{quote(env.backend_db_password, safe='')}"
     return f"postgresql+psycopg://{auth}@{host}:{port}/{name}"
+
+
+def _resolve_tables(
+    url: str, tables: list[str] | None, schema: str | None, include_django: bool
+) -> list[str] | None:
+    """Work out which tables to hand sqlacodegen.
+
+    Explicit `--tables` is honored as-is (the user asked for exactly those,
+    Django-internal or not). Otherwise, for a full-schema generation, Django's
+    own internal tables are excluded by default since sqlacodegen has no
+    native exclude flag — this reflects the schema's table names and passes
+    everything but those explicitly back in as `--tables`.
+    """
+    if tables or include_django:
+        return tables
+    inspector = inspect(create_engine(url))
+    all_tables = inspector.get_table_names(schema=schema)
+    return [t for t in all_tables if t not in DJANGO_INTERNAL_TABLES]
 
 
 def _run_sqlacodegen(url: str, tables: list[str] | None, schema: str | None) -> str:
@@ -227,18 +266,31 @@ def main() -> None:
             "else the connection's default, usually public)."
         ),
     )
+    parser.add_argument(
+        "--include-django",
+        action="store_true",
+        help=(
+            "Also mirror Django's own framework-internal tables (auth_group, "
+            "auth_permission, django_migrations, django_content_type, "
+            "django_admin_log, django_session, and their M2M join tables). "
+            "Ignored if --tables is given explicitly. Default: excluded."
+        ),
+    )
     args = parser.parse_args()
 
     env = _BackendDBEnv()
     url = _sync_backend_url(env)
     schema = args.schema or (env.backend_db_schema.strip() or None)
-    raw = _run_sqlacodegen(url, args.tables, schema)
+    tables = _resolve_tables(url, args.tables, schema, args.include_django)
+    raw = _run_sqlacodegen(url, tables, schema)
     code = _neutralize_unmapped_types(_rebind_to_backend_base(raw))
     code = GENERATED_HEADER + "\n" + code
 
     OUTPUT.write_text(code)
     _format_in_place(OUTPUT)
     scope = f"{len(args.tables)} requested table(s)" if args.tables else "all tables"
+    if not args.tables and not args.include_django:
+        scope += " (excluding Django-internal tables)"
     sys.stderr.write(f"wrote {OUTPUT.relative_to(REPO_ROOT)} ({scope})\n")
 
 

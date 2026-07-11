@@ -2,9 +2,9 @@
 Offline guards for the generated backend mirror (Constitution Principle IV).
 
 These run with no live database and no Docker: they only import the committed
-`app.backend_db.models` and assert the ownership boundary holds. They stay green
-whether or not concrete models have been generated yet, and get stronger as
-tables are added.
+`app.backend_db._generated_models` mirror and assert the ownership boundary
+holds. They stay green whether or not concrete models have been generated yet,
+and get stronger as tables are added.
 """
 
 import inspect
@@ -14,7 +14,7 @@ from pathlib import Path
 # we compare metadata — the disjointness check must see the full own-DB schema.
 import app.main  # noqa: F401  (import side-effect: registers feature models)
 from app.backend_db import BackendBase
-from app.backend_db import models as backend_models
+from app.backend_db import _generated_models as backend_models
 from app.core.db import OwnBase
 
 MODELS_FILE = Path(backend_models.__file__)
