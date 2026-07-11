@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Regenerate app/backend_db/models.py from the LIVE read-only backend database.
+Regenerate app/backend_db/_generated_models.py from the LIVE read-only backend database.
 
 This is a MANUAL developer step (Constitution Principle IV): the backend-owned
 tables are mirrored as generated typed models rather than hand-written ones. There
@@ -47,7 +47,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy import create_engine, inspect
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-OUTPUT = REPO_ROOT / "app" / "backend_db" / "models.py"
+OUTPUT = REPO_ROOT / "app" / "backend_db" / "_generated_models.py"
 
 # Django's own framework-internal tables (auth/session/migration/content-type
 # bookkeeping) — not app data. These are mirrored only with --include-django;
