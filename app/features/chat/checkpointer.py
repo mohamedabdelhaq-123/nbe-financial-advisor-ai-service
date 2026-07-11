@@ -23,6 +23,7 @@ async def build_checkpointer():
         conninfo=_psycopg_conn_string(),
         min_size=2,
         max_size=5,
+        kwargs={"autocommit": True},
         open=False,
     )
     await pool.open()

@@ -20,6 +20,7 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    op.execute("CREATE EXTENSION IF NOT EXISTS vector")
     op.create_table(
         "ai_audit_log",
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),

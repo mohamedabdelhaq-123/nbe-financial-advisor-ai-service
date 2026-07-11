@@ -51,7 +51,7 @@ def own_db_url():
 
     from app.core.db import OwnBase
 
-    with PostgresContainer("postgres:16-alpine") as pg:
+    with PostgresContainer("pgvector/pgvector:pg16") as pg:
         host = pg.get_container_host_ip()
         port = pg.get_exposed_port(5432)
         url = f"postgresql+asyncpg://{pg.username}:{pg.password}@{host}:{port}/{pg.dbname}"

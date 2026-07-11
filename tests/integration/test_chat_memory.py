@@ -14,7 +14,7 @@ def _docker_available() -> bool:
 @pytest.mark.skipif(not _docker_available(), reason="Docker not available")
 @pytest.mark.asyncio
 async def test_chat_memory_persists_across_turns():
-    with PostgresContainer("postgres:16-alpine") as pg:
+    with PostgresContainer("pgvector/pgvector:pg16") as pg:
         os.environ["POSTGRES_HOST"] = pg.get_container_host_ip()
         os.environ["POSTGRES_PORT"] = str(pg.get_exposed_port(5432))
         os.environ["POSTGRES_DB"] = pg.dbname
@@ -23,9 +23,11 @@ async def test_chat_memory_persists_across_turns():
 
         import importlib
 
-        from app.core.config import settings
+        from app.core import config
 
-        importlib.reload(settings)
+        importlib.reload(config)
+
+        from app.core.config import settings
 
         from app.features.chat.checkpointer import (
             build_checkpointer,
