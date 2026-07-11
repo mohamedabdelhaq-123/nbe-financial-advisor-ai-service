@@ -7,13 +7,24 @@ from app.features.chat.state import ConversationState
 
 async def recommendation_node(state: ConversationState) -> dict:
     try:
+        from app.core.db import get_own_session
         from app.features.recommendations.service import match
 
         last_msg = state["messages"][-1] if state["messages"] else None
-        query = last_msg.content if last_msg and hasattr(last_msg, "content") else ""
+        query = ""
+        if last_msg and hasattr(last_msg, "content"):
+            content = last_msg.content
+            query = content if isinstance(content, str) else str(content)
         user_id = state["user_context"].get("user_id", 0)
 
-        product_matches = await match(query=query, user_id=user_id, top_k=3)
+        product_matches = []
+        async for session in get_own_session():
+            product_matches = await match(
+                session=session,
+                user_id=int(user_id) if user_id else 0,
+                query=query,
+                top_k=3,
+            )
 
         if not product_matches:
             return {

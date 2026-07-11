@@ -57,35 +57,50 @@ def own_db_url():
         url = f"postgresql+asyncpg://{pg.username}:{pg.password}@{host}:{port}/{pg.dbname}"
 
         async def _run_migrations():
+            from pgvector.sqlalchemy import Vector
+
             engine = create_async_engine(url, poolclass=NullPool)
-            async with engine.begin() as conn:
-                await conn.run_sync(OwnBase.metadata.create_all)
-                await conn.execute(sa.text('CREATE EXTENSION IF NOT EXISTS "uuid-ossp"'))
-                await conn.execute(
-                    sa.text(
-                        "CREATE TABLE IF NOT EXISTS transactions ("
-                        "id UUID PRIMARY KEY DEFAULT uuid_generate_v4(), "
-                        "transaction_date DATE NOT NULL, "
-                        "amount NUMERIC(14,2) NOT NULL, "
-                        "currency VARCHAR(10) NOT NULL DEFAULT 'EGP', "
-                        "is_recurring BOOLEAN NOT NULL DEFAULT FALSE, "
-                        "source VARCHAR(20) NOT NULL DEFAULT 'statement', "
-                        "created_at TIMESTAMP WITH TIME ZONE NOT NULL "
-                        "DEFAULT NOW(), "
-                        "account_id UUID NOT NULL, "
-                        "user_id UUID NOT NULL, "
-                        "merchant_raw VARCHAR(500), "
-                        "merchant_normalized VARCHAR(255), "
-                        "category VARCHAR(100), "
-                        "confidence_score NUMERIC(4,3), "
-                        "balance NUMERIC(14,2), "
-                        "transaction_type VARCHAR(20), "
-                        "extra_fields JSONB, "
-                        "embedding BYTEA, "
-                        "statement_id UUID"
-                        ")"
+
+            saved = {}
+            for table in OwnBase.metadata.tables.values():
+                for col in table.columns:
+                    if isinstance(col.type, Vector):
+                        saved[col] = col.type
+                        col.type = sa.LargeBinary()
+
+            try:
+                async with engine.begin() as conn:
+                    await conn.run_sync(OwnBase.metadata.create_all)
+                    await conn.execute(sa.text('CREATE EXTENSION IF NOT EXISTS "uuid-ossp"'))
+                    await conn.execute(
+                        sa.text(
+                            "CREATE TABLE IF NOT EXISTS transactions ("
+                            "id UUID PRIMARY KEY DEFAULT uuid_generate_v4(), "
+                            "transaction_date DATE NOT NULL, "
+                            "amount NUMERIC(14,2) NOT NULL, "
+                            "currency VARCHAR(10) NOT NULL DEFAULT 'EGP', "
+                            "is_recurring BOOLEAN NOT NULL DEFAULT FALSE, "
+                            "source VARCHAR(20) NOT NULL DEFAULT 'statement', "
+                            "created_at TIMESTAMP WITH TIME ZONE NOT NULL "
+                            "DEFAULT NOW(), "
+                            "account_id UUID NOT NULL, "
+                            "user_id UUID NOT NULL, "
+                            "merchant_raw VARCHAR(500), "
+                            "merchant_normalized VARCHAR(255), "
+                            "category VARCHAR(100), "
+                            "confidence_score NUMERIC(4,3), "
+                            "balance NUMERIC(14,2), "
+                            "transaction_type VARCHAR(20), "
+                            "extra_fields JSONB, "
+                            "embedding BYTEA, "
+                            "statement_id UUID"
+                            ")"
+                        )
                     )
-                )
+            finally:
+                for col, orig in saved.items():
+                    col.type = orig
+
             await engine.dispose()
 
         import asyncio
