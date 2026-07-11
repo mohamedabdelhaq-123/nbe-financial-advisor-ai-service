@@ -14,10 +14,9 @@ async def test_analysis_node_returns_references(monkeypatch):
             "Txn",
             (),
             {
-                "id": i,
-                "user_id": 10,
+                "id": f"t{i}",
                 "amount": f"{50 + i * 20}.00",
-                "description": f"Store {i}",
+                "merchant_raw": f"Store {i}",
                 "category": "food",
             },
         )()
@@ -38,7 +37,7 @@ async def test_analysis_node_returns_references(monkeypatch):
 
     state = {
         "messages": [],
-        "user_context": {"user_id": 10},
+        "user_context": {"user_id": "10"},
         "intent": "analysis",
     }
 
@@ -67,7 +66,7 @@ async def test_analysis_node_no_data(monkeypatch):
 
     state = {
         "messages": [],
-        "user_context": {"user_id": 99},
+        "user_context": {"user_id": "99"},
         "intent": "analysis",
     }
 

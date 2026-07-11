@@ -25,7 +25,7 @@ async def analysis_node(state: ConversationState) -> dict:
 
         try:
             result = await session.execute(
-                select(Transaction).where(Transaction.user_id == user_id).limit(10)
+                select(Transaction).where(Transaction.user_id == str(user_id)).limit(10)
             )
             transactions = result.scalars().all()
         finally:
@@ -45,7 +45,7 @@ async def analysis_node(state: ConversationState) -> dict:
             ref = {"table": "transactions", "id": getattr(txn, "id", None)}
             references.append(ref)
             amount = getattr(txn, "amount", 0)
-            desc = getattr(txn, "description", "unknown")
+            desc = getattr(txn, "merchant_raw", "unknown")
             category = getattr(txn, "category", "uncategorized")
             lines.append(f"- {desc} ({category}): {amount}")
 

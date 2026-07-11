@@ -39,42 +39,75 @@ def auth_headers() -> dict[str, str]:
 
 
 @pytest.fixture(scope="session")
-def own_pg():
+def own_db_url():
     pytest.importorskip("testcontainers.postgres")
 
     if not which("docker"):
         pytest.skip("Docker not available")
 
+    import sqlalchemy as sa
+    from sqlalchemy.pool import NullPool
     from testcontainers.postgres import PostgresContainer
 
-    from app.backend_db import BackendBase
     from app.core.db import OwnBase
 
     with PostgresContainer("postgres:16-alpine") as pg:
         host = pg.get_container_host_ip()
         port = pg.get_exposed_port(5432)
-        db_url = f"postgresql+asyncpg://{pg.username}:{pg.password}@{host}:{port}/{pg.dbname}"
-
-        engine = create_async_engine(db_url, pool_pre_ping=True)
-        session_factory = async_sessionmaker(engine, expire_on_commit=False)
+        url = f"postgresql+asyncpg://{pg.username}:{pg.password}@{host}:{port}/{pg.dbname}"
 
         async def _run_migrations():
+            engine = create_async_engine(url, poolclass=NullPool)
             async with engine.begin() as conn:
                 await conn.run_sync(OwnBase.metadata.create_all)
-                await conn.run_sync(BackendBase.metadata.create_all)
+                await conn.execute(sa.text('CREATE EXTENSION IF NOT EXISTS "uuid-ossp"'))
+                await conn.execute(
+                    sa.text(
+                        "CREATE TABLE IF NOT EXISTS transactions ("
+                        "id UUID PRIMARY KEY DEFAULT uuid_generate_v4(), "
+                        "transaction_date DATE NOT NULL, "
+                        "amount NUMERIC(14,2) NOT NULL, "
+                        "currency VARCHAR(10) NOT NULL DEFAULT 'EGP', "
+                        "is_recurring BOOLEAN NOT NULL DEFAULT FALSE, "
+                        "source VARCHAR(20) NOT NULL DEFAULT 'statement', "
+                        "created_at TIMESTAMP WITH TIME ZONE NOT NULL "
+                        "DEFAULT NOW(), "
+                        "account_id UUID NOT NULL, "
+                        "user_id UUID NOT NULL, "
+                        "merchant_raw VARCHAR(500), "
+                        "merchant_normalized VARCHAR(255), "
+                        "category VARCHAR(100), "
+                        "confidence_score NUMERIC(4,3), "
+                        "balance NUMERIC(14,2), "
+                        "transaction_type VARCHAR(20), "
+                        "extra_fields JSONB, "
+                        "embedding BYTEA, "
+                        "statement_id UUID"
+                        ")"
+                    )
+                )
+            await engine.dispose()
 
         import asyncio
 
-        asyncio.get_event_loop().run_until_complete(_run_migrations())
+        asyncio.run(_run_migrations())
 
-        yield session_factory
+        yield url
 
-        engine.sync_engine.dispose()
+
+@pytest.fixture
+async def own_pg(own_db_url):
+    from sqlalchemy.pool import NullPool
+
+    engine = create_async_engine(own_db_url, poolclass=NullPool)
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    yield session_factory
+    await engine.dispose()
 
 
 @pytest.fixture
 def mock_embedder(monkeypatch):
-    def _mock_embed_texts(texts: list[str]) -> list[list[float]]:
+    async def _mock_embed_texts(texts: list[str]) -> list[list[float]]:
         dim = 768
         results = []
         for t in texts:
