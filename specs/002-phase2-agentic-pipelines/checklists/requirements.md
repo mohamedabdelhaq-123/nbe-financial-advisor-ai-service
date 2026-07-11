@@ -35,7 +35,7 @@
   (see spec *Dependencies*). No Phase 1 task is specified.
 - **Reconciliation resolved**: the plan's backend-write behaviour (analytics results + embedding
   columns written directly to the backend DB) was superseded by the user's decision to keep the
-  backend strictly read-only and return all results to Django, matching Constitution IV and the current
+  backend strictly read-only and return all results to Django, but the embedding columns writes are still  the AI service's responsibility matching Constitution IV and the current
   `app/backend_db/` code. Captured in Assumptions and FR-024/FR-030/FR-031/SC-011.
 - **Path reconciliation**: spec targets the actual `app/features/<slice>/` and `app/backend_db/`
   layout rather than the plan's illustrative top-level paths.
