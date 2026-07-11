@@ -21,3 +21,8 @@ services:
       BACKEND_DB_PASSWORD: ${BACKEND_DB_PASSWORD:-change-me-readonly-pass}
     ports:
       - "8001:8001"
+
+  mineru-server:
+    extends:
+      file: compose/mineru/docker-compose.yml
+      service: mineru-api
