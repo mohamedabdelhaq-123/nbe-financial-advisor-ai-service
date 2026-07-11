@@ -4,6 +4,8 @@ Shared test setup.
 The whole suite runs in mock mode (USE_MOCK_LLM=1) -- no API key, no model or
 network calls. Environment must be set before the app is imported so config
 validation and the mock short-circuit see it.
+
+No fixture performs real LLM or embedder calls.
 """
 
 import hashlib
@@ -15,8 +17,11 @@ os.environ.setdefault("OPENAI_API_KEY", "__mock__")
 os.environ.setdefault("MODEL_NAME", "gpt-4o-mini")
 os.environ.setdefault("AI_SERVICE_TOKEN", "test-token-for-ci")
 
+from shutil import which
+
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.main import app
 
@@ -35,18 +40,17 @@ def auth_headers() -> dict[str, str]:
 
 @pytest.fixture(scope="session")
 def own_pg():
-    testcontainers = pytest.importorskip("testcontainers.postgres")
-    from shutil import which
+    pytest.importorskip("testcontainers.postgres")
 
     if not which("docker"):
         pytest.skip("Docker not available")
 
-        from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+    from testcontainers.postgres import PostgresContainer
 
     from app.backend_db import BackendBase
     from app.core.db import OwnBase
 
-    with testcontainers.PostgresContainer("postgres:16-alpine") as pg:
+    with PostgresContainer("postgres:16-alpine") as pg:
         host = pg.get_container_host_ip()
         port = pg.get_exposed_port(5432)
         db_url = f"postgresql+asyncpg://{pg.username}:{pg.password}@{host}:{port}/{pg.dbname}"
