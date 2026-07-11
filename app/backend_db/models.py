@@ -59,6 +59,27 @@ class AdminUsers(BackendBase):
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime(True), nullable=False)
 
 
+class AuthGroup(BackendBase):
+    __tablename__ = "auth_group"
+    __table_args__ = (
+        PrimaryKeyConstraint("id", name="auth_group_pkey"),
+        UniqueConstraint("name", name="auth_group_name_key"),
+        Index(
+            "auth_group_name_a6ea08ec_like", "name", postgresql_ops={"name": "varchar_pattern_ops"}
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(
+        Integer,
+        Identity(start=1, increment=1, minvalue=1, maxvalue=2147483647, cycle=False, cache=1),
+        primary_key=True,
+        autoincrement=True,
+    )
+    name: Mapped[str] = mapped_column(String(150), nullable=False)
+
+    users_groups: Mapped[list["UsersGroups"]] = relationship("UsersGroups", back_populates="group")
+
+
 class BankStatementTemplates(BackendBase):
     __tablename__ = "bank_statement_templates"
     __table_args__ = (
@@ -91,6 +112,29 @@ class CorePing(BackendBase):
         autoincrement=True,
     )
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime(True), nullable=False)
+
+
+class DjangoContentType(BackendBase):
+    __tablename__ = "django_content_type"
+    __table_args__ = (
+        PrimaryKeyConstraint("id", name="django_content_type_pkey"),
+        UniqueConstraint(
+            "app_label", "model", name="django_content_type_app_label_model_76bd3d3b_uniq"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(
+        Integer,
+        Identity(start=1, increment=1, minvalue=1, maxvalue=2147483647, cycle=False, cache=1),
+        primary_key=True,
+        autoincrement=True,
+    )
+    app_label: Mapped[str] = mapped_column(String(100), nullable=False)
+    model: Mapped[str] = mapped_column(String(100), nullable=False)
+
+    auth_permission: Mapped[list["AuthPermission"]] = relationship(
+        "AuthPermission", back_populates="content_type"
+    )
 
 
 class Products(BackendBase):
@@ -166,9 +210,13 @@ class Users(BackendBase):
     spending_pattern_insights: Mapped[list["SpendingPatternInsights"]] = relationship(
         "SpendingPatternInsights", back_populates="user"
     )
+    token_blacklist_outstandingtoken: Mapped[list["TokenBlacklistOutstandingtoken"]] = relationship(
+        "TokenBlacklistOutstandingtoken", back_populates="user"
+    )
     user_preferences: Mapped["UserPreferences"] = relationship(
         "UserPreferences", uselist=False, back_populates="user"
     )
+    users_groups: Mapped[list["UsersGroups"]] = relationship("UsersGroups", back_populates="user")
     monthly_summaries: Mapped[list["MonthlySummaries"]] = relationship(
         "MonthlySummaries", back_populates="user"
     )
@@ -178,7 +226,47 @@ class Users(BackendBase):
     statement_files: Mapped[list["StatementFiles"]] = relationship(
         "StatementFiles", back_populates="user"
     )
+    users_user_permissions: Mapped[list["UsersUserPermissions"]] = relationship(
+        "UsersUserPermissions", back_populates="user"
+    )
     transactions: Mapped[list["Transactions"]] = relationship("Transactions", back_populates="user")
+
+
+class AuthPermission(BackendBase):
+    __tablename__ = "auth_permission"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["content_type_id"],
+            ["django_content_type.id"],
+            deferrable=True,
+            initially="DEFERRED",
+            name="auth_permission_content_type_id_2f476e4b_fk_django_co",
+        ),
+        PrimaryKeyConstraint("id", name="auth_permission_pkey"),
+        UniqueConstraint(
+            "content_type_id",
+            "codename",
+            name="auth_permission_content_type_id_codename_01ab375a_uniq",
+        ),
+        Index("auth_permission_content_type_id_2f476e4b", "content_type_id"),
+    )
+
+    id: Mapped[int] = mapped_column(
+        Integer,
+        Identity(start=1, increment=1, minvalue=1, maxvalue=2147483647, cycle=False, cache=1),
+        primary_key=True,
+        autoincrement=True,
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    content_type_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    codename: Mapped[str] = mapped_column(String(100), nullable=False)
+
+    content_type: Mapped["DjangoContentType"] = relationship(
+        "DjangoContentType", back_populates="auth_permission"
+    )
+    users_user_permissions: Mapped[list["UsersUserPermissions"]] = relationship(
+        "UsersUserPermissions", back_populates="permission"
+    )
 
 
 class BankAccounts(BackendBase):
@@ -465,6 +553,48 @@ class SpendingPatternInsights(BackendBase):
     user: Mapped["Users"] = relationship("Users", back_populates="spending_pattern_insights")
 
 
+class TokenBlacklistOutstandingtoken(BackendBase):
+    __tablename__ = "token_blacklist_outstandingtoken"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["user_id"],
+            ["users.id"],
+            deferrable=True,
+            initially="DEFERRED",
+            name="token_blacklist_outstandingtoken_user_id_83bc629a_fk_users_id",
+        ),
+        PrimaryKeyConstraint("id", name="token_blacklist_outstandingtoken_pkey"),
+        UniqueConstraint("jti", name="token_blacklist_outstandingtoken_jti_hex_d9bdf6f7_uniq"),
+        Index(
+            "token_blacklist_outstandingtoken_jti_hex_d9bdf6f7_like",
+            "jti",
+            postgresql_ops={"jti": "varchar_pattern_ops"},
+        ),
+        Index("token_blacklist_outstandingtoken_user_id_83bc629a", "user_id"),
+    )
+
+    id: Mapped[int] = mapped_column(
+        BigInteger,
+        Identity(
+            start=1, increment=1, minvalue=1, maxvalue=9223372036854775807, cycle=False, cache=1
+        ),
+        primary_key=True,
+        autoincrement=True,
+    )
+    token: Mapped[str] = mapped_column(Text, nullable=False)
+    expires_at: Mapped[datetime.datetime] = mapped_column(DateTime(True), nullable=False)
+    jti: Mapped[str] = mapped_column(String(255), nullable=False)
+    created_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime(True))
+    user_id: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid)
+
+    user: Mapped[Optional["Users"]] = relationship(
+        "Users", back_populates="token_blacklist_outstandingtoken"
+    )
+    token_blacklist_blacklistedtoken: Mapped["TokenBlacklistBlacklistedtoken"] = relationship(
+        "TokenBlacklistBlacklistedtoken", uselist=False, back_populates="token"
+    )
+
+
 class UserPreferences(BackendBase):
     __tablename__ = "user_preferences"
     __table_args__ = (
@@ -490,6 +620,44 @@ class UserPreferences(BackendBase):
     user_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
 
     user: Mapped["Users"] = relationship("Users", back_populates="user_preferences")
+
+
+class UsersGroups(BackendBase):
+    __tablename__ = "users_groups"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["group_id"],
+            ["auth_group.id"],
+            deferrable=True,
+            initially="DEFERRED",
+            name="users_groups_group_id_2f3517aa_fk_auth_group_id",
+        ),
+        ForeignKeyConstraint(
+            ["user_id"],
+            ["users.id"],
+            deferrable=True,
+            initially="DEFERRED",
+            name="users_groups_user_id_f500bee5_fk_users_id",
+        ),
+        PrimaryKeyConstraint("id", name="users_groups_pkey"),
+        UniqueConstraint("user_id", "group_id", name="users_groups_user_id_group_id_fc7788e8_uniq"),
+        Index("users_groups_group_id_2f3517aa", "group_id"),
+        Index("users_groups_user_id_f500bee5", "user_id"),
+    )
+
+    id: Mapped[int] = mapped_column(
+        BigInteger,
+        Identity(
+            start=1, increment=1, minvalue=1, maxvalue=9223372036854775807, cycle=False, cache=1
+        ),
+        primary_key=True,
+        autoincrement=True,
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    group_id: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    group: Mapped["AuthGroup"] = relationship("AuthGroup", back_populates="users_groups")
+    user: Mapped["Users"] = relationship("Users", back_populates="users_groups")
 
 
 class BudgetAllocations(BackendBase):
@@ -716,6 +884,80 @@ class StatementFiles(BackendBase):
     transactions: Mapped[list["Transactions"]] = relationship(
         "Transactions", back_populates="statement"
     )
+
+
+class TokenBlacklistBlacklistedtoken(BackendBase):
+    __tablename__ = "token_blacklist_blacklistedtoken"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["token_id"],
+            ["token_blacklist_outstandingtoken.id"],
+            deferrable=True,
+            initially="DEFERRED",
+            name="token_blacklist_blacklistedtoken_token_id_3cc7fe56_fk",
+        ),
+        PrimaryKeyConstraint("id", name="token_blacklist_blacklistedtoken_pkey"),
+        UniqueConstraint("token_id", name="token_blacklist_blacklistedtoken_token_id_key"),
+    )
+
+    id: Mapped[int] = mapped_column(
+        BigInteger,
+        Identity(
+            start=1, increment=1, minvalue=1, maxvalue=9223372036854775807, cycle=False, cache=1
+        ),
+        primary_key=True,
+        autoincrement=True,
+    )
+    blacklisted_at: Mapped[datetime.datetime] = mapped_column(DateTime(True), nullable=False)
+    token_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+
+    token: Mapped["TokenBlacklistOutstandingtoken"] = relationship(
+        "TokenBlacklistOutstandingtoken", back_populates="token_blacklist_blacklistedtoken"
+    )
+
+
+class UsersUserPermissions(BackendBase):
+    __tablename__ = "users_user_permissions"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["permission_id"],
+            ["auth_permission.id"],
+            deferrable=True,
+            initially="DEFERRED",
+            name="users_user_permissio_permission_id_6d08dcd2_fk_auth_perm",
+        ),
+        ForeignKeyConstraint(
+            ["user_id"],
+            ["users.id"],
+            deferrable=True,
+            initially="DEFERRED",
+            name="users_user_permissions_user_id_92473840_fk_users_id",
+        ),
+        PrimaryKeyConstraint("id", name="users_user_permissions_pkey"),
+        UniqueConstraint(
+            "user_id",
+            "permission_id",
+            name="users_user_permissions_user_id_permission_id_3b86cbdf_uniq",
+        ),
+        Index("users_user_permissions_permission_id_6d08dcd2", "permission_id"),
+        Index("users_user_permissions_user_id_92473840", "user_id"),
+    )
+
+    id: Mapped[int] = mapped_column(
+        BigInteger,
+        Identity(
+            start=1, increment=1, minvalue=1, maxvalue=9223372036854775807, cycle=False, cache=1
+        ),
+        primary_key=True,
+        autoincrement=True,
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    permission_id: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    permission: Mapped["AuthPermission"] = relationship(
+        "AuthPermission", back_populates="users_user_permissions"
+    )
+    user: Mapped["Users"] = relationship("Users", back_populates="users_user_permissions")
 
 
 class MessageReferences(BackendBase):
