@@ -1,11 +1,12 @@
-"""Request/response contracts for the chat slice."""
+"""Request/response contracts for the chat slice — internal SSE streaming."""
 
 from pydantic import BaseModel
 
 
-class ChatRequest(BaseModel):
+class ChatTurnRequest(BaseModel):
+    conversation_id: str
+    user_id: int
     message: str
-
-
-class ChatResponse(BaseModel):
-    reply: str
+    is_first_turn: bool = False
+    initial_context: dict | None = None
+    refresh_context: bool = False
