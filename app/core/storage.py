@@ -48,6 +48,8 @@ def validate_storage_key(key: str) -> None:
     as an S3 Key. Features should still slugify/UUID-suffix user-supplied
     filename components rather than relying on this check alone.
     """
+    if not key or key == ".":
+        raise ValueError(f"invalid storage key: {key!r}")
     normalized = posixpath.normpath(key)
     if normalized != key or normalized.startswith("..") or normalized.startswith("/"):
         raise ValueError(f"invalid storage key: {key!r}")
