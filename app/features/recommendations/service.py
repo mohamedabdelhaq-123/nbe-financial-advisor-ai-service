@@ -75,5 +75,5 @@ async def match(
 
     if matches:
         await session.flush()
-
+        await session.commit()
     return matches
