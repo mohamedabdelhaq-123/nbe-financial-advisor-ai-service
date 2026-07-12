@@ -29,7 +29,7 @@ async def detect_anomalies(
         transactions = result.scalars().all()
 
     by_category: dict[str, list[float]] = defaultdict(list)
-    month_outliers: dict[str, float] = {}
+    month_outliers: dict[str, float] = defaultdict(float)
 
     for txn in transactions:
         amt = float(getattr(txn, "amount", 0) or 0)
@@ -48,7 +48,7 @@ async def detect_anomalies(
 
         by_category[cat].append(amt)
         if txn_month == month:
-            month_outliers[cat] = amt
+            month_outliers[cat] += amt
 
     flags: list[AnomalyFlagResult] = []
     for cat, values in by_category.items():

@@ -67,4 +67,5 @@ async def test_detect_anomaly_flags_outlier(own_pg):
     )
     food_flags = [f for f in flags if f.category == "food"]
     assert len(food_flags) >= 1
-    assert any(abs(f.amount - 500.0) < 0.01 for f in food_flags)
+    total_food_spend = sum(amounts) + 500.00
+    assert any(abs(f.amount - total_food_spend) < 0.01 for f in food_flags)
