@@ -16,6 +16,7 @@ async def test_match_returns_products(monkeypatch, mock_embedder):
     mock_session = MagicMock()
     mock_session.execute = AsyncMock(return_value=mock_result)
     mock_session.flush = AsyncMock()
+    mock_session.commit = AsyncMock()
     mock_session.add = MagicMock()
 
     results = await match(
