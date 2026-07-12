@@ -1,11 +1,12 @@
 """Analysis agent — reads backend DB and provides grounded spending answers."""
 
+from collections.abc import Sequence
+
 from langchain_core.messages import AIMessage
 
 from app.core.config import settings
 from app.features.chat.guards import with_disclaimer
 from app.features.chat.state import ConversationState
-from collections.abc import Sequence
 
 
 async def analysis_node(state: ConversationState) -> dict:
