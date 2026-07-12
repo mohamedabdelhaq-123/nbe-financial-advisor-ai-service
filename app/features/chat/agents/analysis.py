@@ -5,6 +5,7 @@ from langchain_core.messages import AIMessage
 from app.core.config import settings
 from app.features.chat.guards import with_disclaimer
 from app.features.chat.state import ConversationState
+from collections.abc import Sequence
 
 
 async def analysis_node(state: ConversationState) -> dict:
@@ -21,7 +22,7 @@ async def analysis_node(state: ConversationState) -> dict:
                 "message_references": [],
             }
 
-        transactions = []
+        transactions: Sequence[Transaction] = []
         async for session in get_backend_session():
             result = await session.execute(
                 select(Transaction).where(Transaction.user_id == str(user_id)).limit(10)
