@@ -21,16 +21,12 @@ async def analysis_node(state: ConversationState) -> dict:
                 "message_references": [],
             }
 
-        session_gen = get_backend_session()
-        session = await session_gen.__anext__()
-
-        try:
+        transactions = []
+        async for session in get_backend_session():
             result = await session.execute(
                 select(Transaction).where(Transaction.user_id == str(user_id)).limit(10)
             )
             transactions = result.scalars().all()
-        finally:
-            await session.close()
 
         if not transactions:
             return {
