@@ -19,9 +19,9 @@ os.environ.setdefault("AI_SERVICE_TOKEN", "test-token-for-ci")
 # Dummy placeholders so config's fail-fast check passes offline; real values
 # (if a developer/CI exports them before running pytest) are left untouched
 # by setdefault and picked up by the real_s3_storage_env fixture below.
-os.environ.setdefault("STORAGE_S3_BUCKET", "test-bucket")
-os.environ.setdefault("STORAGE_S3_ACCESS_KEY", "test-access-key")
-os.environ.setdefault("STORAGE_S3_SECRET_KEY", "test-secret-key")
+os.environ.setdefault("STORAGE_S3_BUCKET", "pfm-statements-ocr")
+os.environ.setdefault("STORAGE_S3_ACCESS_KEY", "dev-seaweed-key")
+os.environ.setdefault("STORAGE_S3_SECRET_KEY", "dev-seaweed-secret")
 
 from shutil import which
 
