@@ -1,0 +1,25 @@
+"""Ingestion slice HTTP surface."""
+
+from fastapi import APIRouter, Depends
+
+from app.backend_db import get_backend_session
+from app.core.db import get_own_session
+from app.core.security import require_token
+from app.features.ingestion.schemas import ProcessStatementRequest, ProcessStatementResult
+from app.features.ingestion.service import process_statement
+
+router = APIRouter(
+    prefix="/internal/ingestion",
+    tags=["ingestion"],
+    dependencies=[Depends(require_token)],
+)
+
+
+@router.post("/process", response_model=ProcessStatementResult)
+async def process(body: ProcessStatementRequest) -> ProcessStatementResult:
+    """Extract a previously uploaded statement's content via MinerU. Requires a Bearer token."""
+    return await process_statement(
+        session_gen=get_backend_session,
+        own_session_gen=get_own_session,
+        statement_id=str(body.statement_id),
+    )
