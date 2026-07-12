@@ -58,7 +58,6 @@ async def maestro_node(state: ConversationState) -> dict:
     if settings.use_mock_llm:
         intent = classify_intent(text)
     else:
-
         from app.core.llm import get_chat_model
 
         prompt = (

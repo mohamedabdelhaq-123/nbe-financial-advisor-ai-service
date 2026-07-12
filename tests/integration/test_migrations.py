@@ -46,6 +46,6 @@ def test_alembic_upgrade_head_against_real_postgres():
             text=True,
             env=env,
         )
-    assert (
-        result.returncode == 0
-    ), f"alembic upgrade head failed:\nSTDOUT: {result.stdout}\nSTDERR: {result.stderr}"
+    assert result.returncode == 0, (
+        f"alembic upgrade head failed:\nSTDOUT: {result.stdout}\nSTDERR: {result.stderr}"
+    )

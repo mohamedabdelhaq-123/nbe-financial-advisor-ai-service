@@ -121,7 +121,9 @@ def _parse_and_normalize(raw: str) -> list[BudgetAllocation]:
     allocations = []
     for category, pct in data.items():
         try:
-            allocations.append(BudgetAllocation(category=category, percentage=Decimal(str(int(pct)))))
+            allocations.append(
+                BudgetAllocation(category=category, percentage=Decimal(str(int(pct))))
+            )
         except (ValueError, TypeError):
             return _mock_plan({})
 
