@@ -25,3 +25,20 @@ def test_missing_token_raises(monkeypatch):
 
     with pytest.raises(RuntimeError, match="AI_SERVICE_TOKEN"):
         importlib.reload(cfg)
+
+
+@pytest.mark.parametrize(
+    "missing_field",
+    ["STORAGE_S3_BUCKET", "STORAGE_S3_ACCESS_KEY", "STORAGE_S3_SECRET_KEY"],
+)
+def test_missing_storage_s3_config_raises(monkeypatch, missing_field):
+    """Config must fail fast if storage bucket/access key/secret key is incomplete."""
+    monkeypatch.setenv("STORAGE_S3_BUCKET", "test-bucket")
+    monkeypatch.setenv("STORAGE_S3_ACCESS_KEY", "test-access-key")
+    monkeypatch.setenv("STORAGE_S3_SECRET_KEY", "test-secret-key")
+    monkeypatch.setenv(missing_field, "")
+
+    import app.core.config as cfg
+
+    with pytest.raises(RuntimeError, match="STORAGE_S3"):
+        importlib.reload(cfg)

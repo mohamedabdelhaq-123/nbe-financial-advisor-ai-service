@@ -82,7 +82,7 @@ app/
 ├── ingestion/             ← SLICE: document → transaction ledger
 │   ├── router.py          ← POST /internal/normalize
 │   ├── schemas.py
-│   ├── extractor.py       ← pdfplumber confidence check + fallback to extraction tool
+│   ├── extractor.py       ← orchestrates layout confidence check and extraction tool delegate
 │   ├── normalizer.py      ← template lookup → deterministic mapping OR LLM inference
 │   ├── models.py          ← (no own tables; reads backend statement_files, writes embeddings)
 │   └── tests/
@@ -164,8 +164,7 @@ tests/
 | **Embedding column writes** | The AI service writes `transactions.embedding` and `monthly_summaries.embedding` via targeted UPDATE on the backend DB through the read-only role. These are write exceptions documented in `backend_db.py` with explicit comments. |
 | **Chat state** | LangGraph `AsyncPostgresSaver` with `thread_id = conversation_id`. Django sends `initial_context` only on the first turn; subsequent turns send `{conversation_id, user_id, message}` only. See `consolidated files/problems-to-solve/Chat_State_Design.md`. |
 | **Context window management** | `trim_messages()` keeps last 20 messages in LLM context. Summarisation node activates at 40+ messages. |
-| **Document extraction** | pdfplumber (confidence-checked) → fallback to team-selected extraction tool (MinerU or equivalent). Bank name is resolved from the Django upload context (`bank_accounts.bank_name`), not from PDF text. The team member responsible for OCR integration decides the fallback tool. |
-| **Bank name detection** | Not extracted from PDF (logos are images). Django passes `bank_name` in the normalize request from the linked `bank_accounts` record. |
+| **Document extraction** | fallback to team-selected extraction tool (MinerU or equivalent). The team member responsible for OCR integration decides the tool. |
 | **Langfuse** | Deferred. Not in scope for either phase. |
 | **Monthly summaries computation** | Deterministic SQL aggregation in `analytics/jobs/monthly_summary.py` — NOT computed by LLM agents. |
 | **SSE proxying** | Backend team's responsibility. AI service streams SSE; Django proxies it using ASGI for that route. |
@@ -199,9 +198,9 @@ tests/
 ### 1.3 Document Extraction & Normalization
 
 - [ ] Implement `ingestion/extractor.py`:
-  - pdfplumber confidence check (text yield, table detection, cell fill rate, date/amount parseability)
+  - layout confidence check (text yield, table detection, cell fill rate, date/amount parseability)
   - If confidence passes: return structured `{headers, rows}` 
-  - If confidence fails: delegate to the configured extraction tool (interface only — concrete tool decided by OCR team member)
+  - If confidence fails: delegate to the configured extraction tool (interface only — concrete tool decided by the OCR team member)
   - Layout signature generation: `md5(sorted(normalised_headers))`
 - [ ] Implement `ingestion/normalizer.py`:
   - Template lookup: query `bank_statement_templates` by `(bank_name, layout_signature)` via backend read-only DB

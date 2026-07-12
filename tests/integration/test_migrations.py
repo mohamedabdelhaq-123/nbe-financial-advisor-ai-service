@@ -28,7 +28,7 @@ def test_alembic_upgrade_head_against_real_postgres():
 
     Proves the async migration pipeline is wired to the own-DB metadata.
     """
-    with PostgresContainer("postgres:16-alpine") as pg:
+    with PostgresContainer("pgvector/pgvector:pg16") as pg:
         env = {
             **os.environ,
             "POSTGRES_HOST": pg.get_container_host_ip(),
@@ -46,6 +46,5 @@ def test_alembic_upgrade_head_against_real_postgres():
             text=True,
             env=env,
         )
-    assert (
-        result.returncode == 0
-    ), f"alembic upgrade head failed:\nSTDOUT: {result.stdout}\nSTDERR: {result.stderr}"
+    message = f"alembic upgrade head failed:\nSTDOUT: {result.stdout}\nSTDERR: {result.stderr}"
+    assert result.returncode == 0, message

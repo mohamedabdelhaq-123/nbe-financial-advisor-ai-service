@@ -1,15 +1,19 @@
-"""Chat slice HTTP surface."""
+"""Chat slice HTTP surface — internal SSE streaming endpoint."""
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 
 from app.core.security import require_token
-from app.features.chat.schemas import ChatRequest, ChatResponse
-from app.features.chat.service import generate_reply
+from app.features.chat.schemas import ChatTurnRequest
+from app.features.chat.service import stream_chat
 
-router = APIRouter(tags=["chat"], dependencies=[Depends(require_token)])
+router = APIRouter(prefix="/internal", tags=["chat"], dependencies=[Depends(require_token)])
 
 
-@router.post("/chat", response_model=ChatResponse)
-async def chat(body: ChatRequest) -> ChatResponse:
-    """Return an LLM reply to a user message. Requires a valid Bearer token."""
-    return await generate_reply(body.message)
+@router.post("/chat")
+async def chat(body: ChatTurnRequest, request: Request):
+    from fastapi.responses import StreamingResponse
+
+    return StreamingResponse(
+        stream_chat(request.app, body),
+        media_type="text/event-stream",
+    )
