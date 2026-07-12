@@ -22,6 +22,10 @@ os.environ.setdefault("AI_SERVICE_TOKEN", "test-token-for-ci")
 os.environ.setdefault("STORAGE_S3_BUCKET", "pfm-statements-ocr")
 os.environ.setdefault("STORAGE_S3_ACCESS_KEY", "dev-seaweed-key")
 os.environ.setdefault("STORAGE_S3_SECRET_KEY", "dev-seaweed-secret")
+# Mock mode by default so config's fail-fast check passes offline; a
+# developer/CI run that exports real MINERU_API_URL/KEY beforehand is left
+# untouched by setdefault.
+os.environ.setdefault("USE_MOCK_MINERU", "1")
 
 from shutil import which
 
