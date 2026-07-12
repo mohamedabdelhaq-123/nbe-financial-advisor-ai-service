@@ -33,13 +33,30 @@ async def stream_chat(app, request: ChatTurnRequest) -> AsyncIterator[str]:
     if request.is_first_turn and request.initial_context:
         user_context = request.initial_context
 
+    planner_answers: dict = {}
+    questions_asked = 0
+
+    if not request.is_first_turn:
+        snapshot = await graph.aget_state(config)
+        prev_values = snapshot.values if snapshot else {}
+        planner_answers = dict(prev_values.get("planner_answers") or {})
+        questions_asked = prev_values.get("questions_asked", 0)
+
+        if questions_asked > 0 and prev_values.get("stage") != "plan_complete":
+            from app.features.plan.service import QUESTIONS
+
+            idx = questions_asked - 1
+            if idx < len(QUESTIONS):
+                answered_id = QUESTIONS[idx].id
+                planner_answers.setdefault(answered_id, request.message)
+
     state = {
         "messages": initial_messages,
         "user_context": user_context,
         "stage": "",
         "intent": "",
-        "planner_answers": {},
-        "questions_asked": 0,
+        "planner_answers": planner_answers,
+        "questions_asked": questions_asked,
         "message_references": [],
     }
 
