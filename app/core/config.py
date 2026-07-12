@@ -38,6 +38,16 @@ class Settings(BaseSettings):
     backend_db_user: str = ""
     backend_db_password: str = ""
 
+    # ── storage (S3-compatible object storage) ─────────────────────────────
+    # Targets any S3-compatible endpoint (e.g. SeaweedFS); the bucket must
+    # already exist — this service never creates it.
+    storage_s3_bucket: str = ""
+    storage_s3_endpoint_url: str = ""  # empty => real AWS S3; set for SeaweedFS etc.
+    storage_s3_region: str = "us-east-1"
+    storage_s3_access_key: str = ""
+    storage_s3_secret_key: str = ""
+    storage_s3_use_path_style: bool = True
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     @property
@@ -76,4 +86,20 @@ if not settings.ai_service_token:
     raise RuntimeError(
         "AI_SERVICE_TOKEN must be set. "
         'Generate one with: python3 -c "import secrets; print(secrets.token_urlsafe(48))"'
+    )
+
+_missing_storage_fields = [
+    name
+    for name, value in (
+        ("STORAGE_S3_BUCKET", settings.storage_s3_bucket),
+        ("STORAGE_S3_ACCESS_KEY", settings.storage_s3_access_key),
+        ("STORAGE_S3_SECRET_KEY", settings.storage_s3_secret_key),
+    )
+    if not value
+]
+if _missing_storage_fields:
+    raise RuntimeError(
+        f"{', '.join(_missing_storage_fields)} must be set. "
+        "Point them at an existing bucket on an S3-compatible endpoint "
+        "(e.g. SeaweedFS) — this service never creates the bucket itself."
     )

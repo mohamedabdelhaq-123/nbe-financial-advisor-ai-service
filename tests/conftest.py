@@ -16,6 +16,12 @@ os.environ.setdefault("OPENAI_BASE_URL", "https://api.openai.com/v1")
 os.environ.setdefault("OPENAI_API_KEY", "__mock__")
 os.environ.setdefault("MODEL_NAME", "gpt-4o-mini")
 os.environ.setdefault("AI_SERVICE_TOKEN", "test-token-for-ci")
+# Dummy placeholders so config's fail-fast check passes offline; real values
+# (if a developer/CI exports them before running pytest) are left untouched
+# by setdefault and picked up by the real_s3_storage_env fixture below.
+os.environ.setdefault("STORAGE_S3_BUCKET", "pfm-statements-ocr")
+os.environ.setdefault("STORAGE_S3_ACCESS_KEY", "dev-seaweed-key")
+os.environ.setdefault("STORAGE_S3_SECRET_KEY", "dev-seaweed-secret")
 
 from shutil import which
 
@@ -147,3 +153,29 @@ def mock_backend_session(own_pg):
             await session.commit()
 
     return _seed_rows
+
+
+@pytest.fixture
+def real_s3_storage_env(monkeypatch):
+    """Point `settings` at a real, already-running S3-compatible instance.
+
+    Skips unless STORAGE_S3_ENDPOINT_URL/BUCKET/ACCESS_KEY/SECRET_KEY are all
+    set in the real environment (not the dummy defaults above), keeping the
+    default test run fully offline per the mock-first constitution principle.
+    """
+    endpoint = os.environ.get("STORAGE_S3_ENDPOINT_URL")
+    bucket = os.environ.get("STORAGE_S3_BUCKET")
+    access_key = os.environ.get("STORAGE_S3_ACCESS_KEY")
+    secret_key = os.environ.get("STORAGE_S3_SECRET_KEY")
+    if not (endpoint and bucket and access_key and secret_key):
+        pytest.skip("Real STORAGE_S3_* env vars not configured")
+
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "storage_s3_endpoint_url", endpoint)
+    monkeypatch.setattr(settings, "storage_s3_bucket", bucket)
+    monkeypatch.setattr(settings, "storage_s3_access_key", access_key)
+    monkeypatch.setattr(settings, "storage_s3_secret_key", secret_key)
+    monkeypatch.setattr(
+        settings, "storage_s3_region", os.environ.get("STORAGE_S3_REGION", "us-east-1")
+    )
