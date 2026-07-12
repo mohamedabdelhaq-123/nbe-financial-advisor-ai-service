@@ -7,6 +7,7 @@ AUTH_ENDPOINTS = [
     ("POST", "/internal/plan/question"),
     ("POST", "/internal/plan/generate"),
     ("POST", "/internal/recommendations/match"),
+    ("POST", "/internal/ingestion/process"),
     ("POST", "/internal/analyze/post-ingestion"),
     ("POST", "/internal/analyze/monthly-summary"),
     ("POST", "/internal/analyze/anomaly-check"),

@@ -47,6 +47,15 @@ class Settings(BaseSettings):
     storage_s3_access_key: str = ""
     storage_s3_secret_key: str = ""
     storage_s3_use_path_style: bool = True
+    # Dedicated bucket for statement OCR/extraction output (ingestion slice). Kept
+    # separate from storage_s3_bucket so this feature's output location never
+    # implicitly depends on what any other feature configures that setting to mean.
+    storage_s3_ocr_bucket: str = "pfm-statements-ocr"
+
+    # ── MinerU (document processing engine) ─────────────────────────────────
+    use_mock_mineru: bool = False
+    mineru_api_url: str = ""
+    mineru_api_key: str = ""  # sent as the X-Api-Key header; optional
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
@@ -102,4 +111,10 @@ if _missing_storage_fields:
         f"{', '.join(_missing_storage_fields)} must be set. "
         "Point them at an existing bucket on an S3-compatible endpoint "
         "(e.g. SeaweedFS) — this service never creates the bucket itself."
+    )
+
+if not settings.use_mock_mineru and not settings.mineru_api_url:
+    raise RuntimeError(
+        "MINERU_API_URL must be set when USE_MOCK_MINERU is false. "
+        "Set USE_MOCK_MINERU=1 to run without a reachable MinerU instance."
     )

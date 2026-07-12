@@ -22,6 +22,10 @@ os.environ.setdefault("AI_SERVICE_TOKEN", "test-token-for-ci")
 os.environ.setdefault("STORAGE_S3_BUCKET", "pfm-statements-ocr")
 os.environ.setdefault("STORAGE_S3_ACCESS_KEY", "dev-seaweed-key")
 os.environ.setdefault("STORAGE_S3_SECRET_KEY", "dev-seaweed-secret")
+# Mock mode by default so config's fail-fast check passes offline; a
+# developer/CI run that exports real MINERU_API_URL/KEY beforehand is left
+# untouched by setdefault.
+os.environ.setdefault("USE_MOCK_MINERU", "1")
 
 from shutil import which
 
@@ -55,6 +59,13 @@ def own_db_url():
     from sqlalchemy.pool import NullPool
     from testcontainers.postgres import PostgresContainer
 
+    # Import every own-DB model module so its table registers on
+    # OwnBase.metadata before create_all() runs below. app.core.audit.record_audit()
+    # imports AiAuditLog lazily (inside its function body, to dodge a circular
+    # import) so nothing in app.main's import graph ever triggers this
+    # registration on its own — without this import, ai_audit_log silently
+    # never gets created here, regardless of test run order.
+    import app.features.audit.models  # noqa: F401
     from app.core.db import OwnBase
 
     with PostgresContainer("pgvector/pgvector:pg16") as pg:
