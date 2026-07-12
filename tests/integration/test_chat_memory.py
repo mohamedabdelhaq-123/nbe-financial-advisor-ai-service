@@ -1,6 +1,5 @@
 """US1 Integration test: Chat memory persistence via checkpointer (Testcontainers)."""
 
-import os
 from shutil import which
 
 import pytest
@@ -13,13 +12,13 @@ def _docker_available() -> bool:
 
 @pytest.mark.skipif(not _docker_available(), reason="Docker not available")
 @pytest.mark.asyncio
-async def test_chat_memory_persists_across_turns():
+async def test_chat_memory_persists_across_turns(monkeypatch):
     with PostgresContainer("pgvector/pgvector:pg16") as pg:
-        os.environ["POSTGRES_HOST"] = pg.get_container_host_ip()
-        os.environ["POSTGRES_PORT"] = str(pg.get_exposed_port(5432))
-        os.environ["POSTGRES_DB"] = pg.dbname
-        os.environ["POSTGRES_USER"] = pg.username
-        os.environ["POSTGRES_PASSWORD"] = pg.password
+        monkeypatch.setenv("POSTGRES_HOST", pg.get_container_host_ip())
+        monkeypatch.setenv("POSTGRES_PORT", str(pg.get_exposed_port(5432)))
+        monkeypatch.setenv("POSTGRES_DB", pg.dbname)
+        monkeypatch.setenv("POSTGRES_USER", pg.username)
+        monkeypatch.setenv("POSTGRES_PASSWORD", pg.password)
 
         import importlib
 
