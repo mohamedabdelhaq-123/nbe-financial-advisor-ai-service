@@ -16,6 +16,18 @@ def test_missing_api_key_raises_when_mock_disabled(monkeypatch):
         importlib.reload(cfg)
 
 
+def test_missing_embedding_api_key_raises_when_mock_disabled(monkeypatch):
+    """Config must fail fast if USE_MOCK_LLM=false and no real embedding key is set."""
+    monkeypatch.setenv("USE_MOCK_LLM", "0")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-real-chat-key")
+    monkeypatch.setenv("EMBEDDING_API_KEY", "__mock__")
+
+    import app.core.config as cfg
+
+    with pytest.raises(RuntimeError, match="EMBEDDING_API_KEY"):
+        importlib.reload(cfg)
+
+
 def test_missing_token_raises(monkeypatch):
     """Config must fail fast if AI_SERVICE_TOKEN is unset."""
     monkeypatch.setenv("USE_MOCK_LLM", "1")
