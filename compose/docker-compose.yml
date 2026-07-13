@@ -1,8 +1,13 @@
+# Pinned explicitly so the Compose project/container names stay
+# "nbe-ai-service-*" rather than defaulting to "compose-*" (the basename of
+# the directory this file lives in).
+name: nbe-ai-service
+
 services:
   ai-service:
-    build: .
+    build: ..
     env_file:
-      - .env          # holds OPENAI_API_KEY etc. — gitignored
+      - ../.env       # holds OPENAI_API_KEY etc. — gitignored
     environment:
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
       MODEL_NAME: ${MODEL_NAME:-gpt-4o-mini}
@@ -19,10 +24,8 @@ services:
       BACKEND_DB_NAME: ${BACKEND_DB_NAME:-appdb}
       BACKEND_DB_USER: ${BACKEND_DB_USER:-ai_readonly}
       BACKEND_DB_PASSWORD: ${BACKEND_DB_PASSWORD:-change-me-readonly-pass}
-    ports:
-      - "8001:8001"
 
   mineru-server:
     extends:
-      file: compose/mineru/docker-compose.yml
+      file: mineru/docker-compose.yml
       service: mineru-api

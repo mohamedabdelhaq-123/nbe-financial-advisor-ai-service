@@ -1,0 +1,27 @@
+# Standalone local dev. Joins the network created by the backend repo's own
+# dev docker-compose.yml (postgres + seaweedfs), so this service never needs
+# to run its own copies of them. Start that stack first.
+#
+# Usage: make dev-up  (or: docker compose -f compose/docker-compose.yml -f compose/docker-compose.dev.yml up --build)
+services:
+  ai-service:
+    build:
+      target: dev
+    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8001 --reload"
+    volumes:
+      - ..:/app
+      # Named volume shadows the bind mount above at just this path, so the
+      # image's uv-installed .venv survives instead of being hidden by the
+      # host checkout (which may not have one, or have one built for a
+      # different OS/arch).
+      - ai-service-dev-venv:/app/.venv
+    ports:
+      - "8001:8001"
+
+networks:
+  default:
+    name: ${DEV_NETWORK_NAME:-nbe-dev}
+    external: true
+
+volumes:
+  ai-service-dev-venv:

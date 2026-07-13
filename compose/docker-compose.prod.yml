@@ -1,0 +1,30 @@
+# Self-contained validation of the hardened `prod` image: builds it, boots it
+# fully mocked with zero external dependencies, and checks its HEALTHCHECK
+# passes. This is NOT the deployment path — the platform is actually deployed
+# via nbe-financial-advisor-backend/deploy/docker-compose.yml, which builds
+# this repo with the same `prod` target and wires it to real Postgres/S3.
+# Use this only as a fast local/CI gate before an image reaches that stack.
+#
+# Usage: make prod-smoke  (or: docker compose -f compose/docker-compose.yml -f compose/docker-compose.prod.yml up --build)
+services:
+  ai-service:
+    build:
+      target: prod
+    restart: unless-stopped
+    environment:
+      USE_MOCK_LLM: 1
+      USE_MOCK_MINERU: 1
+      AI_SERVICE_TOKEN: ${AI_SERVICE_TOKEN:-smoke-test-token}
+      # Pinned rather than left to the base file's ${VAR:-postgres} defaults,
+      # which fall back to whatever POSTGRES_HOST/BACKEND_DB_HOST happen to be
+      # in the developer's local .env (compose auto-loads it for interpolation)
+      # — this file must stay deterministic and dependency-free regardless.
+      POSTGRES_HOST: smoke-test-no-db
+      BACKEND_DB_HOST: smoke-test-no-db
+      STORAGE_S3_BUCKET: smoke-test-bucket
+      STORAGE_S3_ENDPOINT_URL: http://smoke-test:9000
+      STORAGE_S3_REGION: us-east-1
+      STORAGE_S3_ACCESS_KEY: smoke-test
+      STORAGE_S3_SECRET_KEY: smoke-test
+      STORAGE_S3_USE_PATH_STYLE: "true"
+      STORAGE_S3_OCR_BUCKET: smoke-test-ocr
