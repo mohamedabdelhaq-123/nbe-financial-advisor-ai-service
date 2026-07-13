@@ -66,6 +66,7 @@ def own_db_url():
     # registration on its own — without this import, ai_audit_log silently
     # never gets created here, regardless of test run order.
     import app.features.audit.models  # noqa: F401
+    import app.features.ingestion.categories  # noqa: F401
     from app.core.db import OwnBase
 
     with PostgresContainer("pgvector/pgvector:pg16") as pg:
@@ -151,6 +152,26 @@ def mock_embedder(monkeypatch):
 
     monkeypatch.setattr("app.features.embed.service.embed_texts", _mock_embed_texts)
     return _mock_embed_texts
+
+
+@pytest.fixture
+async def seed_categories(own_pg):
+    """Seed the `categories` table with the same starter set the real migration inserts.
+
+    Testcontainers tests use `OwnBase.metadata.create_all()`, not `alembic upgrade head`,
+    so the migration's `op.bulk_insert(...)` never runs here — this fixture is the
+    test-time equivalent. The Postgres container is session-scoped, so `categories` rows
+    persist across tests; delete first to stay idempotent regardless of test order/count.
+    """
+    from sqlalchemy import delete
+
+    from app.features.ingestion.categories import CATEGORY_SEED_DATA, Category
+
+    async with own_pg() as session:
+        await session.execute(delete(Category))
+        for row in CATEGORY_SEED_DATA:
+            session.add(Category(**row))
+        await session.commit()
 
 
 @pytest.fixture

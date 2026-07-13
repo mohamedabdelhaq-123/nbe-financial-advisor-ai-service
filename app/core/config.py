@@ -16,6 +16,21 @@ class Settings(BaseSettings):
     openai_base_url: str = "https://api.openai.com/v1"
     openai_api_key: str = "__mock__"  # placeholder — unused in mock mode
     model_name: str = "gpt-4o-mini"
+    # Statement normalization processes OCR content in prompt-sized chunks,
+    # one LangGraph "tick" per batch of this many concurrent LLM calls.
+    # Default 1 (fully sequential) is safest for a low-tier per-minute token
+    # budget; raise it once the configured provider/tier can absorb more
+    # concurrent throughput.
+    normalization_max_parallel_chunks: int = 1
+    # Per-chunk completion token ceiling for statement normalization. Default
+    # 4096 is tuned safe for Groq's on-demand 8000 TPM tier (admission control
+    # counts prompt_tokens + max_tokens against that budget pre-generation, so
+    # raising this indiscriminately can cause 413s there). Confirmed against a
+    # real reasoning-style free model (OpenRouter) that this default is too
+    # low for it — such models spend a large, variable share of the
+    # completion budget on hidden reasoning tokens before emitting the actual
+    # JSON, so raise this per-provider/model rather than changing the default.
+    normalization_chunk_max_tokens: int = 4096
 
     # ── auth ───────────────────────────────────────────────────────────────
     # Shared secret between the Django backend and this service.

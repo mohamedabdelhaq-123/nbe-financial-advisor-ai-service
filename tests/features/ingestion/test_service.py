@@ -9,7 +9,7 @@ from sqlalchemy import Select
 
 from app.core.config import settings
 from app.features.ingestion.mineru_client import ParsedDocument
-from app.features.ingestion.service import process_statement
+from app.features.ingestion.service import normalize_statement, process_statement
 
 STATEMENT_ID = str(uuid.uuid4())
 
@@ -114,9 +114,9 @@ class _FakeStorageContext:
         return False
 
 
-def _patch_storage(monkeypatch, s3):
+def _patch_storage(monkeypatch, s3, module="app.features.ingestion.service.process"):
     monkeypatch.setattr(
-        "app.features.ingestion.service.get_storage_backend",
+        f"{module}.get_storage_backend",
         lambda: _FakeStorageContext(s3),
     )
 
@@ -135,7 +135,7 @@ class _FakeMineruClient:
 
 
 def _patch_mineru(monkeypatch, client):
-    monkeypatch.setattr("app.features.ingestion.service.get_mineru_client", lambda: client)
+    monkeypatch.setattr("app.features.ingestion.service.process.get_mineru_client", lambda: client)
 
 
 # ---------------------------------------------------------------------------
@@ -403,3 +403,425 @@ async def test_audit_row_persisted_in_real_own_db(monkeypatch, own_pg):
     detail = json.loads(rows[0].detail_json)
     assert detail["statement_id"] == STATEMENT_ID
     assert detail["prefix"] == result.prefix
+
+
+# ---------------------------------------------------------------------------
+# normalize_statement() — US1/US2/US3/US4
+# ---------------------------------------------------------------------------
+
+
+OCR_RESULT_ID = str(uuid.uuid4())
+NORM_STATEMENT_ID = uuid.uuid4()
+NORM_USER_ID = uuid.uuid4()
+
+
+class _FakeOcrResult:
+    def __init__(self, statement_id):
+        self.statement_id = statement_id
+
+
+class _FakeNormResult:
+    def __init__(self, value):
+        self._value = value
+
+    def scalar_one_or_none(self):
+        return self._value
+
+    def all(self):
+        return self._value
+
+
+class _FakeNormBackendSession:
+    def __init__(self, responses: list):
+        self._responses = list(responses)
+        self.executed: list = []
+
+    async def execute(self, stmt):
+        self.executed.append(stmt)
+        return self._responses.pop(0)
+
+
+def _normalize_session_gen(ocr_result_row, user_id=None, dup_rows=()):
+    responses = [_FakeNormResult(ocr_result_row)]
+    if ocr_result_row is not None:
+        responses.append(_FakeNormResult(user_id))
+        responses.append(_FakeNormResult(list(dup_rows)))
+    session = _FakeNormBackendSession(responses)
+
+    async def _gen():
+        yield session
+
+    _gen.session = session
+    return _gen
+
+
+def _own_session_gen_from_pg(own_pg):
+    async def _gen():
+        async with own_pg() as session:
+            yield session
+
+    return _gen
+
+
+class _FakeOcrObjectBody:
+    def __init__(self, data: bytes):
+        self._data = data
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    async def read(self):
+        return self._data
+
+
+class _FakeOcrStorage:
+    def __init__(self, objects: dict[str, bytes], get_exc: Exception | None = None):
+        self._objects = objects
+        self._get_exc = get_exc
+        self.get_calls: list = []
+        self.put_calls: list = []
+
+    async def get_object(self, Bucket, Key):
+        self.get_calls.append((Bucket, Key))
+        if self._get_exc:
+            raise self._get_exc
+        return {"Body": _FakeOcrObjectBody(self._objects[Key])}
+
+    async def put_object(self, Bucket, Key, Body):
+        self.put_calls.append((Bucket, Key, Body))
+
+
+def _ocr_objects(
+    statement_id, markdown: str = "# Statement\nsome text", content_list: list | None = None
+):
+    prefix = f"{statement_id}/"
+    return {
+        f"{prefix}markdown.md": markdown.encode("utf-8"),
+        f"{prefix}content_list.json": json.dumps(
+            content_list if content_list is not None else [{"type": "text", "text": "line"}]
+        ).encode("utf-8"),
+    }
+
+
+class _FakeNormalizerClient:
+    def __init__(self, result=None, exc: Exception | None = None):
+        self._result = result
+        self._exc = exc
+
+    async def normalize(self, content_list, markdown, known_categories):
+        if self._exc:
+            raise self._exc
+        return self._result
+
+
+@pytest.mark.asyncio
+async def test_normalize_happy_path_returns_categorized_transactions(
+    monkeypatch, own_pg, seed_categories
+):
+    session_gen = _normalize_session_gen(
+        _FakeOcrResult(statement_id=NORM_STATEMENT_ID), user_id=NORM_USER_ID, dup_rows=[]
+    )
+    own_gen = _own_session_gen_from_pg(own_pg)
+
+    s3 = _FakeOcrStorage(_ocr_objects(NORM_STATEMENT_ID))
+    _patch_storage(monkeypatch, s3, module="app.features.ingestion.service.normalize")
+
+    result = await normalize_statement(
+        session_gen=session_gen, own_session_gen=own_gen, ocr_result_id=OCR_RESULT_ID
+    )
+
+    assert result.model_used
+    assert result.normalized_json["transactions"], "expected at least one transaction"
+    txn = result.normalized_json["transactions"][0]
+    assert txn["category"] in {
+        "groceries",
+        "dining",
+        "transport",
+        "utilities",
+        "rent",
+        "salary",
+        "transfer",
+        "fees",
+        "entertainment",
+        "healthcare",
+        "shopping",
+        "other",
+    }
+    assert txn["duplicate_of"] is None
+
+    put_keys = {key for _, key, _ in s3.put_calls}
+    assert f"{NORM_STATEMENT_ID}/normalized.json" in put_keys
+
+
+@pytest.mark.asyncio
+async def test_normalize_unknown_ocr_result_returns_404(monkeypatch, own_pg, seed_categories):
+    session_gen = _normalize_session_gen(None)
+    own_gen = _own_session_gen_from_pg(own_pg)
+
+    s3 = _FakeOcrStorage({})
+    _patch_storage(monkeypatch, s3, module="app.features.ingestion.service.normalize")
+
+    with pytest.raises(HTTPException) as exc_info:
+        await normalize_statement(
+            session_gen=session_gen, own_session_gen=own_gen, ocr_result_id=OCR_RESULT_ID
+        )
+
+    assert exc_info.value.status_code == 404
+    assert s3.get_calls == []
+
+
+@pytest.mark.asyncio
+async def test_normalize_missing_ocr_artifacts_returns_502(monkeypatch, own_pg, seed_categories):
+    session_gen = _normalize_session_gen(
+        _FakeOcrResult(statement_id=NORM_STATEMENT_ID), user_id=NORM_USER_ID, dup_rows=[]
+    )
+    own_gen = _own_session_gen_from_pg(own_pg)
+
+    s3 = _FakeOcrStorage({}, get_exc=RuntimeError("no such key"))
+    _patch_storage(monkeypatch, s3, module="app.features.ingestion.service.normalize")
+
+    with pytest.raises(HTTPException) as exc_info:
+        await normalize_statement(
+            session_gen=session_gen, own_session_gen=own_gen, ocr_result_id=OCR_RESULT_ID
+        )
+
+    assert exc_info.value.status_code == 502
+    assert "OCR content" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
+async def test_normalize_engine_failure_returns_502(monkeypatch, own_pg, seed_categories):
+    session_gen = _normalize_session_gen(
+        _FakeOcrResult(statement_id=NORM_STATEMENT_ID), user_id=NORM_USER_ID, dup_rows=[]
+    )
+    own_gen = _own_session_gen_from_pg(own_pg)
+
+    s3 = _FakeOcrStorage(_ocr_objects(NORM_STATEMENT_ID))
+    _patch_storage(monkeypatch, s3, module="app.features.ingestion.service.normalize")
+
+    monkeypatch.setattr(
+        "app.features.ingestion.service.normalize.get_normalizer_client",
+        lambda: _FakeNormalizerClient(exc=RuntimeError("model unavailable")),
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await normalize_statement(
+            session_gen=session_gen, own_session_gen=own_gen, ocr_result_id=OCR_RESULT_ID
+        )
+
+    assert exc_info.value.status_code == 502
+    assert "normalization engine" in exc_info.value.detail
+    assert s3.put_calls == []
+
+
+@pytest.mark.asyncio
+async def test_normalize_empty_content_returns_success_with_no_transactions(
+    monkeypatch, own_pg, seed_categories
+):
+    session_gen = _normalize_session_gen(
+        _FakeOcrResult(statement_id=NORM_STATEMENT_ID), user_id=NORM_USER_ID, dup_rows=[]
+    )
+    own_gen = _own_session_gen_from_pg(own_pg)
+
+    s3 = _FakeOcrStorage(_ocr_objects(NORM_STATEMENT_ID, markdown="", content_list=[]))
+    _patch_storage(monkeypatch, s3, module="app.features.ingestion.service.normalize")
+
+    result = await normalize_statement(
+        session_gen=session_gen, own_session_gen=own_gen, ocr_result_id=OCR_RESULT_ID
+    )
+
+    assert result.normalized_json["transactions"] == []
+
+
+# ---------------------------------------------------------------------------
+# normalize_statement() — US2: duplicate flagging (full flow)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_normalize_flags_duplicate_when_backend_query_matches(
+    monkeypatch, own_pg, seed_categories
+):
+    existing_id = uuid.uuid4()
+    session_gen = _normalize_session_gen(
+        _FakeOcrResult(statement_id=NORM_STATEMENT_ID),
+        user_id=NORM_USER_ID,
+        dup_rows=[(existing_id, "2026-01-01")],
+    )
+    own_gen = _own_session_gen_from_pg(own_pg)
+
+    s3 = _FakeOcrStorage(_ocr_objects(NORM_STATEMENT_ID))
+    _patch_storage(monkeypatch, s3, module="app.features.ingestion.service.normalize")
+
+    async def _fake_find_duplicate(session, user_id, transaction_date, amount):
+        return str(existing_id)
+
+    monkeypatch.setattr(
+        "app.features.ingestion.service.normalize.find_duplicate", _fake_find_duplicate
+    )
+
+    result = await normalize_statement(
+        session_gen=session_gen, own_session_gen=own_gen, ocr_result_id=OCR_RESULT_ID
+    )
+
+    txn = result.normalized_json["transactions"][0]
+    assert txn["duplicate_of"] == str(existing_id)
+
+
+# ---------------------------------------------------------------------------
+# normalize_statement() — US3: unmatched category falls back
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_normalize_unmatched_category_falls_back_to_other(
+    monkeypatch, own_pg, seed_categories
+):
+    session_gen = _normalize_session_gen(
+        _FakeOcrResult(statement_id=NORM_STATEMENT_ID), user_id=NORM_USER_ID, dup_rows=[]
+    )
+    own_gen = _own_session_gen_from_pg(own_pg)
+
+    s3 = _FakeOcrStorage(_ocr_objects(NORM_STATEMENT_ID))
+    _patch_storage(monkeypatch, s3, module="app.features.ingestion.service.normalize")
+
+    monkeypatch.setattr(
+        "app.features.ingestion.service.normalize.get_normalizer_client",
+        lambda: _FakeNormalizerClient(
+            result=(
+                {
+                    "bank_name": "Test Bank",
+                    "account_hint": "****1234",
+                    "transactions": [
+                        {
+                            "transaction_date": "2026-05-01",
+                            "merchant_raw": "Some Merchant",
+                            "category": "spelunking-equipment",
+                            "amount": 42.0,
+                            "transaction_type": "debit",
+                        }
+                    ],
+                },
+                "test-model",
+            )
+        ),
+    )
+
+    result = await normalize_statement(
+        session_gen=session_gen, own_session_gen=own_gen, ocr_result_id=OCR_RESULT_ID
+    )
+
+    assert result.normalized_json["transactions"][0]["category"] == "other"
+
+
+@pytest.mark.asyncio
+async def test_normalize_transaction_extra_fields_are_passed_through(
+    monkeypatch, own_pg, seed_categories
+):
+    session_gen = _normalize_session_gen(
+        _FakeOcrResult(statement_id=NORM_STATEMENT_ID), user_id=NORM_USER_ID, dup_rows=[]
+    )
+    own_gen = _own_session_gen_from_pg(own_pg)
+
+    s3 = _FakeOcrStorage(_ocr_objects(NORM_STATEMENT_ID))
+    _patch_storage(monkeypatch, s3, module="app.features.ingestion.service.normalize")
+
+    monkeypatch.setattr(
+        "app.features.ingestion.service.normalize.get_normalizer_client",
+        lambda: _FakeNormalizerClient(
+            result=(
+                {
+                    "bank_name": "Test Bank",
+                    "account_hint": "****1234",
+                    "transactions": [
+                        {
+                            "transaction_date": "2026-05-01",
+                            "merchant_raw": "Some Merchant",
+                            "category": "other",
+                            "amount": 42.0,
+                            "transaction_type": "debit",
+                            "extra_fields": [{"key": "reference_number", "value": "REF123"}],
+                        }
+                    ],
+                },
+                "test-model",
+            )
+        ),
+    )
+
+    result = await normalize_statement(
+        session_gen=session_gen, own_session_gen=own_gen, ocr_result_id=OCR_RESULT_ID
+    )
+
+    assert result.normalized_json["transactions"][0]["extra_fields"] == [
+        {"key": "reference_number", "value": "REF123"}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_normalize_transaction_without_extra_fields_omits_the_key(
+    monkeypatch, own_pg, seed_categories
+):
+    session_gen = _normalize_session_gen(
+        _FakeOcrResult(statement_id=NORM_STATEMENT_ID), user_id=NORM_USER_ID, dup_rows=[]
+    )
+    own_gen = _own_session_gen_from_pg(own_pg)
+
+    s3 = _FakeOcrStorage(_ocr_objects(NORM_STATEMENT_ID))
+    _patch_storage(monkeypatch, s3, module="app.features.ingestion.service.normalize")
+
+    result = await normalize_statement(
+        session_gen=session_gen, own_session_gen=own_gen, ocr_result_id=OCR_RESULT_ID
+    )
+
+    assert "extra_fields" not in result.normalized_json["transactions"][0]
+
+
+# ---------------------------------------------------------------------------
+# normalize_statement() — US4: persisted object matches returned result
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_normalize_persisted_object_matches_returned_result(
+    monkeypatch, own_pg, seed_categories
+):
+    session_gen = _normalize_session_gen(
+        _FakeOcrResult(statement_id=NORM_STATEMENT_ID), user_id=NORM_USER_ID, dup_rows=[]
+    )
+    own_gen = _own_session_gen_from_pg(own_pg)
+
+    s3 = _FakeOcrStorage(_ocr_objects(NORM_STATEMENT_ID))
+    _patch_storage(monkeypatch, s3, module="app.features.ingestion.service.normalize")
+
+    result = await normalize_statement(
+        session_gen=session_gen, own_session_gen=own_gen, ocr_result_id=OCR_RESULT_ID
+    )
+
+    persisted_body = next(
+        body for _, key, body in s3.put_calls if key == f"{NORM_STATEMENT_ID}/normalized.json"
+    )
+    assert json.loads(persisted_body) == result.normalized_json
+
+
+@pytest.mark.asyncio
+async def test_normalize_reprocessing_overwrites_same_key(monkeypatch, own_pg, seed_categories):
+    s3 = _FakeOcrStorage(_ocr_objects(NORM_STATEMENT_ID))
+    _patch_storage(monkeypatch, s3, module="app.features.ingestion.service.normalize")
+    own_gen = _own_session_gen_from_pg(own_pg)
+
+    for _ in range(2):
+        session_gen = _normalize_session_gen(
+            _FakeOcrResult(statement_id=NORM_STATEMENT_ID), user_id=NORM_USER_ID, dup_rows=[]
+        )
+        await normalize_statement(
+            session_gen=session_gen, own_session_gen=own_gen, ocr_result_id=OCR_RESULT_ID
+        )
+
+    normalize_put_keys = [
+        key for _, key, _ in s3.put_calls if key == f"{NORM_STATEMENT_ID}/normalized.json"
+    ]
+    assert len(normalize_put_keys) == 2
