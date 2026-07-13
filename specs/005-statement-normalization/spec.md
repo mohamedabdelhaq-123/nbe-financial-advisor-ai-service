@@ -8,7 +8,7 @@
 
 **Input**: User description: "lets plan the second part of the ingestion pipeline which the normalization step. The normalization steps takes the id of a StatementOcrResult, and produces a normalized.json which contains the result of the normalization process. the normalization involves extracting the transactions list, extracting other info from the document. The result of the normalize endpoint would be normalized_json (returned as json, we also save it to object storage) and model_used."
 
-## User Scenarios & Testing *(mandatory)*
+## User Scenarios & Testing _(mandatory)_
 
 ### User Story 1 - Extract structured transactions from a processed statement (Priority: P1)
 
@@ -54,9 +54,10 @@ existing transaction, while non-matching ones don't.
 
 **Acceptance Scenarios**:
 
-1. **Given** an extracted transaction whose date and amount closely match an existing
-   recorded transaction for the same user, **When** normalization completes, **Then** that
-   transaction is flagged with a reference to the matching existing transaction.
+1. **Given** an extracted transaction whose date and amount closely match an existing recorded
+   transaction for the same user (account not required — it may not be linked yet at normalization
+   time), **When** normalization completes, **Then** that transaction is flagged with a reference to
+   the matching existing transaction.
 2. **Given** a user with no existing recorded transactions, **When** normalization completes,
    **Then** no extracted transaction is flagged as a duplicate.
 
@@ -124,7 +125,7 @@ resulting object back from storage, confirming it matches the returned result by
   unknown)? → rejected immediately as a client input error, distinct from a well-formed-but-unknown
   id.
 
-## Requirements *(mandatory)*
+## Requirements _(mandatory)_
 
 ### Functional Requirements
 
@@ -178,7 +179,7 @@ resulting object back from storage, confirming it matches the returned result by
   normalization call — returned to the caller and separately persisted to object storage; not
   stored as its own database row by this feature.
 
-## Success Criteria *(mandatory)*
+## Success Criteria _(mandatory)_
 
 ### Measurable Outcomes
 
