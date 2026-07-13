@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends
 
 from app.backend_db import get_backend_session
 from app.core.db import get_own_session
-from app.core.security import require_token
+from app.core.security import ERROR_RESPONSES, require_token
 from app.features.ingestion.schemas import (
     NormalizeStatementRequest,
     NormalizeStatementResult,
@@ -20,7 +20,11 @@ router = APIRouter(
 )
 
 
-@router.post("/process", response_model=ProcessStatementResult)
+@router.post(
+    "/process",
+    response_model=ProcessStatementResult,
+    responses={**ERROR_RESPONSES},
+)
 async def process(body: ProcessStatementRequest) -> ProcessStatementResult:
     """Extract a previously uploaded statement's content via MinerU. Requires a Bearer token."""
     return await process_statement(
@@ -30,7 +34,11 @@ async def process(body: ProcessStatementRequest) -> ProcessStatementResult:
     )
 
 
-@router.post("/normalize", response_model=NormalizeStatementResult)
+@router.post(
+    "/normalize",
+    response_model=NormalizeStatementResult,
+    responses={**ERROR_RESPONSES},
+)
 async def normalize(body: NormalizeStatementRequest) -> NormalizeStatementResult:
     """Extract structured transactions from a previously processed statement's OCR content.
 

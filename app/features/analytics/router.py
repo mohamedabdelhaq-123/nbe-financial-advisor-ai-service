@@ -5,13 +5,16 @@ from contextlib import asynccontextmanager
 from fastapi import APIRouter, Depends
 
 from app.backend_db import get_backend_session
-from app.core.security import require_token
+from app.core.security import ERROR_RESPONSES, require_token
 from app.features.analytics.jobs.anomaly_detection import detect_anomalies
 from app.features.analytics.jobs.monthly_summary import compute_monthly_summary
 from app.features.analytics.schemas import (
     AnomalyCheckRequest,
+    AnomalyFlagResult,
     MonthlySummaryRequest,
+    MonthlySummaryResult,
     PostIngestionRequest,
+    PostIngestionResult,
 )
 from app.features.analytics.service import run_post_ingestion
 
@@ -33,18 +36,32 @@ router = APIRouter(
 _backend_session_gen = asynccontextmanager(get_backend_session)
 
 
-@router.post("/post-ingestion")
+@router.post(
+    "/post-ingestion",
+    response_model=PostIngestionResult,
+    responses={**ERROR_RESPONSES},
+)
 async def post_ingestion(body: PostIngestionRequest):
+    """Run the monthly-summary, recurring-charges, and anomaly-check pipelines in one call.
+
+    Intended to be triggered once by the backend right after a statement finishes
+    ingestion, so all three deterministic analytics pipelines run together.
+    """
     return await run_post_ingestion(
         session_gen=_backend_session_gen,
         req=body,
     )
 
 
-@router.post("/monthly-summary")
+@router.post(
+    "/monthly-summary",
+    response_model=MonthlySummaryResult,
+    responses={**ERROR_RESPONSES},
+)
 async def monthly_summary(
     body: MonthlySummaryRequest,
 ):
+    """Compute a monthly income/expense/category breakdown and its embedding."""
     result = await compute_monthly_summary(
         session_gen=_backend_session_gen,
         user_id=body.user_id,
@@ -54,8 +71,13 @@ async def monthly_summary(
     return result.model_dump()
 
 
-@router.post("/anomaly-check")
+@router.post(
+    "/anomaly-check",
+    response_model=list[AnomalyFlagResult],
+    responses={**ERROR_RESPONSES},
+)
 async def anomaly_check(body: AnomalyCheckRequest):
+    """Detect per-category spending anomalies for an account/month via IQR outlier detection."""
     flags = await detect_anomalies(
         session_gen=_backend_session_gen,
         user_id=body.user_id,
