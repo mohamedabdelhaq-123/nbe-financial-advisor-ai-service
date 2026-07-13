@@ -2,11 +2,12 @@
 
 from fastapi import APIRouter, Depends
 
-from app.core.security import require_token
+from app.core.security import ERROR_RESPONSES, require_token
 from app.features.plan.schemas import (
     GeneratePlanRequest,
     GeneratePlanResponse,
     NextQuestionRequest,
+    NextQuestionResponse,
 )
 from app.features.plan.service import generate_plan, next_question
 
@@ -17,8 +18,13 @@ router = APIRouter(
 )
 
 
-@router.post("/question")
+@router.post(
+    "/question",
+    response_model=NextQuestionResponse,
+    responses={**ERROR_RESPONSES},
+)
 async def plan_question(body: NextQuestionRequest):
+    """Return the next budget-questionnaire question, or null once it's complete."""
     result = await next_question(
         user_context=body.user_context,
         answers=body.answers,
@@ -29,8 +35,13 @@ async def plan_question(body: NextQuestionRequest):
     return {"question": result.model_dump()}
 
 
-@router.post("/generate")
+@router.post(
+    "/generate",
+    response_model=GeneratePlanResponse,
+    responses={**ERROR_RESPONSES},
+)
 async def plan_generate(body: GeneratePlanRequest):
+    """Generate a full budget allocation (categories summing to 100%) from questionnaire answers."""
     allocations = await generate_plan(
         user_context=body.user_context,
         answers=body.answers,
