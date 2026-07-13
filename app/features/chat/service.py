@@ -63,7 +63,6 @@ async def stream_chat(app, request: ChatTurnRequest) -> AsyncIterator[str]:
         "message_references": [],
     }
 
-
     try:
         result = await graph.ainvoke(state, config)
         messages = result.get("messages", [])
