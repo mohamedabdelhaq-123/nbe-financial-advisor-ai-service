@@ -45,25 +45,25 @@ returns `{normalized_json, model_used}` to the caller. Writes no backend-owned t
 
 **Performance Goal**: Synchronous call completes within ~60s for a typical multi-page statement (SC-001), matching Part 1's goal
 
-**Constraints**: Zero writes to backend-owned tables (Constitution IV, NON-NEGOTIABLE); Bearer-token auth (Constitution II); fail-fast config (Constitution VII — two new settings, `normalization_max_parallel_chunks` and `normalization_chunk_max_tokens`, both default safely to `1` and `4096` respectively); mock-first CI (Constitution I); model never hardcoded at the call site (Constitution VI); prefer library primitives over hand-rolled code (Constitution VIII, added during this feature)
+**Constraints**: Zero writes to backend-owned tables (Constitution IV, NON-NEGOTIABLE); Bearer-token auth (Constitution II); fail-fast config (Constitution VII — two new settings, `normalization_max_parallel_chunks` (`Field(ge=1)`, defaults safely to `1`) and `normalization_chunk_max_tokens` (defaults safely to `4096`)); mock-first CI (Constitution I); model never hardcoded at the call site (Constitution VI); prefer library primitives over hand-rolled code (Constitution VIII, added during this feature)
 
 **Scale/Scope**: One statement normalized per call, triggered by the backend, not a hot path — same call pattern as Part 1
 
 ## Constitution Check
 
-*Re-verified against `.specify/memory/constitution.md` v2.1.0 after the post-implementation
-LangGraph revision (see note above); originally verified against v2.0.0.*
+_Re-verified against `.specify/memory/constitution.md` v2.1.0 after the post-implementation
+LangGraph revision (see note above); originally verified against v2.0.0._
 
-| Principle | Gate | Status |
-|---|---|---|
-| **I. Testing** | Unit tests mock the LLM at the `app.core.llm.get_chat_model()` seam (a fake structured-output-capable object) — no real network call in the default test run, `MockNormalizerClient` covers the `settings.use_mock_llm` path used by `test_service.py`. The new `categories` migration and seed data, plus the chunking/aggregation logic, are exercised deterministically; concurrency itself is proven via a peak-in-flight-tracking fake, not real timing. | Pass |
-| **II. Security** | New route mounts under the same `require_token`-guarded `ingestion` router as Part 1. | Pass |
-| **III. Data Protection** | Privileged action — reads a statement's extracted content and the user's transaction history, calls an LLM, persists a new artifact — so it **MUST** write one `ai_audit_log` row per call, via `app.core.audit.record_audit()` + an explicit commit (same pattern Part 1 established). Only the minimal columns needed for dedup matching are ever selected from `Transactions` — not the full row. | Pass |
-| **IV. Data Ownership** | Reads `StatementOcrResult`, `StatementFiles`, and `Transactions` only via the existing generated read-only models; **zero writes** to any backend-owned table (SC-004). The one DB write this feature performs beyond the audit row (`categories`) is a **new own-DB table**, Alembic-managed, in the `ingestion` slice. | Pass |
-| **V. Modular Architecture** | Lands in the existing `app/features/ingestion/` slice (a second router path + `normalizer.py`/`categories.py`), not a new slice. | Pass |
-| **VI. LLM & Agent Architecture** | LLM access still goes exclusively through `app.core.llm.get_chat_model()` (extended with an optional `max_tokens` override — still the sole construction point, model still never hardcoded at a call site) behind `settings.use_mock_llm`/`settings.model_name`. Now genuinely uses LangGraph (`langgraph.graph.StateGraph`) for the extraction pipeline — previously reserved for the chat Maestro only; this is a data-extraction loop, not a second Maestro, so it doesn't compete with or duplicate that orchestrator. | Pass |
-| **VII. Operational Readiness** | Two new settings, `normalization_max_parallel_chunks: int = 1` and `normalization_chunk_max_tokens: int = 4096` — both have safe defaults, no fail-fast requirement added (not required to be set). Health/ready probes untouched. | Pass |
-| **VIII. Library-First, Minimal Implementation** *(new in v2.1.0, added as a direct result of this feature)* | Structured output via `ChatOpenAI.with_structured_output` replaces a hand-rolled regex JSON-rescue parser; retries on transient generation failures via `Runnable.with_retry` replace a hand-rolled retry loop; table-row chunking uses a real HTML parser (BeautifulSoup) instead of regex over markup; the `NormalizerClient` Protocol reuses `MineruClient`'s already-established swappable-client shape rather than inventing a second pattern. | Pass |
+| Principle                                                                                                   | Gate                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | Status |
+| ----------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ |
+| **I. Testing**                                                                                              | Unit tests mock the LLM at the `app.core.llm.get_chat_model()` seam (a fake structured-output-capable object) — no real network call in the default test run, `MockNormalizerClient` covers the `settings.use_mock_llm` path used by `test_service.py`. The new `categories` migration and seed data, plus the chunking/aggregation logic, are exercised deterministically; concurrency itself is proven via a peak-in-flight-tracking fake, not real timing.                                                               | Pass   |
+| **II. Security**                                                                                            | New route mounts under the same `require_token`-guarded `ingestion` router as Part 1.                                                                                                                                                                                                                                                                                                                                                                                                                                       | Pass   |
+| **III. Data Protection**                                                                                    | Privileged action — reads a statement's extracted content and the user's transaction history, calls an LLM, persists a new artifact — so it **MUST** write one `ai_audit_log` row per call, via `app.core.audit.record_audit()` + an explicit commit (same pattern Part 1 established). Only the minimal columns needed for dedup matching are ever selected from `Transactions` — not the full row.                                                                                                                        | Pass   |
+| **IV. Data Ownership**                                                                                      | Reads `StatementOcrResult`, `StatementFiles`, and `Transactions` only via the existing generated read-only models; **zero writes** to any backend-owned table (SC-004). The one DB write this feature performs beyond the audit row (`categories`) is a **new own-DB table**, Alembic-managed, in the `ingestion` slice.                                                                                                                                                                                                    | Pass   |
+| **V. Modular Architecture**                                                                                 | Lands in the existing `app/features/ingestion/` slice (a second router path + `normalizer.py`/`categories.py`), not a new slice.                                                                                                                                                                                                                                                                                                                                                                                            | Pass   |
+| **VI. LLM & Agent Architecture**                                                                            | LLM access still goes exclusively through `app.core.llm.get_chat_model()` (extended with an optional `max_tokens` override — still the sole construction point, model still never hardcoded at a call site) behind `settings.use_mock_llm`/`settings.model_name`. Now genuinely uses LangGraph (`langgraph.graph.StateGraph`) for the extraction pipeline — previously reserved for the chat Maestro only; this is a data-extraction loop, not a second Maestro, so it doesn't compete with or duplicate that orchestrator. | Pass   |
+| **VII. Operational Readiness**                                                                              | Two new settings: `normalization_max_parallel_chunks: int = Field(default=1, ge=1)` — safe default, fails fast at startup on an invalid (`<1`) value rather than silently clamping at the call site; `normalization_chunk_max_tokens: int = 4096` — safe default, no fail-fast requirement (not required to be set, provider/model-dependent tuning knob). Health/ready probes untouched.                                                                                                                                   | Pass   |
+| **VIII. Library-First, Minimal Implementation** _(new in v2.1.0, added as a direct result of this feature)_ | Structured output via `ChatOpenAI.with_structured_output` replaces a hand-rolled regex JSON-rescue parser; retries on transient generation failures via `Runnable.with_retry` replace a hand-rolled retry loop; table-row chunking uses a real HTML parser (BeautifulSoup) instead of regex over markup; the `NormalizerClient` Protocol reuses `MineruClient`'s already-established swappable-client shape rather than inventing a second pattern.                                                                         | Pass   |
 
 No violations — Complexity Tracking table omitted.
 
@@ -90,8 +90,8 @@ migrations/versions/
 
 app/
 ├── core/
-│   ├── config.py                    # + normalization_max_parallel_chunks: int = 1
-│   │                                  # + normalization_chunk_max_tokens: int = 4096
+│   ├── config.py                    # + normalization_max_parallel_chunks: int = Field(default=1, ge=1)
+│   │                                 # + normalization_chunk_max_tokens: int = 4096
 │   └── llm.py                       # get_chat_model() extended with an optional max_tokens override
 ├── backend_db/                      # unchanged — StatementOcrResult/StatementFiles/Transactions
 │                                     #   already generated/available
@@ -138,7 +138,8 @@ its two independent orchestration concerns (`process.py` for Part 1, `normalize.
 again with the same public names re-exported from `service/__init__.py`. `categories.py` is
 unchanged from the original plan. One genuinely new dependency was added to `pyproject.toml`:
 `beautifulsoup4` (real HTML parsing, Constitution VIII). Two new config settings:
-`normalization_max_parallel_chunks` and `normalization_chunk_max_tokens` (research.md §13). The Alembic migration is unchanged from the
+`normalization_max_parallel_chunks` (research.md §13) and `normalization_chunk_max_tokens`
+(research.md §16). The Alembic migration is unchanged from the
 original plan — hand-written `op.create_table(...)`, matching
 `a1b2c3d4e5f6_add_phase1_and_phase2_own_tables.py`'s established style.
 
@@ -151,7 +152,8 @@ no violations — Complexity Tracking table omitted, matching Part 1's precedent
 ## Post-Implementation Constitution Re-Check (v2.1.0)
 
 Re-verified after the LangGraph/chunking/`NormalizerClient` revision (research.md §9–§14): one new
-principle (VIII) was added to the constitution *as a direct consequence* of this feature's real-world
+principle (VIII) was added to the constitution _as a direct consequence_ of this feature's real-world
 validation, not worked around — see the updated Constitution Check table above. One new dependency
-(`beautifulsoup4`) and two new settings (`normalization_max_parallel_chunks` and `normalization_chunk_max_tokens`) were introduced, all
-already accounted for in the table above. Still no violations.
+(`beautifulsoup4`) and two new settings (`normalization_max_parallel_chunks`,
+`normalization_chunk_max_tokens`) were introduced, both already accounted for in the table above.
+Still no violations.
