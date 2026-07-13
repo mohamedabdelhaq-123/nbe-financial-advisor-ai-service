@@ -54,7 +54,7 @@ existing transaction, while non-matching ones don't.
 
 **Acceptance Scenarios**:
 
-1. **Given** an extracted transaction whose account, date, and amount closely match an existing
+1. **Given** an extracted transaction whose date and amount closely match an existing
    recorded transaction for the same user, **When** normalization completes, **Then** that
    transaction is flagged with a reference to the matching existing transaction.
 2. **Given** a user with no existing recorded transactions, **When** normalization completes,

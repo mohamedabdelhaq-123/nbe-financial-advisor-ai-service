@@ -3,7 +3,7 @@
 import json
 import uuid
 from datetime import date
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 from fastapi import HTTPException
 from sqlalchemy import select
@@ -56,7 +56,12 @@ async def normalize_statement(
             status_code=502, detail=f"failed to retrieve OCR content: {exc}"
         ) from exc
 
-    content_list = json.loads(content_list_bytes) if content_list_bytes else []
+    try:
+        content_list = json.loads(content_list_bytes) if content_list_bytes else []
+    except (json.JSONDecodeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=502, detail=f"failed to parse OCR content: {exc}"
+        ) from exc
 
     known_categories: list[str] = []
     async for own_session in own_session_gen():
@@ -77,18 +82,27 @@ async def normalize_statement(
                 category = await resolve_category(own_session, txn.get("category"))
                 duplicate_of = None
                 if statement_user_id is not None:
-                    duplicate_of = await find_duplicate(
-                        backend_session,
-                        statement_user_id,
-                        date.fromisoformat(txn["transaction_date"]),
-                        Decimal(str(txn["amount"])),
-                    )
+                    transaction_date_str = txn.get("transaction_date")
+                    amount_value = txn.get("amount")
+                    if transaction_date_str is not None and amount_value is not None:
+                        try:
+                            transaction_date = date.fromisoformat(transaction_date_str)
+                            amount_decimal = Decimal(str(amount_value))
+                            duplicate_of = await find_duplicate(
+                                backend_session,
+                                statement_user_id,
+                                transaction_date,
+                                amount_decimal,
+                            )
+                        except (ValueError, InvalidOperation):
+                            # Skip duplicate detection for malformed date/amount
+                            pass
                 txn_entry = {
-                    "transaction_date": txn["transaction_date"],
+                    "transaction_date": txn.get("transaction_date", ""),
                     "merchant_raw": txn.get("merchant_raw", ""),
                     "ai_description": txn.get("ai_description", ""),
                     "category": category,
-                    "amount": txn["amount"],
+                    "amount": txn.get("amount", 0),
                     "transaction_type": txn.get("transaction_type", "debit"),
                     "duplicate_of": duplicate_of,
                 }
