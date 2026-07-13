@@ -1,11 +1,4 @@
-"""Ingestion service — resolves a statement, extracts its content via MinerU, and persists it.
-
-Reads the statement's raw-file location via the existing read-only backend DB
-access, fetches the bytes from object storage, sends them to MinerU, and
-writes the extracted artifacts back to object storage under a key prefix
-scoped to the statement. Writes exactly one audit-log row to the service's
-own database. Never writes to any backend-owned table.
-"""
+"""Part 1 — document processing: resolve a statement, run MinerU, persist artifacts."""
 
 import json
 import uuid
