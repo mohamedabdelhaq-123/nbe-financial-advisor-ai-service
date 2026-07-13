@@ -20,6 +20,7 @@ async def planner_node(state: ConversationState) -> dict:
             return {
                 "messages": [AIMessage(content=question.text)],
                 "questions_asked": new_count,
+                "stage": "planning",  # persist stage so Maestro routes correctly next turn
             }
 
         allocations = await generate_plan(user_context, answers)

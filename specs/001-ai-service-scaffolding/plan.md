@@ -82,7 +82,7 @@ app/
 ├── ingestion/             ← SLICE: document → transaction ledger
 │   ├── router.py          ← POST /internal/normalize
 │   ├── schemas.py
-│   ├── extractor.py       ← orchestrates layout confidence check and extraction tool delegate
+│   ├── extractor.py       ← orchestrates calling the OCR/extraction tool
 │   ├── normalizer.py      ← template lookup → deterministic mapping OR LLM inference
 │   ├── models.py          ← (no own tables; reads backend statement_files, writes embeddings)
 │   └── tests/
@@ -198,9 +198,8 @@ tests/
 ### 1.3 Document Extraction & Normalization
 
 - [ ] Implement `ingestion/extractor.py`:
-  - layout confidence check (text yield, table detection, cell fill rate, date/amount parseability)
-  - If confidence passes: return structured `{headers, rows}` 
-  - If confidence fails: delegate to the configured extraction tool (interface only — concrete tool decided by the OCR team member)
+  - Call the configured OCR/extraction tool (decided by the OCR team member) directly to process the document
+  - Parse the OCR output to return structured `{headers, rows}` and extraction confidence
   - Layout signature generation: `md5(sorted(normalised_headers))`
 - [ ] Implement `ingestion/normalizer.py`:
   - Template lookup: query `bank_statement_templates` by `(bank_name, layout_signature)` via backend read-only DB
