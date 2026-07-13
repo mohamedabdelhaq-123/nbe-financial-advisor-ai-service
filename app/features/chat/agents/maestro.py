@@ -50,6 +50,12 @@ def classify_intent(message: str) -> str:
 
 
 async def maestro_node(state: ConversationState) -> dict:
+    # If we are already mid-planning (questions asked but plan not yet complete),
+    # preserve the routing — the new message is an answer to the questionnaire,
+    # not a fresh intent signal.
+    if state.get("stage") == "planning" and state.get("questions_asked", 0) > 0:
+        return {"intent": "planning"}
+
     last_msg = state["messages"][-1] if state["messages"] else None
     text = ""
     if last_msg and hasattr(last_msg, "content") and isinstance(last_msg.content, str):
