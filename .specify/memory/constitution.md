@@ -1,29 +1,28 @@
 <!--
 SYNC IMPACT REPORT
 ==================
-Version change: 1.0.0 → 2.0.0
-Rationale: MAJOR. Redefinition of a MUST inside two ratified principles. Backend
-mirror models are no longer hand-written; they MUST be code-generated directly
-from the read-only backend database via a pinned code-generator (Principle IV),
-and — because generated models mirror FULL tables — data minimization is
-relocated from the model layer to the query/DTO egress layer (Principle III).
-Both edits travel together: widening the mirror surface without tightening egress
-would silently enlarge the PII surface.
+Version change: 2.0.0 → 2.1.0
+Rationale: MINOR. New principle added (VIII. Library-First, Minimal
+Implementation) — no existing principle was redefined or removed.
 
-Modified principles (this amendment):
-  - III. Data Protection & Compliance (NON-NEGOTIABLE) — added egress-layer
-    minimization clause: model presence of a column is NOT license to egress it.
-  - IV. Data Ownership & Access Boundaries — "hand-written typed models" →
-    "generated on demand from the read-only backend DB via a pinned code-generator,
-    committed, and never hand-edited"; regeneration is a manual developer step. No
-    committed schema snapshot; no CI gate or scheduled job touches the backend DB.
+Added principle (this amendment):
+  - VIII. Library-First, Minimal Implementation — code MUST prefer a
+    well-maintained library/framework primitive over a hand-rolled
+    implementation when one already solves the problem well (e.g. structured
+    LLM output via the provider SDK's native mechanism instead of a
+    hand-written regex JSON-rescue parser; a real parser instead of hand-rolled
+    regex over structured markup such as HTML tables), and implementations
+    MUST stay clean and minimal — no speculative abstractions, no new
+    indirection layers, no reinventing behavior a current dependency already
+    provides well.
 
-Unchanged by this amendment: two separate DeclarativeBase registries; backend
-Base excluded from Alembic; read-only DB role; owned models declare no real
-ForeignKey into backend tables (logical backend_*_id only); service never writes
-backend tables.
+Trigger: during the statement-normalization feature, a hand-rolled
+regex-based JSON-rescue parser and a bespoke swappable-client pattern were
+about to be duplicated ad hoc for a second LLM call site; the requester asked
+that "prefer the library, keep it minimal" be recorded as a durable principle
+rather than a one-off fix.
 
-Principle mapping (stable since 1.0.0):
+Principle mapping (stable since 1.0.0, extended 2.1.0):
   - I. Mandatory Automated Testing
   - II. Security & Secrets Discipline
   - III. Data Protection & Compliance (NON-NEGOTIABLE)
@@ -31,16 +30,17 @@ Principle mapping (stable since 1.0.0):
   - V. Feature-Bounded Modular Architecture
   - VI. LLM & Agent Architecture
   - VII. Operational Readiness & Fail-Fast Configuration
+  - VIII. Library-First, Minimal Implementation (added 2.1.0)
 
 Sections: unchanged (Technology & Quality Standards; Development Workflow &
 Quality Gates). Removed sections: none.
 
 Templates checked for consistency:
   ✅ .specify/templates/plan-template.md — Constitution Check gate is generic;
-     `backend/` references are directory-layout only, unrelated to Principle IV.
+     no new mandatory gate row required (a library-vs-hand-rolled check is a
+     PR-review-time judgment call, not a scaffolding gate).
   ✅ .specify/templates/spec-template.md — no mandatory-section conflicts.
-  ✅ .specify/templates/tasks-template.md — testing/data/agent task categories
-     consistent with Principles I, IV, and VI.
+  ✅ .specify/templates/tasks-template.md — no new task category required.
   ✅ .specify/templates/checklist-template.md — no conflicts.
 
 Follow-up TODOs: none.
@@ -176,6 +176,25 @@ to the first request.
 route traffic safely. Validating configuration at boot turns latent runtime
 failures into obvious startup failures.
 
+### VIII. Library-First, Minimal Implementation
+Code MUST prefer a well-maintained library or framework primitive over a
+hand-rolled implementation whenever one already solves the problem well —
+for example, structured LLM output via the provider SDK's native mechanism
+rather than a hand-written regex-based JSON-rescue parser, or a real parser
+rather than hand-rolled regex over structured markup (HTML tables and
+similar). Implementations MUST stay clean and minimal: no speculative
+abstractions, no new indirection layers introduced ahead of a real need, and
+no reimplementing behavior a current dependency already provides well. Where
+an existing pattern in the codebase already fits (e.g. a swappable-client
+shape), reuse it deliberately rather than inventing a parallel one.
+
+**Rationale**: Hand-rolled parsing and ad hoc client shapes duplicate logic
+that well-tested libraries already solve more robustly, and each duplicate
+becomes its own one-off maintenance burden. Preferring the library's native
+mechanism keeps the codebase smaller and easier to reason about, and keeps
+a pattern that already fits from being reinvented per feature instead of
+intentionally reused.
+
 ## Technology & Quality Standards
 
 - **Runtime**: Python 3.12, FastAPI, Pydantic v2 / pydantic-settings.
@@ -217,4 +236,4 @@ deviations MUST be justified explicitly in the PR. Runtime development guidance
 lives in repository docs and agent guidance files and MUST stay consistent with
 this constitution.
 
-**Version**: 2.0.0 | **Ratified**: 2026-07-09 | **Last Amended**: 2026-07-10
+**Version**: 2.1.0 | **Ratified**: 2026-07-09 | **Last Amended**: 2026-07-13
