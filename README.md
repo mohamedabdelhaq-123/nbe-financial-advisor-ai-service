@@ -2,6 +2,44 @@
 
 Internal FastAPI AI service for the NBE AI-PFM platform.
 
+## Running locally
+
+This repo's Postgres/S3 dependencies are **not** self-contained in dev — they're
+provided by the sibling `nbe-financial-advisor-backend` repo's own dev stack, which
+also provisions the `ai_appdb`/`ai_user`/`ai_readonly` roles this service needs
+(via `deploy/initdb/10-ai-roles.sh`). Start that first:
+
+```bash
+cd ../nbe-financial-advisor-backend
+docker compose up -d postgres seaweedfs   # publishes the shared "nbe-dev" network
+```
+
+Then in this repo:
+
+```bash
+cp .env.example .env
+# Edit .env so POSTGRES_PASSWORD / BACKEND_DB_PASSWORD / STORAGE_S3_ACCESS_KEY /
+# STORAGE_S3_SECRET_KEY match the values actually set in the backend repo's own
+# .env (AI_DB_PASSWORD, AI_READONLY_PASSWORD, SEAWEED_ACCESS_KEY, SEAWEED_SECRET_KEY).
+# These aren't synced automatically across repos.
+
+make dev-up   # builds the `dev` image target, runs alembic, serves with --reload on :8001
+```
+
+`compose/docker-compose.yml` is the shared base service definition;
+`compose/docker-compose.dev.yml` layers on hot reload, a published port, and
+attaches to the backend's `nbe-dev` network. To validate the hardened production
+image in isolation (fully mocked, no external dependencies — a fast pre-deploy
+sanity check, not the deploy path itself):
+
+```bash
+make prod-smoke
+```
+
+The platform is actually deployed via
+`nbe-financial-advisor-backend/deploy/docker-compose.yml`, which builds this repo's
+`prod` image target directly and wires it to the real Postgres/SeaweedFS stack.
+
 ## Backend mirror models
 
 The service reads specific backend (Django-owned) tables through a **read-only**
