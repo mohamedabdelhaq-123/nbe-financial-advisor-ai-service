@@ -780,6 +780,74 @@ async def test_normalize_transaction_without_extra_fields_omits_the_key(
     assert "extra_fields" not in result.normalized_json["transactions"][0]
 
 
+@pytest.mark.asyncio
+async def test_normalize_skips_transactions_with_malformed_or_missing_date_or_amount(
+    monkeypatch, own_pg, seed_categories
+):
+    session_gen = _normalize_session_gen(
+        _FakeOcrResult(statement_id=NORM_STATEMENT_ID), user_id=NORM_USER_ID, dup_rows=[]
+    )
+    own_gen = _own_session_gen_from_pg(own_pg)
+
+    s3 = _FakeOcrStorage(_ocr_objects(NORM_STATEMENT_ID))
+    _patch_storage(monkeypatch, s3, module="app.features.ingestion.service.normalize")
+
+    monkeypatch.setattr(
+        "app.features.ingestion.service.normalize.get_normalizer_client",
+        lambda: _FakeNormalizerClient(
+            result=(
+                {
+                    "bank_name": "Test Bank",
+                    "account_hint": "****1234",
+                    "transactions": [
+                        {
+                            "transaction_date": "not-a-date",
+                            "merchant_raw": "Malformed Date",
+                            "category": "other",
+                            "amount": 10.0,
+                            "transaction_type": "debit",
+                        },
+                        {
+                            "merchant_raw": "Missing Date",
+                            "category": "other",
+                            "amount": 10.0,
+                            "transaction_type": "debit",
+                        },
+                        {
+                            "transaction_date": "2026-05-01",
+                            "merchant_raw": "Malformed Amount",
+                            "category": "other",
+                            "amount": "not-a-number",
+                            "transaction_type": "debit",
+                        },
+                        {
+                            "transaction_date": "2026-05-01",
+                            "merchant_raw": "Missing Amount",
+                            "category": "other",
+                            "transaction_type": "debit",
+                        },
+                        {
+                            "transaction_date": "2026-05-01",
+                            "merchant_raw": "Valid Transaction",
+                            "category": "other",
+                            "amount": 42.0,
+                            "transaction_type": "debit",
+                        },
+                    ],
+                },
+                "test-model",
+            )
+        ),
+    )
+
+    result = await normalize_statement(
+        session_gen=session_gen, own_session_gen=own_gen, ocr_result_id=OCR_RESULT_ID
+    )
+
+    assert len(result.normalized_json["transactions"]) == 1
+    assert result.normalized_json["transactions"][0]["merchant_raw"] == "Valid Transaction"
+
+
 # ---------------------------------------------------------------------------
 # normalize_statement() — US4: persisted object matches returned result
 # ---------------------------------------------------------------------------

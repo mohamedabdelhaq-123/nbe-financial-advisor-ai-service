@@ -6,6 +6,7 @@ required secret is missing or left at a placeholder value — a misconfigured
 service must never boot into an insecure or half-wired state.
 """
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -21,7 +22,7 @@ class Settings(BaseSettings):
     # Default 1 (fully sequential) is safest for a low-tier per-minute token
     # budget; raise it once the configured provider/tier can absorb more
     # concurrent throughput.
-    normalization_max_parallel_chunks: int = 1
+    normalization_max_parallel_chunks: int = Field(default=1, ge=1)
     # Per-chunk completion token ceiling for statement normalization. Default
     # 4096 is tuned safe for Groq's on-demand 8000 TPM tier (admission control
     # counts prompt_tokens + max_tokens against that budget pre-generation, so
