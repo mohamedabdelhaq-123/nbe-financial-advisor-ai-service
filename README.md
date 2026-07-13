@@ -48,6 +48,15 @@ Principle III), not the model.
 
 All endpoints below require a `Bearer <AI_SERVICE_TOKEN>` header unless noted.
 
+### API Documentation
+
+Interactive docs are served at `/docs` (Swagger UI) and `/redoc` (ReDoc), generated from the
+same request/response models the API validates against. When adding or changing an
+`/internal/*` endpoint, review it against
+[`specs/006-api-documentation/contracts/openapi-enrichment-contract.md`](specs/006-api-documentation/contracts/openapi-enrichment-contract.md),
+the completeness checklist for descriptions, examples, and error responses (enforced by PR
+review, not CI).
+
 ### Chat — Conversational assistant
 
 | Endpoint | Description |
