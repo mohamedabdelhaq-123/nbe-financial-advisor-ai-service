@@ -96,6 +96,4 @@ async def process_statement(
         await own_session.commit()
         break
 
-    return ProcessStatementResult(
-        prefix=full_prefix, ocr_engine="MinerU", confidence_score=1.0
-    )
+    return ProcessStatementResult(prefix=full_prefix, ocr_engine="MinerU", confidence_score=1.0)
