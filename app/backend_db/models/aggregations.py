@@ -6,10 +6,13 @@ from app.backend_db._generated_models import NetWorthSnapshots as NetWorthSnapsh
 from app.backend_db._generated_models import RecurringCharges as RecurringCharge
 from app.backend_db._generated_models import SpendingPatternInsights as SpendingPatternInsight
 
+MONTHLY_SUMMARY_EMBEDDING_DIM: int = MonthlySummary.__table__.c.embedding.type.dim
+
 __all__ = [
     "MonthlySummary",
     "SpendingPatternInsight",
     "NetWorthSnapshot",
     "RecurringCharge",
     "AnomalyFlag",
+    "MONTHLY_SUMMARY_EMBEDDING_DIM",
 ]

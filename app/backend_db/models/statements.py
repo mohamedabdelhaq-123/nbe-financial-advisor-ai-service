@@ -6,10 +6,13 @@ from app.backend_db._generated_models import StatementNormalized as StatementNor
 from app.backend_db._generated_models import StatementOcrResults as StatementOcrResult
 from app.backend_db._generated_models import Transactions as Transaction
 
+TRANSACTION_EMBEDDING_DIM: int = Transaction.__table__.c.embedding.type.dim
+
 __all__ = [
     "BankStatementTemplate",
     "StatementFile",
     "StatementNormalized",
     "StatementOcrResult",
     "Transaction",
+    "TRANSACTION_EMBEDDING_DIM",
 ]
