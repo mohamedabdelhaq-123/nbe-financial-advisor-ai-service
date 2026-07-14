@@ -42,6 +42,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from typing import NoReturn
 from urllib.parse import quote
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -97,7 +98,7 @@ These models bind to `BackendBase` (excluded from Alembic) and are never written
 '''
 
 
-def _fail(msg: str) -> None:
+def _fail(msg: str) -> NoReturn:
     sys.stderr.write(f"error: {msg}\n")
     raise SystemExit(1)
 
