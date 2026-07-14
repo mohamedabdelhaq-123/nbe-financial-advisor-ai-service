@@ -4,7 +4,7 @@ import uuid
 
 from sqlalchemy import func, select
 
-from app.backend_db.models import Transaction
+from app.backend_db.models import MONTHLY_SUMMARY_EMBEDDING_DIM, Transaction
 from app.features.analytics.schemas import MonthlySummaryResult
 
 
@@ -54,7 +54,7 @@ async def compute_monthly_summary(
         f"income={total_income:.2f}, expense={total_expense:.2f}, "
         f"categories={by_category}"
     )
-    vectors = await embed_fn([summary_text])
+    vectors = await embed_fn([summary_text], dimensions=MONTHLY_SUMMARY_EMBEDDING_DIM)
     embedding = vectors[0] if vectors else []
 
     return MonthlySummaryResult(
