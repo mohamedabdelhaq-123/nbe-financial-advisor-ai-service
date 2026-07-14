@@ -11,5 +11,7 @@
 .ruff_cache/
 
 .env
+.env*
+*.log
 tests/
 *.md
