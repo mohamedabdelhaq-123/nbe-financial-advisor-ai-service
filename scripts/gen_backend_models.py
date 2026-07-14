@@ -40,6 +40,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from urllib.parse import quote
 
@@ -151,17 +152,23 @@ def _run_sqlacodegen(url: str, tables: list[str] | None, schema: str | None) -> 
             "sqlacodegen not found on PATH. Run via the codegen group:\n"
             "  uv run --group codegen python scripts/gen_backend_models.py ..."
         )
-    cmd = [exe, url, "--generator", "declarative"]
-    if tables:
-        cmd += ["--tables", ",".join(tables)]
-    if schema:
-        cmd += ["--schemas", schema]
-    proc = subprocess.run(cmd, capture_output=True, text=True)
-    if proc.returncode != 0:
-        _fail(f"sqlacodegen failed:\n{proc.stderr.strip()}")
-    if not proc.stdout.strip():
-        _fail("sqlacodegen produced no output (do the requested tables exist?)")
-    return proc.stdout
+    with tempfile.NamedTemporaryFile(suffix=".py", delete=False) as tmp:
+        tmp_path = Path(tmp.name)
+    try:
+        cmd = [exe, url, "--generator", "declarative", "--outfile", str(tmp_path)]
+        if tables:
+            cmd += ["--tables", ",".join(tables)]
+        if schema:
+            cmd += ["--schemas", schema]
+        proc = subprocess.run(cmd, capture_output=True, text=True)
+        if proc.returncode != 0:
+            _fail(f"sqlacodegen failed:\n{proc.stderr.strip()}")
+        raw = tmp_path.read_text()
+        if not raw.strip():
+            _fail("sqlacodegen produced no output (do the requested tables exist?)")
+        return raw
+    finally:
+        tmp_path.unlink(missing_ok=True)
 
 
 def _rebind_to_backend_base(code: str) -> str:
