@@ -44,7 +44,7 @@ class Settings(BaseSettings):
     # Default output vector size. Must stay 768 unless AiProblemStatement.embedding
     # (app/features/recommendations/models.py, Vector(768)) is migrated in lockstep —
     # a caller needing a different size passes it explicitly rather than changing this.
-    embedding_dimensions: int = 768
+    embedding_dimensions: int = Field(default=768, ge=1)
 
     # ── auth ───────────────────────────────────────────────────────────────
     # Shared secret between the Django backend and this service.
