@@ -18,7 +18,13 @@ class ProcessStatementRequest(BaseModel):
 class ProcessStatementResult(BaseModel):
     model_config = ConfigDict(
         json_schema_extra={
-            "examples": [{"prefix": "statements/1001/b3f1c2d4/", "ocr_engine": "mineru"}]
+            "examples": [
+                {
+                    "prefix": "statements/1001/b3f1c2d4/",
+                    "ocr_engine": "mineru",
+                    "confidence_score": 1.0,
+                }
+            ]
         }
     )
 
@@ -26,6 +32,11 @@ class ProcessStatementResult(BaseModel):
         description="Object-storage key prefix under which the extracted artifacts were saved."
     )
     ocr_engine: str = Field(description="Identifier of the OCR engine that performed extraction.")
+    confidence_score: float = Field(
+        ge=0.0,
+        le=1.0,
+        description="Extraction confidence in [0.0, 1.0]; always 1.0 on success.",
+    )
 
 
 class NormalizeStatementRequest(BaseModel):

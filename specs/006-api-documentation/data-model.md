@@ -47,7 +47,7 @@ today (see spec.md Assumptions).
 
 ### ingestion (`app/features/ingestion/schemas.py`)
 - `ProcessStatementRequest`: `statement_id`
-- `ProcessStatementResult`: `prefix`, `ocr_engine`
+- `ProcessStatementResult`: `prefix`, `ocr_engine`, `confidence_score`
 - `NormalizeStatementRequest`: `ocr_result_id`
 - `NormalizeStatementResult`: `normalized_json`, `model_used`
 

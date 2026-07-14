@@ -3,6 +3,7 @@
 import pytest
 
 from app.features.chat.agents.analysis import analysis_node
+from app.features.chat.schemas import Reference
 
 
 @pytest.mark.asyncio
@@ -44,8 +45,13 @@ async def test_analysis_node_returns_references(monkeypatch):
     result = await analysis_node(state)
     assert "messages" in result
     assert len(result["messages"]) > 0
-    assert "message_references" in result
-    assert len(result["message_references"]) > 0
+
+    # FR-006/FR-007: every reference is a typed Reference with target_type == "transaction".
+    refs = result["message_references"]
+    assert len(refs) == len(transactions)
+    assert all(isinstance(r, Reference) for r in refs)
+    assert all(r.target_type == "transaction" for r in refs)
+    assert all(r.target_id == str(txn.id) for r, txn in zip(refs, transactions, strict=True))
 
 
 @pytest.mark.asyncio

@@ -1,4 +1,4 @@
-"""Request/response contracts for the chat slice — internal SSE streaming."""
+"""Request contracts for the chat slice — internal SSE streaming."""
 
 from pydantic import BaseModel, ConfigDict, Field
 
