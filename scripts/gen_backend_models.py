@@ -161,10 +161,10 @@ def _run_sqlacodegen(url: str, tables: list[str] | None, schema: str | None) -> 
             cmd += ["--tables", ",".join(tables)]
         if schema:
             cmd += ["--schemas", schema]
-        proc = subprocess.run(cmd, capture_output=True, text=True)
+        proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")
         if proc.returncode != 0:
             _fail(f"sqlacodegen failed:\n{proc.stderr.strip()}")
-        raw = tmp_path.read_text()
+        raw = tmp_path.read_text(encoding="utf-8")
         if not raw.strip():
             _fail("sqlacodegen produced no output (do the requested tables exist?)")
         return raw
