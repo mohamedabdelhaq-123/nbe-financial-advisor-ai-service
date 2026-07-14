@@ -11,13 +11,13 @@ These models bind to `BackendBase` (excluded from Alembic) and are never written
 import datetime
 import decimal
 import uuid
-from typing import Optional
+from typing import Any, Optional
 
+from pgvector.sqlalchemy.vector import VECTOR
 from sqlalchemy import (
     BigInteger,
     Boolean,
     CheckConstraint,
-    Column,
     Date,
     DateTime,
     ForeignKeyConstraint,
@@ -34,7 +34,6 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy.sql.sqltypes import NullType
 
 from app.backend_db import BackendBase
 
@@ -197,6 +196,7 @@ class Users(BackendBase):
     conversations: Mapped[list["Conversations"]] = relationship(
         "Conversations", back_populates="user"
     )
+    goals: Mapped["Goals"] = relationship("Goals", uselist=False, back_populates="user")
     net_worth_snapshots: Mapped[list["NetWorthSnapshots"]] = relationship(
         "NetWorthSnapshots", back_populates="user"
     )
@@ -329,9 +329,6 @@ class Budgets(BackendBase):
     updated_at: Mapped[datetime.datetime] = mapped_column(DateTime(True), nullable=False)
     user_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
     selected_template_key: Mapped[Optional[str]] = mapped_column(String(50))
-    savings_goal_name: Mapped[Optional[str]] = mapped_column(String(255))
-    goal_target_amount: Mapped[Optional[decimal.Decimal]] = mapped_column(Numeric(14, 2))
-    goal_timeline_months: Mapped[Optional[int]] = mapped_column(Integer)
 
     user: Mapped["Users"] = relationship("Users", back_populates="budgets")
     budget_allocations: Mapped[list["BudgetAllocations"]] = relationship(
@@ -391,6 +388,31 @@ class Conversations(BackendBase):
     messages: Mapped[list["Messages"]] = relationship("Messages", back_populates="conversation")
 
 
+class Goals(BackendBase):
+    __tablename__ = "goals"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["user_id"],
+            ["users.id"],
+            deferrable=True,
+            initially="DEFERRED",
+            name="goals_user_id_7678e2da_fk_users_id",
+        ),
+        PrimaryKeyConstraint("id", name="goals_pkey"),
+        UniqueConstraint("user_id", name="goals_user_id_key"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    target_amount: Mapped[decimal.Decimal] = mapped_column(Numeric(14, 2), nullable=False)
+    timeline_months: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime(True), nullable=False)
+    updated_at: Mapped[datetime.datetime] = mapped_column(DateTime(True), nullable=False)
+    user_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+
+    user: Mapped["Users"] = relationship("Users", back_populates="goals")
+
+
 class NetWorthSnapshots(BackendBase):
     __tablename__ = "net_worth_snapshots"
     __table_args__ = (
@@ -438,7 +460,7 @@ class ProblemStatements(BackendBase):
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
     statement_text: Mapped[str] = mapped_column(Text, nullable=False)
     product_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
-    embedding = Column(NullType())
+    embedding: Mapped[Optional[Any]] = mapped_column(VECTOR(1024))
 
     product: Mapped["Products"] = relationship("Products", back_populates="problem_statements")
 
@@ -773,7 +795,7 @@ class MonthlySummaries(BackendBase):
     total_inflow: Mapped[Optional[decimal.Decimal]] = mapped_column(Numeric(14, 2))
     category_breakdown_json: Mapped[Optional[dict]] = mapped_column(JSONB)
     top_merchants_json: Mapped[Optional[dict]] = mapped_column(JSONB)
-    embedding = Column(NullType())
+    embedding: Mapped[Optional[Any]] = mapped_column(VECTOR(1536))
     account_id: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid)
 
     account: Mapped[Optional["BankAccounts"]] = relationship(
@@ -1098,7 +1120,7 @@ class Transactions(BackendBase):
     balance: Mapped[Optional[decimal.Decimal]] = mapped_column(Numeric(14, 2))
     transaction_type: Mapped[Optional[str]] = mapped_column(String(20))
     extra_fields: Mapped[Optional[dict]] = mapped_column(JSONB)
-    embedding = Column(NullType())
+    embedding: Mapped[Optional[Any]] = mapped_column(VECTOR(1536))
     statement_id: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid)
 
     account: Mapped["BankAccounts"] = relationship("BankAccounts", back_populates="transactions")
