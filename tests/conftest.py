@@ -8,7 +8,6 @@ validation and the mock short-circuit see it.
 No fixture performs real LLM or embedder calls.
 """
 
-import hashlib
 import os
 
 os.environ.setdefault("USE_MOCK_LLM", "1")
@@ -90,6 +89,12 @@ def own_db_url():
                 async with engine.begin() as conn:
                     await conn.run_sync(OwnBase.metadata.create_all)
                     await conn.execute(sa.text('CREATE EXTENSION IF NOT EXISTS "uuid-ossp"'))
+                    # transactions.embedding uses the real `vector` extension (unlike the
+                    # OwnBase tables above, which are patched to LargeBinary) so that writes
+                    # through app.backend_db.models.Transaction's pgvector VECTOR(1536) column
+                    # round-trip correctly — matching the real backend schema, where this
+                    # column is also `vector(1536)`, not bytea.
+                    await conn.execute(sa.text("CREATE EXTENSION IF NOT EXISTS vector"))
                     await conn.execute(
                         sa.text(
                             "CREATE TABLE IF NOT EXISTS transactions ("
@@ -110,7 +115,7 @@ def own_db_url():
                             "balance NUMERIC(14,2), "
                             "transaction_type VARCHAR(20), "
                             "extra_fields JSONB, "
-                            "embedding BYTEA, "
+                            "embedding vector(1536), "
                             "statement_id UUID"
                             ")"
                         )
@@ -136,22 +141,6 @@ async def own_pg(own_db_url):
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     yield session_factory
     await engine.dispose()
-
-
-@pytest.fixture
-def mock_embedder(monkeypatch):
-    async def _mock_embed_texts(texts: list[str]) -> list[list[float]]:
-        dim = 768
-        results = []
-        for t in texts:
-            h = hashlib.sha256(t.encode()).digest()
-            vec = [((h[i % len(h)] + i) / 255.0) for i in range(dim)]
-            norm = sum(v * v for v in vec) ** 0.5
-            results.append([v / norm for v in vec])
-        return results
-
-    monkeypatch.setattr("app.features.embed.service.embed_texts", _mock_embed_texts)
-    return _mock_embed_texts
 
 
 @pytest.fixture

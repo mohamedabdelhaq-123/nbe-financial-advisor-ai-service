@@ -1,32 +1,44 @@
 <!--
 SYNC IMPACT REPORT
 ==================
-Version change: 2.0.0 → 2.1.0
-Rationale: MINOR. New principle added (VIII. Library-First, Minimal
-Implementation) — no existing principle was redefined or removed.
+Version change: 2.1.0 → 2.2.0
+Rationale: MINOR. Principle IV materially expanded to formally document a
+narrow, DB-role-backed write exception against the otherwise READ-ONLY backend
+DB, and to codify the authorization process any future exception MUST follow.
+No existing principle was redefined or removed; the prior absolute "no write
+paths" rule is replaced by "read-only by default, with a small enumerated,
+explicitly-authorized exception list" — the enforced default behavior for
+every feature that is not one of the enumerated exceptions is unchanged.
 
-Added principle (this amendment):
-  - VIII. Library-First, Minimal Implementation — code MUST prefer a
-    well-maintained library/framework primitive over a hand-rolled
-    implementation when one already solves the problem well (e.g. structured
-    LLM output via the provider SDK's native mechanism instead of a
-    hand-written regex JSON-rescue parser; a real parser instead of hand-rolled
-    regex over structured markup such as HTML tables), and implementations
-    MUST stay clean and minimal — no speculative abstractions, no new
-    indirection layers, no reinventing behavior a current dependency already
-    provides well.
+Modified principle (this amendment):
+  - IV. Data Ownership & Access Boundaries — now states the backend DB is
+    read-only *by default*; a write path against it may exist ONLY where both
+    (a) a narrowly-scoped DB-level GRANT already covers exactly that
+    column/table, and (b) a human has explicitly authorized that specific
+    write path in a spec or PR. Write paths MUST NEVER be added speculatively,
+    defensively, or "just in case" — absent both conditions, backend DB access
+    MUST stay strictly read-only, exactly as before this amendment. The two
+    currently-authorized exceptions are enumerated: `transactions.embedding`
+    (UPDATE only) and `monthly_summaries` (full CRUD). Any required
+    per-transaction read-write override (for a role whose default is
+    read-only at the transaction level) MUST be scoped to the single
+    transaction performing an authorized write, never applied broadly.
 
-Trigger: during the statement-normalization feature, a hand-rolled
-regex-based JSON-rescue parser and a bespoke swappable-client pattern were
-about to be duplicated ad hoc for a second LLM call site; the requester asked
-that "prefer the library, keep it minimal" be recorded as a durable principle
-rather than a one-off fix.
+Trigger: while planning the transaction-embedding feature (which writes
+computed embeddings directly to `transactions.embedding`), the backend DB's
+`ai_readonly` role was found to already carry narrow write GRANTs
+(`UPDATE (embedding) ON transactions`, full CRUD on `monthly_summaries`)
+provisioned specifically for this service — but Principle IV's text still read
+as an absolute prohibition, contradicting sanctioned, already-provisioned
+access. The requester asked that the exception be recorded formally, paired
+with an explicit reminder that write paths remain opt-in per feature, never a
+default to reach for.
 
-Principle mapping (stable since 1.0.0, extended 2.1.0):
+Principle mapping (stable since 1.0.0, extended 2.1.0, IV expanded 2.2.0):
   - I. Mandatory Automated Testing
   - II. Security & Secrets Discipline
   - III. Data Protection & Compliance (NON-NEGOTIABLE)
-  - IV. Data Ownership & Access Boundaries
+  - IV. Data Ownership & Access Boundaries (expanded 2.2.0)
   - V. Feature-Bounded Modular Architecture
   - VI. LLM & Agent Architecture
   - VII. Operational Readiness & Fail-Fast Configuration
@@ -36,9 +48,13 @@ Sections: unchanged (Technology & Quality Standards; Development Workflow &
 Quality Gates). Removed sections: none.
 
 Templates checked for consistency:
-  ✅ .specify/templates/plan-template.md — Constitution Check gate is generic;
-     no new mandatory gate row required (a library-vs-hand-rolled check is a
-     PR-review-time judgment call, not a scaffolding gate).
+  ✅ .specify/templates/plan-template.md — Constitution Check gate is generic
+     ("[Gates determined based on constitution file]"), derived fresh from
+     the constitution at plan time; this is exactly how the transaction-
+     embedding feature's plan already produced a Principle-IV gate row
+     without any template change. No fixed row is added here, consistent
+     with the 2.1.0 precedent of keeping principle-specific checks out of the
+     template and in the constitution text itself.
   ✅ .specify/templates/spec-template.md — no mandatory-section conflicts.
   ✅ .specify/templates/tasks-template.md — no new task category required.
   ✅ .specify/templates/checklist-template.md — no conflicts.
@@ -105,14 +121,39 @@ An immutable audit trail is a baseline expectation for a financial system.
 ### IV. Data Ownership & Access Boundaries
 The service uses two databases behind two separate SQLAlchemy `DeclarativeBase`
 registries. The **own DB** is READ-WRITE and its metadata MUST be the *sole*
-Alembic `target_metadata`. The **backend DB** is READ-ONLY: its Base MUST be
-excluded from Alembic, access MUST go through a dedicated read-only database role
-(DB-enforced), and the application MUST define no write paths against it. Own
-tables MUST live in the feature slice that owns them. Owned models MUST NOT
+Alembic `target_metadata`. The **backend DB** is READ-ONLY BY DEFAULT: its Base
+MUST be excluded from Alembic, and access MUST go through a dedicated
+`ai_readonly` database role (DB-enforced). The application MUST treat the
+backend DB as strictly read-only and MUST NOT write to it — UNLESS a write path
+is both (a) backed by a narrowly-scoped DB-level GRANT already provisioned for
+exactly that column or table, and (b) explicitly authorized for that specific
+feature by a human, recorded in that feature's spec or PR. A write path MUST
+NEVER be added speculatively, defensively, or "just in case" by a feature that
+does not strictly need it — writing to the backend DB is something a feature
+must be explicitly told to do, never something to reach for by default. Absent
+both conditions, code MUST define no write paths against the backend DB.
+
+The currently-authorized exceptions, matching the exact grants provisioned on
+`ai_readonly`, are:
+  - `transactions.embedding` — UPDATE only (this service computes and persists
+    embeddings for existing backend transactions).
+  - `monthly_summaries` — full CRUD (this service owns this table's lifecycle
+    end-to-end).
+Any additional write exception MUST be added to this list via a constitution
+amendment before code may exercise it, and the code implementing an exception
+MUST be scoped to exactly the columns/tables that exception's GRANT covers —
+never broader. Where the role additionally restricts writes at the transaction
+level (e.g. a `default_transaction_read_only = on` default), the required
+per-transaction override (e.g. `SET TRANSACTION READ WRITE`) MUST be scoped to
+the single transaction performing that authorized write, never applied to the
+connection or session by default.
+
+Own tables MUST live in the feature slice that owns them. Owned models MUST NOT
 declare a real `ForeignKey` into a backend table; a cross-database reference MUST
 be a logical, unconstrained `backend_*_id` column. The service MUST NEVER create,
-alter, drop, or write backend-owned tables; it returns structured results to
-Django, which persists them.
+alter, or drop backend-owned tables, and MUST NEVER write to one outside the
+enumerated exceptions above; for everything else, it returns structured results
+to Django, which persists them.
 
 Backend tables MUST be represented as typed models in a shared module that are
 **generated** directly from the read-only backend database via a pinned
@@ -126,14 +167,21 @@ regenerates and commits the module; no CI gate or scheduled job connects to the
 backend database (CI stays offline, per Principle I).
 
 **Rationale**: Two services writing one database corrupt each other's schema
-unless ownership is explicit and enforced. A read-only role plus a separate,
-Alembic-excluded Base makes the boundary impossible to cross by accident rather
-than merely by convention. Hand-written mirrors accumulate transcription error
-against an upstream schema this service does not own; generating them directly
-from the backend eliminates that error by construction. Regeneration is kept a
-manual, human-reviewed step so that CI never depends on backend availability or
-credentials — the boundary is verified offline by importing the committed module,
-not by reaching across it.
+unless ownership is explicit and enforced. A read-only-by-default role plus a
+separate, Alembic-excluded Base makes the boundary impossible to cross by
+accident rather than merely by convention. A small, enumerated,
+explicitly-authorized exception list lets the two narrow write paths the
+backend team has deliberately granted actually be used, while keeping every
+other feature's default posture read-only — requiring both a DB-level grant
+and human sign-off before any code exercises a write path prevents scope
+creep, so a feature never grows a write path just because a column happens to
+be writable in principle or "might be useful later." Hand-written mirrors
+accumulate transcription error against an upstream schema this service does
+not own; generating them directly from the backend eliminates that error by
+construction. Regeneration is kept a manual, human-reviewed step so that CI
+never depends on backend availability or credentials — the boundary is
+verified offline by importing the committed module, not by reaching across
+it.
 
 ### V. Feature-Bounded Modular Architecture
 Code MUST be organized as feature-bounded vertical slices, each self-contained
@@ -236,4 +284,4 @@ deviations MUST be justified explicitly in the PR. Runtime development guidance
 lives in repository docs and agent guidance files and MUST stay consistent with
 this constitution.
 
-**Version**: 2.1.0 | **Ratified**: 2026-07-09 | **Last Amended**: 2026-07-13
+**Version**: 2.2.0 | **Ratified**: 2026-07-09 | **Last Amended**: 2026-07-14

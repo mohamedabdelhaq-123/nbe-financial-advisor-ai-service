@@ -18,6 +18,7 @@ from app.backend_db.models.administration import (
     UserPermission,
 )
 from app.backend_db.models.aggregations import (
+    MONTHLY_SUMMARY_EMBEDDING_DIM,
     AnomalyFlag,
     MonthlySummary,
     NetWorthSnapshot,
@@ -29,8 +30,14 @@ from app.backend_db.models.conversations import Conversation, Message, MessageRe
 from app.backend_db.models.feedback import Reaction, ReportedIssue
 from app.backend_db.models.ping import Ping
 from app.backend_db.models.profile import BankAccount, ConsentRecord, User, UserPreference
-from app.backend_db.models.recommendation import ProblemStatement, Product, RecommendationLog
+from app.backend_db.models.recommendation import (
+    PROBLEM_STATEMENT_EMBEDDING_DIM,
+    ProblemStatement,
+    Product,
+    RecommendationLog,
+)
 from app.backend_db.models.statements import (
+    TRANSACTION_EMBEDDING_DIM,
     BankStatementTemplate,
     StatementFile,
     StatementNormalized,
@@ -54,6 +61,7 @@ __all__ = [
     "NetWorthSnapshot",
     "RecurringCharge",
     "AnomalyFlag",
+    "MONTHLY_SUMMARY_EMBEDDING_DIM",
     # budgets
     "Budget",
     "BudgetAllocation",
@@ -76,10 +84,12 @@ __all__ = [
     "Product",
     "ProblemStatement",
     "RecommendationLog",
+    "PROBLEM_STATEMENT_EMBEDDING_DIM",
     # statements
     "BankStatementTemplate",
     "StatementFile",
     "StatementNormalized",
     "StatementOcrResult",
     "Transaction",
+    "TRANSACTION_EMBEDDING_DIM",
 ]

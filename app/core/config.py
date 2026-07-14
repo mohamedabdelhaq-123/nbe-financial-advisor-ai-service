@@ -33,6 +33,19 @@ class Settings(BaseSettings):
     # JSON, so raise this per-provider/model rather than changing the default.
     normalization_chunk_max_tokens: int = 4096
 
+    # ── embeddings ─────────────────────────────────────────────────────────
+    # Independent from the LLM base URL/key above — the embedding provider is not
+    # guaranteed to live at the same endpoint (e.g. chat pointed at a self-hosted
+    # vLLM instance that serves no embedding model, embeddings kept on OpenAI proper).
+    # Required only when use_mock_llm is False; safe to omit in mock mode.
+    embedding_base_url: str = "https://api.openai.com/v1"
+    embedding_api_key: str = "__mock__"  # placeholder — unused in mock mode
+    embedding_model_name: str = "text-embedding-3-small"
+    # Default output vector size. Must stay 768 unless AiProblemStatement.embedding
+    # (app/features/recommendations/models.py, Vector(768)) is migrated in lockstep —
+    # a caller needing a different size passes it explicitly rather than changing this.
+    embedding_dimensions: int = Field(default=768, ge=1)
+
     # ── auth ───────────────────────────────────────────────────────────────
     # Shared secret between the Django backend and this service.
     ai_service_token: str = ""
@@ -104,6 +117,12 @@ settings = Settings()
 if not settings.use_mock_llm and settings.openai_api_key == "__mock__":
     raise RuntimeError(
         "OPENAI_API_KEY must be set when USE_MOCK_LLM is false. "
+        "Set USE_MOCK_LLM=1 in .env to run fully offline."
+    )
+
+if not settings.use_mock_llm and settings.embedding_api_key == "__mock__":
+    raise RuntimeError(
+        "EMBEDDING_API_KEY must be set when USE_MOCK_LLM is false. "
         "Set USE_MOCK_LLM=1 in .env to run fully offline."
     )
 

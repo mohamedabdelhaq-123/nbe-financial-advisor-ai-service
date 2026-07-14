@@ -12,9 +12,11 @@ from fastapi import FastAPI
 from app.core import system
 from app.features.analytics import router as analytics
 from app.features.chat import router as chat
+from app.features.embed import router as embed
 from app.features.ingestion import router as ingestion
 from app.features.plan import router as plan
 from app.features.recommendations import router as recommendations
+from app.features.transactions import router as transactions
 
 
 @asynccontextmanager
@@ -40,10 +42,12 @@ def create_app() -> FastAPI:
     app = FastAPI(title="NBE AI Service", lifespan=_lifespan)
     app.include_router(system.router)
     app.include_router(chat.router)
+    app.include_router(embed.router)
     app.include_router(analytics.router)
     app.include_router(ingestion.router)
     app.include_router(plan.router)
     app.include_router(recommendations.router)
+    app.include_router(transactions.router)
     return app
 
 

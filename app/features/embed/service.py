@@ -1,25 +1,19 @@
-"""Embedding service.
+"""Embedding feature service — thin wrapper over the core embedding capability."""
 
-Returns 768-dimensional vectors. In mock mode, returns deterministic vectors.
-"""
+import tiktoken
 
-import hashlib
-
-from app.core.config import settings
+from app.core.embedding import get_embedding_model
 
 
-async def embed_texts(texts: list[str]) -> list[list[float]]:
-    if settings.use_mock_llm:
-        return [_mock_vector(t, dim=768) for t in texts]
+async def embed_texts(texts: list[str], dimensions: int | None = None) -> list[list[float]]:
+    if not texts:
+        return []
+    return await get_embedding_model(dimensions=dimensions).aembed_documents(texts)
 
-    raise RuntimeError("Embedding service not configured for real mode")
 
-
-def _mock_vector(text: str, dim: int = 768) -> list[float]:
-    h = hashlib.sha256(text.encode()).digest()
-    result: list[float] = []
-    for i in range(dim):
-        byte_idx = i % len(h)
-        result.append((h[byte_idx] + i) / 255.0)
-    norm = sum(v * v for v in result) ** 0.5
-    return [v / norm for v in result]
+def count_tokens(texts: list[str], model: str) -> int:
+    try:
+        encoding = tiktoken.encoding_for_model(model)
+    except KeyError:
+        encoding = tiktoken.get_encoding("cl100k_base")
+    return sum(len(encoding.encode(t)) for t in texts)
