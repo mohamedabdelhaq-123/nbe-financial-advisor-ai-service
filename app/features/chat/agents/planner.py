@@ -3,6 +3,11 @@
 from langchain_core.messages import AIMessage
 
 from app.features.chat.guards import with_disclaimer
+from app.features.chat.schemas import (
+    Allocation,
+    AllocationSliderPayload,
+    AllocationSliderWidget,
+)
 from app.features.chat.state import ConversationState
 
 
@@ -26,9 +31,18 @@ async def planner_node(state: ConversationState) -> dict:
         allocations = await generate_plan(user_context, answers)
         alloc_lines = "\n".join(f"- {a.category}: {a.percentage}%" for a in allocations)
         reply = f"Here is your suggested budget plan:\n{alloc_lines}"
+        widget = AllocationSliderWidget(
+            payload=AllocationSliderPayload(
+                allocations=[
+                    Allocation(category=a.category, percentage=float(a.percentage))
+                    for a in allocations
+                ]
+            )
+        )
         return {
             "messages": [AIMessage(content=with_disclaimer(reply))],
             "stage": "plan_complete",
+            "widget": widget,
         }
     except ImportError:
         return {

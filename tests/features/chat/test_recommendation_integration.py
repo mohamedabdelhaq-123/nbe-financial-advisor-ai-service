@@ -4,6 +4,7 @@ import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 
 from app.features.chat.agents.recommendation import recommendation_node
+from app.features.chat.schemas import ProductCardWidget
 
 
 @pytest.mark.asyncio
@@ -27,6 +28,7 @@ async def test_recommendation_node_returns_products(monkeypatch):
         "planner_answers": {},
         "questions_asked": 0,
         "message_references": [],
+        "widget": None,
     }
 
     result = await recommendation_node(state)
@@ -35,4 +37,13 @@ async def test_recommendation_node_returns_products(monkeypatch):
     msg = result["messages"][0]
     assert isinstance(msg, AIMessage)
     assert "product" in msg.content.lower() or "savings" in msg.content.lower()
-    assert len(result["message_references"]) > 0
+
+    # FR-005: products live in the product_card widget payload, not in references.
+    widget = result.get("widget")
+    assert isinstance(widget, ProductCardWidget)
+    assert widget.type == "product_card"
+    assert len(widget.payload.products) == 2
+    assert widget.payload.products[0].product_name == "Savings Account"
+    assert widget.payload.products[0].product_id == "1"
+    # References are empty — products are no longer duplicated as references.
+    assert result["message_references"] == []
