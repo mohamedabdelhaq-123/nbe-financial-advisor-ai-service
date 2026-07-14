@@ -154,7 +154,7 @@ async def test_error_event_no_done_follows(real_mode, monkeypatch):
     dones = [e for e in events if e["event"] == "done"]
 
     assert len(errors) == 1
-    assert "forced failure" in errors[0]["data"]["message"]
+    assert errors[0]["data"]["message"] == "Something went wrong. Please try again."
     assert dones == [], "no done event must follow an error"
 
 

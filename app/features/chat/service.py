@@ -1,6 +1,7 @@
 """Chat streaming service — SSE endpoint implementation."""
 
 import asyncio
+import logging
 from collections.abc import AsyncIterator
 
 from app.features.chat.schemas import (
@@ -11,6 +12,8 @@ from app.features.chat.schemas import (
     ErrorPayload,
     TokenEvent,
 )
+
+logger = logging.getLogger(__name__)
 
 # User-facing leaf agents whose token output is forwarded downstream.
 # Maestro classification and summary generation are consumed internally.
@@ -123,9 +126,17 @@ async def stream_chat(app, request: ChatTurnRequest) -> AsyncIterator[str]:
         # Client disconnect (T010a): stop producing immediately — no partial done,
         # no error event, no audit write. Checkpointer state stays consistent.
         return
-    except Exception as exc:
+    except Exception:
         # FR-010: exactly one error event, then the stream closes (no done follows).
-        yield f"data: {ErrorEvent(data=ErrorPayload(message=str(exc))).model_dump_json()}\n\n"
+        # Log the real exception server-side only — the client gets a generic
+        # message so internal details (paths, connection strings, etc.) never leak.
+        logger.exception(
+            "chat_turn stream failed", extra={"conversation_id": request.conversation_id}
+        )
+        generic_error = ErrorEvent(
+            data=ErrorPayload(message="Something went wrong. Please try again.")
+        )
+        yield f"data: {generic_error.model_dump_json()}\n\n"
 
     # FR-013: unchanged best-effort audit write after the stream ends.
     try:
