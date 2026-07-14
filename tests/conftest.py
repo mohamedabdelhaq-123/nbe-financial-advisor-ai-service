@@ -89,6 +89,12 @@ def own_db_url():
                 async with engine.begin() as conn:
                     await conn.run_sync(OwnBase.metadata.create_all)
                     await conn.execute(sa.text('CREATE EXTENSION IF NOT EXISTS "uuid-ossp"'))
+                    # transactions.embedding uses the real `vector` extension (unlike the
+                    # OwnBase tables above, which are patched to LargeBinary) so that writes
+                    # through app.backend_db.models.Transaction's pgvector VECTOR(1536) column
+                    # round-trip correctly — matching the real backend schema, where this
+                    # column is also `vector(1536)`, not bytea.
+                    await conn.execute(sa.text("CREATE EXTENSION IF NOT EXISTS vector"))
                     await conn.execute(
                         sa.text(
                             "CREATE TABLE IF NOT EXISTS transactions ("
@@ -109,7 +115,7 @@ def own_db_url():
                             "balance NUMERIC(14,2), "
                             "transaction_type VARCHAR(20), "
                             "extra_fields JSONB, "
-                            "embedding BYTEA, "
+                            "embedding vector(1536), "
                             "statement_id UUID"
                             ")"
                         )
