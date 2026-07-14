@@ -12,7 +12,7 @@ def _uuid(s: str) -> uuid.UUID:
 
 
 @pytest.mark.asyncio
-async def test_monthly_summary_computes_totals(own_pg, mock_embedder):
+async def test_monthly_summary_computes_totals(own_pg):
     from app.features.analytics.jobs.monthly_summary import compute_monthly_summary
 
     uid = _uuid("1")
@@ -47,7 +47,6 @@ async def test_monthly_summary_computes_totals(own_pg, mock_embedder):
 
     result = await compute_monthly_summary(
         session_gen=own_pg,
-        embed_fn=mock_embedder,
         user_id=str(uid),
         account_id=str(aid),
         month="2026-01",
@@ -56,11 +55,13 @@ async def test_monthly_summary_computes_totals(own_pg, mock_embedder):
     assert result.total_income == pytest.approx(200.0)
     assert result.net == pytest.approx(120.0)
     assert "food" in result.by_category
-    assert len(result.embedding) == 768
+    from app.backend_db.models import MONTHLY_SUMMARY_EMBEDDING_DIM
+
+    assert len(result.embedding) == MONTHLY_SUMMARY_EMBEDDING_DIM
 
 
 @pytest.mark.asyncio
-async def test_monthly_summary_idempotent(own_pg, mock_embedder):
+async def test_monthly_summary_idempotent(own_pg):
     from app.features.analytics.jobs.monthly_summary import compute_monthly_summary
 
     uid = _uuid("2")
@@ -89,14 +90,12 @@ async def test_monthly_summary_idempotent(own_pg, mock_embedder):
 
     r1 = await compute_monthly_summary(
         session_gen=own_pg,
-        embed_fn=mock_embedder,
         user_id=str(uid),
         account_id=str(aid),
         month="2026-02",
     )
     r2 = await compute_monthly_summary(
         session_gen=own_pg,
-        embed_fn=mock_embedder,
         user_id=str(uid),
         account_id=str(aid),
         month="2026-02",

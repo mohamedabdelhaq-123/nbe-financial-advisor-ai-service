@@ -7,7 +7,7 @@ from app.features.chat.agents.recommendation import recommendation_node
 
 
 @pytest.mark.asyncio
-async def test_recommendation_node_returns_products(monkeypatch, mock_embedder):
+async def test_recommendation_node_returns_products(monkeypatch):
 
     from app.features.recommendations.schemas import ProductMatch
 

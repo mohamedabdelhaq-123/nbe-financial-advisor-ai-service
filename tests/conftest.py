@@ -8,7 +8,6 @@ validation and the mock short-circuit see it.
 No fixture performs real LLM or embedder calls.
 """
 
-import hashlib
 import os
 
 os.environ.setdefault("USE_MOCK_LLM", "1")
@@ -136,22 +135,6 @@ async def own_pg(own_db_url):
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     yield session_factory
     await engine.dispose()
-
-
-@pytest.fixture
-def mock_embedder(monkeypatch):
-    async def _mock_embed_texts(texts: list[str]) -> list[list[float]]:
-        dim = 768
-        results = []
-        for t in texts:
-            h = hashlib.sha256(t.encode()).digest()
-            vec = [((h[i % len(h)] + i) / 255.0) for i in range(dim)]
-            norm = sum(v * v for v in vec) ** 0.5
-            results.append([v / norm for v in vec])
-        return results
-
-    monkeypatch.setattr("app.features.embed.service.embed_texts", _mock_embed_texts)
-    return _mock_embed_texts
 
 
 @pytest.fixture

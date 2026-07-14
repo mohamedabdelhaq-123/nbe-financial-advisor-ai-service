@@ -6,7 +6,7 @@ from app.features.recommendations.seed import seed
 
 
 @pytest.mark.asyncio
-async def test_seed_returns_insert_count(mock_embedder):
+async def test_seed_returns_insert_count():
     statements = [
         {"product_id": 1, "statement_text": "Need a savings account"},
         {"product_id": 2, "statement_text": "Want to invest"},

@@ -8,7 +8,7 @@ from app.features.recommendations.service import match
 
 
 @pytest.mark.asyncio
-async def test_match_returns_products(monkeypatch, mock_embedder):
+async def test_match_returns_products():
     mock_row = (1, "Need savings", 0.92)
     mock_result = MagicMock()
     mock_result.all.return_value = [mock_row]
@@ -19,9 +19,7 @@ async def test_match_returns_products(monkeypatch, mock_embedder):
     mock_session.commit = AsyncMock()
     mock_session.add = MagicMock()
 
-    results = await match(
-        session=mock_session, embed_fn=mock_embedder, user_id=10, query="I need savings"
-    )
+    results = await match(session=mock_session, user_id=10, query="I need savings")
 
     assert len(results) >= 1
     assert results[0].product_id == 1
