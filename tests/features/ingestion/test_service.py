@@ -167,6 +167,7 @@ async def test_happy_path_persists_markdown_and_content_list_with_tabular_struct
 
     assert result.ocr_engine == "MinerU"
     assert result.prefix == f"{settings.storage_s3_ocr_bucket}/{STATEMENT_ID}/"
+    assert result.confidence_score == 1.0
 
     put_keys = {key for _, key, _ in s3.put_calls}
     assert f"{STATEMENT_ID}/markdown.md" in put_keys
@@ -354,6 +355,7 @@ async def test_empty_content_still_returns_a_successful_result(monkeypatch):
     )
 
     assert result.ocr_engine == "MinerU"
+    assert result.confidence_score == 1.0
     put_keys = {key for _, key, _ in s3.put_calls}
     assert f"{STATEMENT_ID}/markdown.md" in put_keys
     assert f"{STATEMENT_ID}/content_list.json" in put_keys

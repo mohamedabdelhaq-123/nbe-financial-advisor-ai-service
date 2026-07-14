@@ -16,7 +16,9 @@ def test_process_200_with_token(client, auth_headers, monkeypatch):
 
     async def _mock_process_statement(session_gen, own_session_gen, statement_id):
         return ProcessStatementResult(
-            prefix=f"pfm-statements-ocr/{statement_id}/", ocr_engine="MinerU"
+            prefix=f"pfm-statements-ocr/{statement_id}/",
+            ocr_engine="MinerU",
+            confidence_score=1.0,
         )
 
     monkeypatch.setattr("app.features.ingestion.router.process_statement", _mock_process_statement)
@@ -30,6 +32,7 @@ def test_process_200_with_token(client, auth_headers, monkeypatch):
     data = resp.json()
     assert data["ocr_engine"] == "MinerU"
     assert data["prefix"] == f"pfm-statements-ocr/{statement_id}/"
+    assert data["confidence_score"] == 1.0
 
 
 def test_process_422_on_malformed_statement_id(client, auth_headers):
