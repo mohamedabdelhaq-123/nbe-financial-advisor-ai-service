@@ -42,9 +42,7 @@ async def analysis_node(state: ConversationState) -> dict:
         references: list[Reference] = []
         lines = []
         for txn in transactions:
-            references.append(
-                Reference(target_type="transaction", target_id=str(txn.id))
-            )
+            references.append(Reference(target_type="transaction", target_id=str(txn.id)))
             amount = getattr(txn, "amount", 0)
             desc = getattr(txn, "merchant_raw", "unknown")
             category = getattr(txn, "category", "uncategorized")

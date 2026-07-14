@@ -59,11 +59,9 @@ def test_chat_response_documents_envelope_and_examples(openapi: dict):
 
 
 def test_done_example_carries_widget_and_references(openapi: dict):
-    done_frame = (
-        _chat_op(openapi)["responses"]["200"]["content"]["text/event-stream"]["examples"]["done"][
-            "value"
-        ]
-    )
+    done_frame = _chat_op(openapi)["responses"]["200"]["content"]["text/event-stream"]["examples"][
+        "done"
+    ]["value"]
     assert '"event":"done"' in done_frame
     assert '"widget"' in done_frame
     assert '"references"' in done_frame

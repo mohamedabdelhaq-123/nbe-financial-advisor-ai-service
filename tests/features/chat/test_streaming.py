@@ -80,9 +80,7 @@ def _parse(frames):
 
 
 def _install_fake_graph(monkeypatch, graph):
-    monkeypatch.setattr(
-        "app.features.chat.graph.build_graph", lambda checkpointer=None: graph
-    )
+    monkeypatch.setattr("app.features.chat.graph.build_graph", lambda checkpointer=None: graph)
 
 
 @pytest.fixture

@@ -19,7 +19,7 @@ _DONE_FRAME = (
     '{"category":"Savings","percentage":25.0}]}},'
     '"references":[{"target_type":"transaction",'
     '"target_id":"b3f1c2d4-0000-0000-0000-000000000000"}]'
-    '}}\n\n'
+    "}}\n\n"
 )
 _ERROR_FRAME = 'data: {"event":"error","data":{"message":"Chat not available."}}\n\n'
 
@@ -30,7 +30,7 @@ _ERROR_FRAME = 'data: {"event":"error","data":{"message":"Chat not available."}}
         200: {
             "description": (
                 "A `text/event-stream` of the assistant's reply over the shared envelope "
-                "`{\"event\": <type>, \"data\": <payload>}`. Incremental `token` events "
+                '`{"event": <type>, "data": <payload>}`. Incremental `token` events '
                 "stream the reply as it is generated (real path) or as one batch (mock "
                 "path, `USE_MOCK_LLM=1` — same envelope, FR-011), followed by exactly one "
                 "terminal `done` event carrying the finalized `content`, a `widget` slot "
@@ -47,7 +47,7 @@ _ERROR_FRAME = 'data: {"event":"error","data":{"message":"Chat not available."}}
                         "type": "object",
                         "description": (
                             "One Server-Sent Events frame over the shared "
-                            "`{\"event\",\"data\"}` envelope. The stream emits many "
+                            '`{"event","data"}` envelope. The stream emits many '
                             "`token` frames, then exactly one terminal `done` (or one "
                             "`error`). Each frame is serialized on the wire as "
                             "`data: {json}\\n\\n`."
