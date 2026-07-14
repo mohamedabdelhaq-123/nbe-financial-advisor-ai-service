@@ -1,14 +1,20 @@
 """
-Backend (Django-owned) database — READ-ONLY.
+Backend (Django-owned) database — READ-ONLY BY DEFAULT.
 
-This service reads specific backend tables and NEVER writes them. Enforcement is
-layered:
+This service reads specific backend tables and, outside two narrow, Constitution-
+authorized exceptions, never writes them. Enforcement is layered:
 
   * `BackendBase` is a SEPARATE declarative base and is deliberately excluded
     from Alembic's `target_metadata`, so migrations can never touch these tables.
-  * The connection uses a dedicated read-only Postgres role (requested from
-    backend/infra), so the database itself rejects writes.
-  * The application defines no write paths against this Base.
+  * The connection uses a dedicated `ai_readonly` Postgres role (requested from
+    backend/infra) whose `default_transaction_read_only` is on, so every
+    transaction is read-only unless it explicitly opts out.
+  * The application defines no write paths against this Base beyond the two
+    exceptions Constitution Principle IV enumerates: `transactions.embedding`
+    (written by `app.features.transactions.service.embed_transactions`, which
+    opts a single transaction into `SET TRANSACTION READ WRITE`) and
+    `monthly_summaries` (full CRUD). Every other feature reading through this
+    module stays strictly read-only.
 
 The engine is created lazily: it is built only when the backend DB is
 configured, so unit tests and CI (which fixture/mock backend data) need no live

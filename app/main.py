@@ -16,6 +16,7 @@ from app.features.embed import router as embed
 from app.features.ingestion import router as ingestion
 from app.features.plan import router as plan
 from app.features.recommendations import router as recommendations
+from app.features.transactions import router as transactions
 
 
 @asynccontextmanager
@@ -46,6 +47,7 @@ def create_app() -> FastAPI:
     app.include_router(ingestion.router)
     app.include_router(plan.router)
     app.include_router(recommendations.router)
+    app.include_router(transactions.router)
     return app
 
 
