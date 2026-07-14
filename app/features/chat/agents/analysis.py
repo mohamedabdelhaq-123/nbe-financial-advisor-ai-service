@@ -6,6 +6,7 @@ from langchain_core.messages import AIMessage
 
 from app.core.config import settings
 from app.features.chat.guards import with_disclaimer
+from app.features.chat.schemas import Reference
 from app.features.chat.state import ConversationState
 
 
@@ -38,11 +39,12 @@ async def analysis_node(state: ConversationState) -> dict:
                 "message_references": [],
             }
 
-        references = []
+        references: list[Reference] = []
         lines = []
         for txn in transactions:
-            ref = {"table": "transactions", "id": getattr(txn, "id", None)}
-            references.append(ref)
+            references.append(
+                Reference(target_type="transaction", target_id=str(txn.id))
+            )
             amount = getattr(txn, "amount", 0)
             desc = getattr(txn, "merchant_raw", "unknown")
             category = getattr(txn, "category", "uncategorized")
