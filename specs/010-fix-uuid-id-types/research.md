@@ -91,7 +91,7 @@ The chat agent (`chat/agents/recommendation.py`) and the standalone router (`/in
 - *Pass a backend session into `match()` from each caller.* Rejected: forces both the chat agent and the router to manage two sessions, and complicates tests at every call site.
 - *Have the chat agent fetch titles after `match()` returns.* Rejected: violates Principle V (chat agent reaches into backend `Products`) and duplicates the lookup logic.
 
-**Backend outage behavior**: if `get_backend_session()` fails or `Products` is unreachable, `match()` degrades gracefully — return the matches with a fallback title (e.g. `"Product unavailable"`), or skip the title enrichment. The exact fallback is a small implementation choice left to `tasks.md`, but the principle is: a transient backend DB outage must not crash the chat turn (matches the analysis agent's `try/except` graceful-degradation pattern at `analysis.py:74`).
+**Backend outage behavior**: if `get_backend_session()` fails or `Products` is unreachable, `match()` degrades gracefully with one consistent fallback — every match is retained and its `product_name` falls back to a fixed placeholder (`"Product unavailable"`, the `_PRODUCT_TITLE_FALLBACK` constant in `service.py`). The response shape is unchanged during a backend outage: the same matches are returned, each with a `product_name` string, so callers never see a missing field or a shorter list. The recommendation log still records each match. The principle is: a transient backend DB outage must not crash the chat turn (matches the analysis agent's `try/except` graceful-degradation pattern at `analysis.py:74`).
 
 ---
 

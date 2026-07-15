@@ -23,6 +23,9 @@ async def _fetch_product_titles(product_ids: list[uuid.UUID]) -> dict[uuid.UUID,
     Degrades gracefully on backend outage (matches analysis.py's pattern) — a
     transient backend DB failure must not crash the chat turn or the match call.
     """
+    if not product_ids:
+        return {}
+
     try:
         from app.backend_db import get_backend_session
         from app.backend_db.models import Product
@@ -42,7 +45,7 @@ async def match(
     embed_fn=None,
     user_id: uuid.UUID | None = None,
     query: str = "",
-    top_k: int = 5,
+    top_k: int = 3,
 ) -> list[ProductMatch]:
     if embed_fn is None:
         from app.features.embed.service import embed_texts
@@ -88,7 +91,7 @@ async def match(
         )
 
         log = AiRecommendationLog(
-            user_id=user_id,
+            user_id=user_id or uuid.UUID(int=0),
             product_id=product_id,
             matched_query=query,
             similarity_score=float(score),

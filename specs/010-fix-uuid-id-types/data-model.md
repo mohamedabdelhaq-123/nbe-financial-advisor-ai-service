@@ -2,7 +2,7 @@
 
 **Feature**: [spec.md](spec.md) | **Date**: 2026-07-14
 
-This feature is a type-consistency fix: it changes the **types** of existing identifier columns and fields across the service's own DB tables and its wire DTOs. No new tables, no new columns, no new relationships — every change below is an `Integer → Uuid` (or `int → UUID4`, or `str → UUID4`) type swap. A `UserContext` Pydantic model was introduced mid-cycle and then removed again the same cycle (see the section below and `research.md` D11) — it is not part of the final shape.
+This feature is a type-consistency fix: it aligns the **types** of existing persisted identifier columns and wire-DTO identifier fields to UUID across the service's own DB tables and its request/response contracts. No new tables, no new columns, no new relationships are introduced. The identifier-type changes themselves are `Integer → Uuid` (or `int → UUID4`, or `str → UUID4`) swaps; the feature also makes two non-type agent-internal changes documented separately below and in `research.md` D11 — removal of the `is_first_turn` request field and the addition of a root-level `ConversationState.user_id` field — which are not identifier-type swaps. A `UserContext` Pydantic model was introduced mid-cycle and then removed again the same cycle (see the section below and `research.md` D11) — it is not part of the final shape.
 
 Ground truth: the backend DB identifies `Users.id`, `Products.id`, and every FK into them as `uuid.UUID`. This service's own tables and DTOs are aligned to that ground truth.
 

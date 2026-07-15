@@ -1,6 +1,6 @@
 # Contract Amendment: Chat Request Shape (POST /internal/chat)
 
-**Feature**: [../spec.md](../spec.md) | **Amends**: [`specs/009-chat-streaming-contract/contracts/chat-stream.md`](../../../009-chat-streaming-contract/contracts/chat-stream.md) | **Auth**: Bearer token (`require_token`) | **Breaking**: Yes.
+**Feature**: [../spec.md](../spec.md) | **Amends**: [`specs/009-chat-streaming-contract/contracts/chat-stream.md`](../../009-chat-streaming-contract/contracts/chat-stream.md) | **Auth**: Bearer token (`require_token`) | **Breaking**: Yes.
 
 ## Summary
 
@@ -71,4 +71,4 @@ Validated live against a running dev instance: two turns sent on the same `conve
 - Design decision: [../research.md](../research.md) D11 (supersedes D3)
 - Data model: [../data-model.md](../data-model.md)
 - Related amendment (product_id): [chat-stream-amendment.md](chat-stream-amendment.md)
-- Full chat-stream contract: [`specs/009-chat-streaming-contract/contracts/chat-stream.md`](../../../009-chat-streaming-contract/contracts/chat-stream.md)
+- Full chat-stream contract: [`specs/009-chat-streaming-contract/contracts/chat-stream.md`](../../009-chat-streaming-contract/contracts/chat-stream.md)

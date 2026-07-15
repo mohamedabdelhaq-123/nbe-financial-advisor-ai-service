@@ -1,5 +1,7 @@
 """US1 Unit test: Analysis agent — grounded data references."""
 
+import uuid
+
 import pytest
 
 from app.features.chat.agents.analysis import analysis_node
@@ -38,7 +40,7 @@ async def test_analysis_node_returns_references(monkeypatch):
 
     state = {
         "messages": [],
-        "user_id": "70b8d118-9b58-45ab-a8ad-4af9ce9105df",
+        "user_id": uuid.UUID("70b8d118-9b58-45ab-a8ad-4af9ce9105df"),
         "user_context": None,
         "intent": "analysis",
     }
@@ -73,7 +75,7 @@ async def test_analysis_node_no_data(monkeypatch):
 
     state = {
         "messages": [],
-        "user_id": "35949f20-c6b5-4889-a37d-a09ef0af6b1e",
+        "user_id": uuid.UUID("35949f20-c6b5-4889-a37d-a09ef0af6b1e"),
         "user_context": None,
         "intent": "analysis",
     }

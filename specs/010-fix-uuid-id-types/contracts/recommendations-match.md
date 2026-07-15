@@ -12,7 +12,7 @@ The standalone recommendation match endpoint takes a natural-language query and 
 {
   "user_id": "3f9c9b2e-1c2a-4b3d-9e8f-2a7b6c5d4e3f",
   "query": "low-fee savings account",
-  "top_k": 5
+  "top_k": 3
 }
 ```
 
@@ -20,7 +20,7 @@ The standalone recommendation match endpoint takes a natural-language query and 
 |---|---|---|---|
 | `user_id` | `UUID4` | (required) | Backend user ID the match is being shown to. Used to attribute the recommendation-log row; MUST be a valid UUID. |
 | `query` | `str` | (required) | Natural-language description of what the user is looking for. Empty/whitespace string returns an empty matches list (no error). |
-| `top_k` | `int` | `5` | Maximum number of matches to return. |
+| `top_k` | `int` | `3` | Maximum number of matches to return. Must be `≤ 3` (enforced by Pydantic `le=3`); the bound matches the chat agent's own `top_k=3` and bounds the backend `Products` title-lookup cost (`plan.md`). |
 
 **Breaking change vs. prior behavior**: `user_id` was previously `int`. Callers that sent integers (e.g. `1001`) will now receive a 422 validation error — this is the intended fail-fast signal (Constitution Principle VII).
 

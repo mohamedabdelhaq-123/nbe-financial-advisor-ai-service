@@ -16,8 +16,8 @@ Because the own-DB migration `a1b2c3d4e5f6_add_phase1_and_phase2_own_tables.py` 
 
 ```bash
 # Drop-and-recreate path (simplest; CI uses fresh Testcontainers so is unaffected):
-alembic -x ... downgrade base     # or: dropdb <own_db> && createdb <own_db>
-alembic -x ... upgrade head
+alembic downgrade base     # or: dropdb <own_db> && createdb <own_db>
+alembic upgrade head
 ```
 
 **Expected outcome**: the own DB now has UUID-typed columns. Verify with one query (run via `psql` or the project's DB shell):
@@ -55,7 +55,7 @@ uv run python -m app.features.recommendations.seed path/to/seed.json
 Start the service (with mock LLM mode on so no real model call is needed):
 
 ```bash
-USE_MOCK_LLM=1 ... uv run uvicorn app.main:app --reload
+USE_MOCK_LLM=1 uv run uvicorn app.main:app --reload
 ```
 
 Send a chat turn:

@@ -1,5 +1,7 @@
 """US4 Integration test: Chat recommendation node wiring."""
 
+import uuid
+
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 
@@ -25,7 +27,7 @@ async def test_recommendation_node_returns_products(monkeypatch):
 
     state = {
         "messages": [HumanMessage(content="I need a savings account")],
-        "user_id": "70b8d118-9b58-45ab-a8ad-4af9ce9105df",
+        "user_id": uuid.UUID("70b8d118-9b58-45ab-a8ad-4af9ce9105df"),
         "user_context": None,
         "intent": "recommendation",
         "stage": "recommendation",

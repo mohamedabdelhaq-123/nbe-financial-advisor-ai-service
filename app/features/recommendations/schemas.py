@@ -10,7 +10,7 @@ class MatchRequest(BaseModel):
                 {
                     "user_id": "3f9c9b2e-1c2a-4b3d-9e8f-2a7b6c5d4e3f",
                     "query": "low-fee savings account",
-                    "top_k": 5,
+                    "top_k": 3,
                 }
             ]
         }
@@ -24,7 +24,9 @@ class MatchRequest(BaseModel):
         description="Natural-language description of what the user is looking for.",
         examples=["low-fee savings account"],
     )
-    top_k: int = Field(default=5, description="Maximum number of matches to return.", examples=[5])
+    top_k: int = Field(
+        default=3, le=3, description="Maximum number of matches to return.", examples=[3]
+    )
 
 
 class ProductMatch(BaseModel):
