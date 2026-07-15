@@ -4,7 +4,15 @@ import io
 import json
 import zipfile
 
-from app.features.ingestion.mineru_client import _extract_artifacts_from_zip
+import pytest
+
+from app.features.ingestion.mineru_client import (
+    HttpMineruClient,
+    MockMineruClient,
+    _extract_artifacts_from_zip,
+    get_mineru_client,
+)
+from app.features.ingestion.normalizer.chunking import _split_into_chunks
 
 
 def _make_zip(files: dict[str, bytes]) -> bytes:
@@ -82,3 +90,48 @@ def test_matches_real_mineru_layout_and_skips_v2_content_list():
     assert parsed.markdown == "## Statement"
     assert parsed.content_list == [{"type": "text", "text": "Statement", "page_idx": 0}]
     assert parsed.images == {}
+
+
+def test_get_mineru_client_returns_mock_when_use_mock_mineru(monkeypatch):
+    # Patched on the mineru_client module's own `settings` reference, not
+    # `app.core.config.settings` — mirrors the rationale documented at
+    # tests/features/ingestion/test_normalizer.py:357-361: a reload elsewhere
+    # in the suite rebinds `app.core.config.settings` to a new object that
+    # this module (imported before the reload) no longer shares.
+    import app.features.ingestion.mineru_client as mineru_client_module
+
+    monkeypatch.setattr(mineru_client_module.settings, "use_mock_mineru", True)
+    assert isinstance(get_mineru_client(), MockMineruClient)
+
+
+def test_get_mineru_client_returns_http_when_not_mock(monkeypatch):
+    import app.features.ingestion.mineru_client as mineru_client_module
+
+    monkeypatch.setattr(mineru_client_module.settings, "use_mock_mineru", False)
+    assert isinstance(get_mineru_client(), HttpMineruClient)
+
+
+@pytest.mark.asyncio
+async def test_mock_mineru_client_returns_fixed_deterministic_content():
+    first = await MockMineruClient().parse_document(b"one-file", "a.pdf")
+    second = await MockMineruClient().parse_document(b"a-completely-different-file", "b.pdf")
+
+    assert first == second
+    assert first.markdown.strip()
+    assert len(first.content_list) == 2
+    types = {entry["type"] for entry in first.content_list}
+    assert types == {"text", "table"}
+    table_entry = next(entry for entry in first.content_list if entry["type"] == "table")
+    assert "rows" not in table_entry
+    assert table_entry["table_body"]
+    assert first.images == {}
+
+
+@pytest.mark.asyncio
+async def test_mock_mineru_client_table_body_is_parseable_by_real_chunking():
+    parsed = await MockMineruClient().parse_document(b"file-bytes", "statement.pdf")
+
+    chunks = _split_into_chunks(parsed.content_list, parsed.markdown)
+
+    assert chunks
+    assert all(chunk for chunk in chunks)

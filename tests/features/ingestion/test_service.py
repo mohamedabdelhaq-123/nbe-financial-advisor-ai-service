@@ -338,6 +338,34 @@ async def test_mineru_failure_returns_502_processing_engine_failure(monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_offline_mode_setting_alone_routes_through_mock_mineru(monkeypatch):
+    import app.features.ingestion.mineru_client as mineru_client_module
+
+    row = _FakeStatement(seaweed_file_id="pfm-statements-raw/u1/s1/original.pdf")
+    session_gen = _session_gen_for(row)
+    own_gen = _own_session_gen()
+
+    s3 = _FakeS3()
+    _patch_storage(monkeypatch, s3)
+    monkeypatch.setattr(mineru_client_module.settings, "use_mock_mineru", True)
+
+    await process_statement(
+        session_gen=session_gen, own_session_gen=own_gen, statement_id=STATEMENT_ID
+    )
+
+    markdown_body = next(
+        body for _, key, body in s3.put_calls if key == f"{STATEMENT_ID}/markdown.md"
+    )
+    content_list_body = next(
+        body for _, key, body in s3.put_calls if key == f"{STATEMENT_ID}/content_list.json"
+    )
+    assert markdown_body
+    content_list = json.loads(content_list_body)
+    assert any(entry["type"] == "text" for entry in content_list)
+    assert any(entry["type"] == "table" for entry in content_list)
+
+
+@pytest.mark.asyncio
 async def test_empty_content_still_returns_a_successful_result(monkeypatch):
     row = _FakeStatement(seaweed_file_id="pfm-statements-raw/u1/s1/original.pdf")
     session_gen = _session_gen_for(row)

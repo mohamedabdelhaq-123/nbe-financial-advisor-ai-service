@@ -1,10 +1,11 @@
 """MinerU document-parsing client.
 
 Consumers depend only on the `MineruClient` protocol, obtained via
-`get_mineru_client()` — never on `HttpMineruClient` directly. This keeps a
-future mock implementation (see specs/004-document-processor/research.md §8,
-deferred — not built in this feature) swappable with zero change to any
-caller.
+`get_mineru_client()` — never on `HttpMineruClient` or `MockMineruClient`
+directly. `HttpMineruClient` and `MockMineruClient` are the two swappable
+implementations behind the protocol, selected by `settings.use_mock_mineru`,
+mirroring `get_normalizer_client()` in
+`app/features/ingestion/normalizer/__init__.py`.
 """
 
 import json
@@ -92,10 +93,35 @@ class HttpMineruClient:
         return _extract_artifacts_from_zip(response.content)
 
 
-def get_mineru_client() -> MineruClient:
-    """Return the configured `MineruClient`.
+class MockMineruClient:
+    """Deterministic mock `MineruClient` — no network call."""
 
-    Always returns `HttpMineruClient` today — `settings.use_mock_mineru` will
-    select a mock implementation once one exists (deferred, research.md §8).
-    """
+    async def parse_document(self, file_bytes: bytes, filename: str) -> ParsedDocument:
+        markdown = (
+            "# Statement\n\n"
+            "| Date | Merchant | Amount |\n"
+            "|---|---|---|\n"
+            "| 2026-01-01 | Mock Merchant | 100.00 |\n"
+        )
+        content_list = [
+            {
+                "type": "text",
+                "text": "2026-01-01 Mock Merchant 100.00",
+                "page_idx": 0,
+            },
+            {
+                "type": "table",
+                "table_body": (
+                    "<table><tr><td>2026-01-01</td><td>Mock Merchant</td>"
+                    "<td>100.00</td></tr></table>"
+                ),
+            },
+        ]
+        return ParsedDocument(markdown=markdown, content_list=content_list, images={})
+
+
+def get_mineru_client() -> MineruClient:
+    """Return the configured `MineruClient` — mock or real HTTP client."""
+    if settings.use_mock_mineru:
+        return MockMineruClient()
     return HttpMineruClient()
