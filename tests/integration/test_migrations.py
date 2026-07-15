@@ -46,5 +46,26 @@ def test_alembic_upgrade_head_against_real_postgres():
             text=True,
             env=env,
         )
-    message = f"alembic upgrade head failed:\nSTDOUT: {result.stdout}\nSTDERR: {result.stderr}"
-    assert result.returncode == 0, message
+        message = f"alembic upgrade head failed:\nSTDOUT: {result.stdout}\nSTDERR: {result.stderr}"
+        assert result.returncode == 0, message
+
+        import psycopg
+
+        with psycopg.connect(pg.get_connection_url().replace("+psycopg2", "")) as conn:
+            rows = conn.execute("""
+                SELECT table_name, column_name, data_type
+                FROM information_schema.columns
+                WHERE table_name IN
+                    ('ai_audit_log', 'ai_problem_statements', 'ai_recommendation_logs')
+                AND column_name IN ('user_id', 'product_id')
+                """).fetchall()
+
+        # SC-001: every own-DB identifier column the service owns is a native UUID
+        # after a fresh provisioning of the amended migration (research.md D2).
+        by_table_column = {(table, column): data_type for table, column, data_type in rows}
+        assert by_table_column == {
+            ("ai_audit_log", "user_id"): "uuid",
+            ("ai_problem_statements", "product_id"): "uuid",
+            ("ai_recommendation_logs", "user_id"): "uuid",
+            ("ai_recommendation_logs", "product_id"): "uuid",
+        }
