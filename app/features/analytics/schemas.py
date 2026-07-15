@@ -6,41 +6,71 @@ from pydantic import BaseModel, ConfigDict, Field
 class MonthlySummaryRequest(BaseModel):
     model_config = ConfigDict(
         json_schema_extra={
-            "examples": [{"user_id": "1001", "account_id": "5001", "month": "2026-06"}]
+            "examples": [
+                {
+                    "user_id": "3f9c9b2e-1c2a-4b3d-9e8f-2a7b6c5d4e3f",
+                    "account_id": "5a2c1d8e-3f4b-4a2c-9e8f-2a7b6c5d4e3f",
+                    "month": "2026-06",
+                }
+            ]
         }
     )
 
-    user_id: str = Field(description="Backend user ID to summarize.", examples=["1001"])
-    account_id: str = Field(description="Backend account ID to summarize.", examples=["5001"])
+    user_id: str = Field(
+        description="Backend user ID to summarize.",
+        examples=["3f9c9b2e-1c2a-4b3d-9e8f-2a7b6c5d4e3f"],
+    )
+    account_id: str = Field(
+        description="Backend account ID to summarize.",
+        examples=["5a2c1d8e-3f4b-4a2c-9e8f-2a7b6c5d4e3f"],
+    )
     month: str = Field(description="Target month, `YYYY-MM`.", examples=["2026-06"])
 
 
 class AnomalyCheckRequest(BaseModel):
     model_config = ConfigDict(
         json_schema_extra={
-            "examples": [{"user_id": "1001", "account_id": "5001", "month": "2026-06"}]
+            "examples": [
+                {
+                    "user_id": "3f9c9b2e-1c2a-4b3d-9e8f-2a7b6c5d4e3f",
+                    "account_id": "5a2c1d8e-3f4b-4a2c-9e8f-2a7b6c5d4e3f",
+                    "month": "2026-06",
+                }
+            ]
         }
     )
 
     user_id: str = Field(
-        description="Backend user ID to check for spending anomalies.", examples=["1001"]
+        description="Backend user ID to check for spending anomalies.",
+        examples=["3f9c9b2e-1c2a-4b3d-9e8f-2a7b6c5d4e3f"],
     )
-    account_id: str = Field(description="Backend account ID to check.", examples=["5001"])
+    account_id: str = Field(
+        description="Backend account ID to check.",
+        examples=["5a2c1d8e-3f4b-4a2c-9e8f-2a7b6c5d4e3f"],
+    )
     month: str = Field(description="Target month, `YYYY-MM`.", examples=["2026-06"])
 
 
 class PostIngestionRequest(BaseModel):
     model_config = ConfigDict(
         json_schema_extra={
-            "examples": [{"user_id": "1001", "account_id": "5001", "month": "2026-06"}]
+            "examples": [
+                {
+                    "user_id": "3f9c9b2e-1c2a-4b3d-9e8f-2a7b6c5d4e3f",
+                    "account_id": "5a2c1d8e-3f4b-4a2c-9e8f-2a7b6c5d4e3f",
+                    "month": "2026-06",
+                }
+            ]
         }
     )
 
     user_id: str = Field(
-        description="Backend user ID whose statement was just ingested.", examples=["1001"]
+        description="Backend user ID whose statement was just ingested.",
+        examples=["3f9c9b2e-1c2a-4b3d-9e8f-2a7b6c5d4e3f"],
     )
     account_id: str = Field(
-        description="Backend account ID the statement belongs to.", examples=["5001"]
+        description="Backend account ID the statement belongs to.",
+        examples=["5a2c1d8e-3f4b-4a2c-9e8f-2a7b6c5d4e3f"],
     )
     month: str = Field(
         description="Statement month to run all pipelines for, `YYYY-MM`.", examples=["2026-06"]
@@ -52,8 +82,8 @@ class MonthlySummaryResult(BaseModel):
         json_schema_extra={
             "examples": [
                 {
-                    "user_id": "1001",
-                    "account_id": "5001",
+                    "user_id": "3f9c9b2e-1c2a-4b3d-9e8f-2a7b6c5d4e3f",
+                    "account_id": "5a2c1d8e-3f4b-4a2c-9e8f-2a7b6c5d4e3f",
                     "month": "2026-06",
                     "total_income": 15000.0,
                     "total_expense": 9200.5,
@@ -92,8 +122,8 @@ class AnomalyFlagResult(BaseModel):
         json_schema_extra={
             "examples": [
                 {
-                    "user_id": "1001",
-                    "account_id": "5001",
+                    "user_id": "3f9c9b2e-1c2a-4b3d-9e8f-2a7b6c5d4e3f",
+                    "account_id": "5a2c1d8e-3f4b-4a2c-9e8f-2a7b6c5d4e3f",
                     "category": "dining",
                     "month": "2026-06",
                     "amount": 850.0,
@@ -119,8 +149,8 @@ class PostIngestionResult(BaseModel):
             "examples": [
                 {
                     "summary": {
-                        "user_id": "1001",
-                        "account_id": "5001",
+                        "user_id": "3f9c9b2e-1c2a-4b3d-9e8f-2a7b6c5d4e3f",
+                        "account_id": "5a2c1d8e-3f4b-4a2c-9e8f-2a7b6c5d4e3f",
                         "month": "2026-06",
                         "total_income": 15000.0,
                         "total_expense": 9200.5,
