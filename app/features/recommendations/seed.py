@@ -5,7 +5,7 @@ Usage:
 
 JSON format (list of objects):
     [
-        {"product_id": 1, "statement_text": "..."},
+        {"product_id": "5a2c1d8e-3f4b-4a2c-9e8f-2a7b6c5d4e3f", "statement_text": "..."},
         ...
     ]
 """

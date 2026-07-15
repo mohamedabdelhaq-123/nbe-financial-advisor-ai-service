@@ -20,13 +20,13 @@ async def recommendation_node(state: ConversationState) -> dict:
         if last_msg and hasattr(last_msg, "content"):
             content = last_msg.content
             query = content if isinstance(content, str) else str(content)
-        user_id = state["user_context"].get("user_id", 0)
+        user_id = state.get("user_id")
 
         product_matches = []
         async for session in get_own_session():
             product_matches = await match(
                 session=session,
-                user_id=int(user_id) if user_id else 0,
+                user_id=user_id,
                 query=query,
                 top_k=3,
             )
@@ -45,7 +45,7 @@ async def recommendation_node(state: ConversationState) -> dict:
             payload=ProductCardPayload(
                 products=[
                     ProductMatchPayloadItem(
-                        product_id=str(m.product_id),
+                        product_id=m.product_id,
                         product_name=m.product_name,
                         similarity=float(m.similarity),
                     )

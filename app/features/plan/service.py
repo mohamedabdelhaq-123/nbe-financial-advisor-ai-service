@@ -27,7 +27,7 @@ QUESTIONS = [
 
 
 async def next_question(
-    user_context: dict,
+    user_context: dict | None,
     answers: dict,
     questions_asked: int,
 ) -> PlanQuestion | None:
@@ -42,7 +42,7 @@ async def next_question(
 
 
 async def generate_plan(
-    user_context: dict,
+    user_context: dict | None,
     answers: dict,
 ) -> list[BudgetAllocation]:
     if settings.use_mock_llm:

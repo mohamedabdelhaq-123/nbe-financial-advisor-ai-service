@@ -41,7 +41,8 @@ async def test_chat_memory_persists_across_turns(monkeypatch):
 
         state1 = {
             "messages": [],
-            "user_context": {"user_id": 1},
+            "user_id": "7a1b2c3d-4e5f-4a7b-8c9d-0e1f2a3b4c5d",
+            "user_context": None,
             "stage": "",
             "intent": "",
             "planner_answers": {},
@@ -52,7 +53,7 @@ async def test_chat_memory_persists_across_turns(monkeypatch):
 
         state2 = {
             "messages": ["what did I say before?"],
-            "user_context": {},
+            "user_context": None,
             "stage": "",
             "intent": "",
             "planner_answers": {},

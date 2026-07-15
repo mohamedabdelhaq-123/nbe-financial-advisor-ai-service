@@ -7,6 +7,7 @@ from pydantic import TypeAdapter, ValidationError
 
 from app.features.chat.schemas import (
     AllocationSliderWidget,
+    ChatTurnRequest,
     DoneEvent,
     DonePayload,
     ProductCardWidget,
@@ -82,7 +83,13 @@ def test_widget_union_accepts_both_types():
         {
             "type": "product_card",
             "payload": {
-                "products": [{"product_id": "1", "product_name": "Savings", "similarity": 0.9}]
+                "products": [
+                    {
+                        "product_id": "5a2c1d8e-3f4b-4a2c-9e8f-2a7b6c5d4e3f",
+                        "product_name": "Savings",
+                        "similarity": 0.9,
+                    }
+                ]
             },
         }
     )
@@ -110,7 +117,13 @@ def test_product_similarity_bounds_enforced():
             {
                 "type": "product_card",
                 "payload": {
-                    "products": [{"product_id": "1", "product_name": "S", "similarity": 1.5}]
+                    "products": [
+                        {
+                            "product_id": "5a2c1d8e-3f4b-4a2c-9e8f-2a7b6c5d4e3f",
+                            "product_name": "S",
+                            "similarity": 1.5,
+                        }
+                    ]
                 },
             }
         )
@@ -128,3 +141,18 @@ def test_envelope_models_carry_examples():
     # T027: json_schema_extra examples render for the headline models.
     assert DoneEvent.model_json_schema().get("examples")
     assert AllocationSliderWidget.model_json_schema().get("examples")
+
+
+def test_chat_turn_request_rejects_non_uuid_user_id():
+    # FR-001: a non-UUID user_id must be rejected before any privileged action runs.
+    with pytest.raises(ValidationError):
+        ChatTurnRequest(conversation_id="c1", user_id=1001, message="hi")
+
+
+def test_chat_turn_request_accepts_uuid_user_id():
+    request = ChatTurnRequest(
+        conversation_id="c1",
+        user_id="7a1b2c3d-4e5f-4a7b-8c9d-0e1f2a3b4c5d",
+        message="hi",
+    )
+    assert str(request.user_id) == "7a1b2c3d-4e5f-4a7b-8c9d-0e1f2a3b4c5d"

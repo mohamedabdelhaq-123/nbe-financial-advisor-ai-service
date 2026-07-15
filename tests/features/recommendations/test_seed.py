@@ -8,8 +8,14 @@ from app.features.recommendations.seed import seed
 @pytest.mark.asyncio
 async def test_seed_returns_insert_count():
     statements = [
-        {"product_id": 1, "statement_text": "Need a savings account"},
-        {"product_id": 2, "statement_text": "Want to invest"},
+        {
+            "product_id": "5a2c1d8e-3f4b-4a2c-9e8f-2a7b6c5d4e3f",
+            "statement_text": "Need a savings account",
+        },
+        {
+            "product_id": "9f4b2a1c-2d3e-4f5a-8b7c-1d2e3f4a5b6c",
+            "statement_text": "Want to invest",
+        },
     ]
 
     from unittest.mock import AsyncMock, MagicMock, patch

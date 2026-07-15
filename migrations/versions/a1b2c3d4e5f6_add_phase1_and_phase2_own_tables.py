@@ -24,7 +24,7 @@ def upgrade() -> None:
     op.create_table(
         "ai_audit_log",
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
-        sa.Column("user_id", sa.Integer(), nullable=True),
+        sa.Column("user_id", sa.Uuid(), nullable=True),
         sa.Column("action", sa.String(length=255), nullable=False),
         sa.Column("detail_json", sa.Text(), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
@@ -34,7 +34,7 @@ def upgrade() -> None:
     op.create_table(
         "ai_problem_statements",
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
-        sa.Column("product_id", sa.Integer(), nullable=False),
+        sa.Column("product_id", sa.Uuid(), nullable=False),
         sa.Column("statement_text", sa.Text(), nullable=False),
         sa.Column("embedding", Vector(768), nullable=True),
         sa.PrimaryKeyConstraint("id"),
@@ -50,8 +50,8 @@ def upgrade() -> None:
     op.create_table(
         "ai_recommendation_logs",
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
-        sa.Column("user_id", sa.Integer(), nullable=False),
-        sa.Column("product_id", sa.Integer(), nullable=False),
+        sa.Column("user_id", sa.Uuid(), nullable=False),
+        sa.Column("product_id", sa.Uuid(), nullable=False),
         sa.Column("matched_query", sa.Text(), nullable=False),
         sa.Column("similarity_score", sa.Float(), nullable=False),
         sa.Column("shown_at", sa.DateTime(timezone=True), nullable=False),

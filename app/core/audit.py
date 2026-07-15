@@ -1,6 +1,7 @@
 """Audit helper — records privileged actions per Constitution III."""
 
 import json
+import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -8,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 async def record_audit(
     session: AsyncSession,
     *,
-    user_id: int | None,
+    user_id: uuid.UUID | None,
     action: str,
     detail: dict,
 ) -> None:
