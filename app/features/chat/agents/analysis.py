@@ -17,7 +17,7 @@ async def analysis_node(state: ConversationState) -> dict:
         from app.backend_db import get_backend_session
         from app.backend_db.models import Transaction
 
-        user_id = state["user_context"].get("user_id")
+        user_id = state.get("user_id")
         if not user_id:
             return {
                 "messages": [AIMessage(content="I don't have a user context to analyse.")],
@@ -27,7 +27,7 @@ async def analysis_node(state: ConversationState) -> dict:
         transactions: Sequence[Transaction] = []
         async for session in get_backend_session():
             result = await session.execute(
-                select(Transaction).where(Transaction.user_id == str(user_id)).limit(10)
+                select(Transaction).where(Transaction.user_id == user_id).limit(10)
             )
             transactions = result.scalars().all()
 

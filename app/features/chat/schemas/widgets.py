@@ -6,7 +6,7 @@ enforced by the schema, not by convention (per data-model.md §Widget).
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import UUID4, BaseModel, ConfigDict, Field
 
 
 class Allocation(BaseModel):
@@ -53,7 +53,7 @@ class ProductMatchPayloadItem(BaseModel):
         json_schema_extra={
             "examples": [
                 {
-                    "product_id": "sav-001",
+                    "product_id": "5a2c1d8e-3f4b-4a2c-9e8f-2a7b6c5d4e3f",
                     "product_name": "High-Yield Savings",
                     "similarity": 0.92,
                 }
@@ -61,7 +61,7 @@ class ProductMatchPayloadItem(BaseModel):
         }
     )
 
-    product_id: str = Field(description="Stable identifier of the matched product.")
+    product_id: UUID4 = Field(description="Stable identifier of the matched product.")
     product_name: str = Field(description="Display name of the matched product.")
     similarity: float = Field(
         ge=0.0,
@@ -79,12 +79,12 @@ class ProductCardPayload(BaseModel):
                 {
                     "products": [
                         {
-                            "product_id": "sav-001",
+                            "product_id": "5a2c1d8e-3f4b-4a2c-9e8f-2a7b6c5d4e3f",
                             "product_name": "High-Yield Savings",
                             "similarity": 0.92,
                         },
                         {
-                            "product_id": "cc-002",
+                            "product_id": "9f4b2a1c-2d3e-4f5a-8b7c-1d2e3f4a5b6c",
                             "product_name": "Cashback Card",
                             "similarity": 0.81,
                         },
@@ -135,7 +135,7 @@ class ProductCardWidget(BaseModel):
                     "payload": {
                         "products": [
                             {
-                                "product_id": "sav-001",
+                                "product_id": "5a2c1d8e-3f4b-4a2c-9e8f-2a7b6c5d4e3f",
                                 "product_name": "High-Yield Savings",
                                 "similarity": 0.92,
                             }

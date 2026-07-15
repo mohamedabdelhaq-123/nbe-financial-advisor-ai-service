@@ -10,7 +10,7 @@ def test_chat_without_token_returns_401(client: TestClient):
         "/internal/chat",
         json={
             "conversation_id": "c1",
-            "user_id": 1,
+            "user_id": "7a1b2c3d-4e5f-4a7b-8c9d-0e1f2a3b4c5d",
             "message": "hi",
         },
     )
@@ -22,7 +22,7 @@ def test_chat_with_wrong_token_returns_401(client: TestClient):
         "/internal/chat",
         json={
             "conversation_id": "c1",
-            "user_id": 1,
+            "user_id": "7a1b2c3d-4e5f-4a7b-8c9d-0e1f2a3b4c5d",
             "message": "hi",
         },
         headers={"Authorization": "Bearer wrong-token"},
@@ -35,7 +35,7 @@ def test_chat_with_correct_token_streams(client: TestClient, auth_headers: dict)
         "/internal/chat",
         json={
             "conversation_id": "c1",
-            "user_id": 1,
+            "user_id": "7a1b2c3d-4e5f-4a7b-8c9d-0e1f2a3b4c5d",
             "message": "hi",
         },
         headers=auth_headers,
@@ -49,7 +49,7 @@ def test_chat_mock_mode_yields_frames(client: TestClient, auth_headers: dict):
         "/internal/chat",
         json={
             "conversation_id": "c1",
-            "user_id": 1,
+            "user_id": "7a1b2c3d-4e5f-4a7b-8c9d-0e1f2a3b4c5d",
             "message": "hi",
         },
         headers=auth_headers,
@@ -73,7 +73,7 @@ def test_chat_mock_done_payload_shape(client: TestClient, auth_headers: dict):
         "/internal/chat",
         json={
             "conversation_id": "c1-mock-done",
-            "user_id": 1,
+            "user_id": "7a1b2c3d-4e5f-4a7b-8c9d-0e1f2a3b4c5d",
             "message": "hi",
         },
         headers=auth_headers,

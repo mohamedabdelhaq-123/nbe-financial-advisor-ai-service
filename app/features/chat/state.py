@@ -1,5 +1,6 @@
 """Conversation state definition for the LangGraph chat pipeline."""
 
+import uuid
 from typing import Annotated
 
 from langchain_core.messages import AnyMessage
@@ -11,7 +12,8 @@ from app.features.chat.schemas import Reference, Widget
 
 class ConversationState(TypedDict):
     messages: Annotated[list[AnyMessage], add_messages]
-    user_context: dict
+    user_id: uuid.UUID
+    user_context: dict | None
     stage: str
     intent: str
     planner_answers: dict
