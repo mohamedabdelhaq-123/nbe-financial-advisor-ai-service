@@ -54,12 +54,11 @@ def _fake_app():
     return SimpleNamespace(state=SimpleNamespace(checkpointer=object()))
 
 
-def _request(message="hi", is_first_turn=True):
+def _request(message="hi"):
     return ChatTurnRequest(
         conversation_id="t-conv",
-        user_id=1,
+        user_id="7a1b2c3d-4e5f-4a7b-8c9d-0e1f2a3b4c5d",
         message=message,
-        is_first_turn=is_first_turn,
     )
 
 

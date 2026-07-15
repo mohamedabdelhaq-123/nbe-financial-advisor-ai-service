@@ -60,34 +60,32 @@ async def stream_chat(app, request: ChatTurnRequest) -> AsyncIterator[str]:
     graph = build_graph(checkpointer=checkpointer)
     config = {"configurable": {"thread_id": request.conversation_id}}
 
+    snapshot = await graph.aget_state(config)
+    prev_values = snapshot.values if snapshot else {}
+
     initial_messages = [request.message]
-    user_context: dict = {}
-    if request.is_first_turn and request.initial_context:
-        user_context = request.initial_context
+    conversation_context = (
+        request.initial_context
+        if request.initial_context is not None
+        else prev_values.get("user_context")
+    )
+    planner_answers = dict(prev_values.get("planner_answers") or {})
+    questions_asked = prev_values.get("questions_asked", 0)
+    # Restore the persisted stage so Maestro can detect mid-planning turns.
+    stage = prev_values.get("stage", "")
 
-    planner_answers: dict = {}
-    questions_asked = 0
-    stage = ""
+    if questions_asked > 0 and stage != "plan_complete":
+        from app.features.plan.service import QUESTIONS
 
-    if not request.is_first_turn:
-        snapshot = await graph.aget_state(config)
-        prev_values = snapshot.values if snapshot else {}
-        planner_answers = dict(prev_values.get("planner_answers") or {})
-        questions_asked = prev_values.get("questions_asked", 0)
-        # Restore the persisted stage so Maestro can detect mid-planning turns.
-        stage = prev_values.get("stage", "")
-
-        if questions_asked > 0 and stage != "plan_complete":
-            from app.features.plan.service import QUESTIONS
-
-            idx = questions_asked - 1
-            if idx < len(QUESTIONS):
-                answered_id = QUESTIONS[idx].id
-                planner_answers.setdefault(answered_id, request.message)
+        idx = questions_asked - 1
+        if idx < len(QUESTIONS):
+            answered_id = QUESTIONS[idx].id
+            planner_answers.setdefault(answered_id, request.message)
 
     state = {
         "messages": initial_messages,
-        "user_context": user_context,
+        "user_id": request.user_id,
+        "user_context": conversation_context,
         "stage": stage,
         "intent": "",
         "planner_answers": planner_answers,
@@ -153,5 +151,10 @@ async def stream_chat(app, request: ChatTurnRequest) -> AsyncIterator[str]:
                     "message": request.message[:200],
                 },
             )
+            # record_audit() only flushes; this call site needs the row to be
+            # durably persisted, so commit explicitly rather than relying on
+            # the caller's session scope to do it (matches the pattern used
+            # at the other record_audit() call sites).
+            await session.commit()
     except Exception:
         pass
