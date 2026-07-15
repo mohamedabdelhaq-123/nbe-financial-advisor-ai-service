@@ -11,6 +11,7 @@ the column-level GRANT already in place (see specs/008-embed-transactions/resear
 import uuid
 
 from sqlalchemy import select, text
+from sqlalchemy.orm import selectinload
 
 from app.backend_db.models import TRANSACTION_EMBEDDING_DIM, Transaction
 from app.core.audit import record_audit
@@ -29,7 +30,7 @@ class TransactionsNotFoundError(Exception):
 
 def _build_summary_text(transaction: Transaction) -> str:
     merchant = transaction.merchant_normalized or transaction.merchant_raw or ""
-    category = transaction.category or ""
+    category = transaction.category.name if transaction.category else ""
     return (
         f"{merchant}, {category}, {transaction.amount} {transaction.currency}, "
         f"{transaction.transaction_date}"
@@ -53,7 +54,9 @@ async def embed_transactions(
         await session.execute(text("SET TRANSACTION READ WRITE"))
 
         result = await session.execute(
-            select(Transaction).where(Transaction.id.in_(transaction_ids))
+            select(Transaction)
+            .where(Transaction.id.in_(transaction_ids))
+            .options(selectinload(Transaction.category))
         )
         by_id = {t.id: t for t in result.scalars().all()}
 

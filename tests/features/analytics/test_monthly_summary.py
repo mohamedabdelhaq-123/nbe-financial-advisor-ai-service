@@ -22,15 +22,16 @@ async def test_monthly_summary_computes_totals(own_pg):
         rows = [
             ("t1", date(2026, 1, 15), 50.00, "Grocery", "food", "debit"),
             ("t2", date(2026, 1, 16), 30.00, "Gas Station", "transport", "debit"),
-            ("t3", date(2026, 1, 17), 200.00, "Salary", "income", "credit"),
+            ("t3", date(2026, 1, 17), 200.00, "Salary", "salary", "credit"),
         ]
         for rid, dt, amt, merchant, cat, ttype in rows:
             await session.execute(
                 text(
                     "INSERT INTO transactions "
                     "(id, user_id, account_id, transaction_date, amount, "
-                    "merchant_raw, category, transaction_type) "
-                    "VALUES (:id, :uid, :aid, :dt, :amt, :m, :c, :t)"
+                    "merchant_raw, category_id, transaction_type) "
+                    "VALUES (:id, :uid, :aid, :dt, :amt, :m, "
+                    "(SELECT id FROM categories WHERE name = :c), :t)"
                 ),
                 {
                     "id": _uuid(rid),
@@ -72,8 +73,9 @@ async def test_monthly_summary_idempotent(own_pg):
             text(
                 "INSERT INTO transactions "
                 "(id, user_id, account_id, transaction_date, amount, "
-                "merchant_raw, category, transaction_type) "
-                "VALUES (:id, :uid, :aid, :dt, :amt, :m, :c, :t)"
+                "merchant_raw, category_id, transaction_type) "
+                "VALUES (:id, :uid, :aid, :dt, :amt, :m, "
+                "(SELECT id FROM categories WHERE name = :c), :t)"
             ),
             {
                 "id": _uuid("t10"),

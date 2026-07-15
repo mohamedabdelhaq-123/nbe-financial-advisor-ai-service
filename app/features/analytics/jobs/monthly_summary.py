@@ -3,6 +3,7 @@
 import uuid
 
 from sqlalchemy import func, select
+from sqlalchemy.orm import selectinload
 
 from app.backend_db.models import MONTHLY_SUMMARY_EMBEDDING_DIM, Transaction
 from app.features.analytics.schemas import MonthlySummaryResult
@@ -24,10 +25,14 @@ async def compute_monthly_summary(
     aid = uuid.UUID(account_id) if isinstance(account_id, str) else account_id
 
     async with session_gen() as session:
-        base = select(Transaction).where(
-            Transaction.user_id == uid,
-            Transaction.account_id == aid,
-            func.to_char(Transaction.transaction_date, "YYYY-MM") == month,
+        base = (
+            select(Transaction)
+            .where(
+                Transaction.user_id == uid,
+                Transaction.account_id == aid,
+                func.to_char(Transaction.transaction_date, "YYYY-MM") == month,
+            )
+            .options(selectinload(Transaction.category))
         )
         result = await session.execute(base)
         transactions = result.scalars().all()
@@ -38,7 +43,7 @@ async def compute_monthly_summary(
 
     for txn in transactions:
         amt = float(getattr(txn, "amount", 0) or 0)
-        cat = getattr(txn, "category", "uncategorized") or "uncategorized"
+        cat = txn.category.name if txn.category else "uncategorized"
         txn_type = getattr(txn, "transaction_type", "debit") or "debit"
 
         if txn_type == "credit":

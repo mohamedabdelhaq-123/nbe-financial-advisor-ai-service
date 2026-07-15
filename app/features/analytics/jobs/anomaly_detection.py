@@ -5,6 +5,7 @@ from collections import defaultdict
 
 import numpy as np
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 
 from app.backend_db.models import Transaction
 from app.features.analytics.schemas import AnomalyFlagResult
@@ -21,10 +22,12 @@ async def detect_anomalies(
 
     async with session_gen() as session:
         result = await session.execute(
-            select(Transaction).where(
+            select(Transaction)
+            .where(
                 Transaction.user_id == uid,
                 Transaction.account_id == aid,
             )
+            .options(selectinload(Transaction.category))
         )
         transactions = result.scalars().all()
 
@@ -33,7 +36,7 @@ async def detect_anomalies(
 
     for txn in transactions:
         amt = float(getattr(txn, "amount", 0) or 0)
-        cat = getattr(txn, "category", "uncategorized") or "uncategorized"
+        cat = txn.category.name if txn.category else "uncategorized"
         txn_type = getattr(txn, "transaction_type", "debit") or "debit"
         if txn_type == "credit":
             continue

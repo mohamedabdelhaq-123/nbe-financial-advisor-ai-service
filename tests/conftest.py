@@ -65,7 +65,6 @@ def own_db_url():
     # registration on its own — without this import, ai_audit_log silently
     # never gets created here, regardless of test run order.
     import app.features.audit.models  # noqa: F401
-    import app.features.ingestion.categories  # noqa: F401
     from app.core.db import OwnBase
 
     with PostgresContainer("pgvector/pgvector:pg16") as pg:
@@ -95,6 +94,38 @@ def own_db_url():
                     # round-trip correctly — matching the real backend schema, where this
                     # column is also `vector(1536)`, not bytea.
                     await conn.execute(sa.text("CREATE EXTENSION IF NOT EXISTS vector"))
+                    # Mirrors the real backend's categories table (core/models/categories/
+                    # category.py) — transactions.category is a FK onto it now, not a
+                    # free-text column.
+                    await conn.execute(
+                        sa.text(
+                            "CREATE TABLE IF NOT EXISTS categories ("
+                            "id UUID PRIMARY KEY DEFAULT uuid_generate_v4(), "
+                            "name VARCHAR(100) UNIQUE NOT NULL, "
+                            "label VARCHAR(100) NOT NULL, "
+                            "category_type VARCHAR(20) NOT NULL, "
+                            "is_fallback BOOLEAN NOT NULL DEFAULT FALSE, "
+                            "created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(), "
+                            "updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()"
+                            ")"
+                        )
+                    )
+                    await conn.execute(
+                        sa.text(
+                            "INSERT INTO categories (name, label, category_type, is_fallback) "
+                            "VALUES "
+                            "('housing', 'Housing', 'expense', false), "
+                            "('food', 'Food', 'expense', false), "
+                            "('transport', 'Transport', 'expense', false), "
+                            "('savings', 'Savings', 'expense', false), "
+                            "('lifestyle', 'Lifestyle', 'expense', false), "
+                            "('other', 'Other', 'expense', true), "
+                            "('salary', 'Salary', 'income', false), "
+                            "('transfers_in', 'Transfers In', 'income', false), "
+                            "('other_income', 'Other Income', 'income', true) "
+                            "ON CONFLICT (name) DO NOTHING"
+                        )
+                    )
                     await conn.execute(
                         sa.text(
                             "CREATE TABLE IF NOT EXISTS transactions ("
@@ -110,7 +141,7 @@ def own_db_url():
                             "user_id UUID NOT NULL, "
                             "merchant_raw VARCHAR(500), "
                             "merchant_normalized VARCHAR(255), "
-                            "category VARCHAR(100), "
+                            "category_id UUID REFERENCES categories(id), "
                             "confidence_score NUMERIC(4,3), "
                             "balance NUMERIC(14,2), "
                             "transaction_type VARCHAR(20), "
@@ -141,26 +172,6 @@ async def own_pg(own_db_url):
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     yield session_factory
     await engine.dispose()
-
-
-@pytest.fixture
-async def seed_categories(own_pg):
-    """Seed the `categories` table with the same starter set the real migration inserts.
-
-    Testcontainers tests use `OwnBase.metadata.create_all()`, not `alembic upgrade head`,
-    so the migration's `op.bulk_insert(...)` never runs here — this fixture is the
-    test-time equivalent. The Postgres container is session-scoped, so `categories` rows
-    persist across tests; delete first to stay idempotent regardless of test order/count.
-    """
-    from sqlalchemy import delete
-
-    from app.features.ingestion.categories import CATEGORY_SEED_DATA, Category
-
-    async with own_pg() as session:
-        await session.execute(delete(Category))
-        for row in CATEGORY_SEED_DATA:
-            session.add(Category(**row))
-        await session.commit()
 
 
 @pytest.fixture

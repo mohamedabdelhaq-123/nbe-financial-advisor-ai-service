@@ -98,6 +98,35 @@ class BankStatementTemplates(BackendBase):
     )
 
 
+class Categories(BackendBase):
+    __tablename__ = "categories"
+    __table_args__ = (
+        PrimaryKeyConstraint("id", name="categories_pkey"),
+        UniqueConstraint("name", name="categories_name_key"),
+        Index(
+            "categories_name_09afee77_like", "name", postgresql_ops={"name": "varchar_pattern_ops"}
+        ),
+        Index(
+            "unique_fallback_per_type", "category_type", postgresql_where="is_fallback", unique=True
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    label: Mapped[str] = mapped_column(String(100), nullable=False)
+    category_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    is_fallback: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime(True), nullable=False)
+    updated_at: Mapped[datetime.datetime] = mapped_column(DateTime(True), nullable=False)
+
+    budget_allocations: Mapped[list["BudgetAllocations"]] = relationship(
+        "BudgetAllocations", back_populates="category"
+    )
+    transactions: Mapped[list["Transactions"]] = relationship(
+        "Transactions", back_populates="category"
+    )
+
+
 class CorePing(BackendBase):
     __tablename__ = "core_ping"
     __table_args__ = (PrimaryKeyConstraint("id", name="core_ping_pkey"),)
@@ -692,19 +721,27 @@ class BudgetAllocations(BackendBase):
             initially="DEFERRED",
             name="budget_allocations_budget_id_a525dbd2_fk_budgets_id",
         ),
+        ForeignKeyConstraint(
+            ["category_id"],
+            ["categories.id"],
+            deferrable=True,
+            initially="DEFERRED",
+            name="budget_allocations_category_id_695aead1_fk_categories_id",
+        ),
         PrimaryKeyConstraint("id", name="budget_allocations_pkey"),
-        UniqueConstraint("budget_id", "category", name="unique_budget_category"),
         Index("budget_allocations_budget_id_a525dbd2", "budget_id"),
+        Index("budget_allocations_category_id_695aead1", "category_id"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
-    category: Mapped[str] = mapped_column(String(100), nullable=False)
     allocated_percentage: Mapped[decimal.Decimal] = mapped_column(Numeric(5, 2), nullable=False)
     allocated_amount: Mapped[decimal.Decimal] = mapped_column(Numeric(14, 2), nullable=False)
     currency: Mapped[str] = mapped_column(String(10), nullable=False)
     budget_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    category_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
 
     budget: Mapped["Budgets"] = relationship("Budgets", back_populates="budget_allocations")
+    category: Mapped["Categories"] = relationship("Categories", back_populates="budget_allocations")
 
 
 class BudgetHistory(BackendBase):
@@ -1068,6 +1105,13 @@ class Transactions(BackendBase):
             name="transactions_account_id_d92b47af_fk_bank_accounts_id",
         ),
         ForeignKeyConstraint(
+            ["category_id"],
+            ["categories.id"],
+            deferrable=True,
+            initially="DEFERRED",
+            name="transactions_category_id_65740af9_fk_categories_id",
+        ),
+        ForeignKeyConstraint(
             ["statement_id"],
             ["statement_files.id"],
             deferrable=True,
@@ -1097,9 +1141,9 @@ class Transactions(BackendBase):
             postgresql_ops={"embedding": "vector_cosine_ops"},
             postgresql_using="hnsw",
         ),
-        Index("idx_transactions_user_category", "user_id", "category"),
         Index("idx_transactions_user_date", "user_id", "transaction_date"),
         Index("transactions_account_id_d92b47af", "account_id"),
+        Index("transactions_category_id_65740af9", "category_id"),
         Index("transactions_statement_id_5529ab7a", "statement_id"),
         Index("transactions_user_id_766cc893", "user_id"),
     )
@@ -1115,15 +1159,18 @@ class Transactions(BackendBase):
     user_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
     merchant_raw: Mapped[Optional[str]] = mapped_column(String(500))
     merchant_normalized: Mapped[Optional[str]] = mapped_column(String(255))
-    category: Mapped[Optional[str]] = mapped_column(String(100))
     confidence_score: Mapped[Optional[decimal.Decimal]] = mapped_column(Numeric(4, 3))
     balance: Mapped[Optional[decimal.Decimal]] = mapped_column(Numeric(14, 2))
     transaction_type: Mapped[Optional[str]] = mapped_column(String(20))
     extra_fields: Mapped[Optional[dict]] = mapped_column(JSONB)
     embedding: Mapped[Optional[Any]] = mapped_column(VECTOR(1536))
     statement_id: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid)
+    category_id: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid)
 
     account: Mapped["BankAccounts"] = relationship("BankAccounts", back_populates="transactions")
+    category: Mapped[Optional["Categories"]] = relationship(
+        "Categories", back_populates="transactions"
+    )
     statement: Mapped[Optional["StatementFiles"]] = relationship(
         "StatementFiles", back_populates="transactions"
     )
