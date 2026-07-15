@@ -10,15 +10,20 @@ stream verbatim to the frontend over `POST /chat/conversations/{id}/messages`
 ```json
 {
   "conversation_id": "3f9c9b2e-1c2a-4b3d-9e8f-2a7b6c5d4e3f",
-  "user_id": 1001,
+  "user_id": "7a1b2c3d-4e5f-4a7b-8c9d-0e1f2a3b4c5d",
   "message": "How much did I spend on groceries last month?",
-  "is_first_turn": false,
   "initial_context": null,
   "refresh_context": false
 }
 ```
 
-Unchanged from today — `ChatTurnRequest` is not modified by this feature.
+Not modified by spec 009 itself, but amended twice by spec `010-fix-uuid-id-types`:
+`user_id` became a validated `UUID4` (was `int`), and — as a post-implementation
+amendment within that same feature — `is_first_turn` was removed and
+`initial_context` was confirmed as generic, identity-unrelated conversation
+context rather than a place to duplicate `user_id`. See
+[`specs/010-fix-uuid-id-types/contracts/chat-request-amendment.md`](../../010-fix-uuid-id-types/contracts/chat-request-amendment.md)
+for the full amendment.
 
 ## Response `200` — `text/event-stream`
 
