@@ -462,26 +462,38 @@ class _FakeNormResult:
 
 
 class _FakeNormBackendSession:
-    def __init__(self, responses: list):
-        self._responses = list(responses)
+    """Queues canned responses for the ocr_result/user_id/duplicate-check
+    lookups, but delegates category queries (known_categories/resolve_category)
+    to a real Postgres session — those need the actual seeded `categories`
+    mock table (tests/conftest.py's `own_db_url`), not a scripted response.
+    """
+
+    def __init__(self, responses: list, real_session=None):
+        # `responses` is the SAME list instance across every session_gen()
+        # invocation within one test (normalize_statement calls session_gen()
+        # multiple times) — popping must drain it in true call order, not
+        # reset on each invocation, so this must NOT be a copy.
+        self._responses = responses
         self.executed: list = []
+        self._real_session = real_session
 
     async def execute(self, stmt):
         self.executed.append(stmt)
+        if "categories" in str(stmt).lower():
+            return await self._real_session.execute(stmt)
         return self._responses.pop(0)
 
 
-def _normalize_session_gen(ocr_result_row, user_id=None, dup_rows=()):
+def _normalize_session_gen(ocr_result_row, user_id=None, dup_rows=(), own_pg=None):
     responses = [_FakeNormResult(ocr_result_row)]
     if ocr_result_row is not None:
         responses.append(_FakeNormResult(user_id))
         responses.append(_FakeNormResult(list(dup_rows)))
-    session = _FakeNormBackendSession(responses)
 
     async def _gen():
-        yield session
+        async with own_pg() as real_session:
+            yield _FakeNormBackendSession(responses, real_session=real_session)
 
-    _gen.session = session
     return _gen
 
 
@@ -549,10 +561,14 @@ class _FakeNormalizerClient:
 
 @pytest.mark.asyncio
 async def test_normalize_happy_path_returns_categorized_transactions(
-    monkeypatch, own_pg, seed_categories
+    monkeypatch,
+    own_pg,
 ):
     session_gen = _normalize_session_gen(
-        _FakeOcrResult(statement_id=NORM_STATEMENT_ID), user_id=NORM_USER_ID, dup_rows=[]
+        _FakeOcrResult(statement_id=NORM_STATEMENT_ID),
+        user_id=NORM_USER_ID,
+        dup_rows=[],
+        own_pg=own_pg,
     )
     own_gen = _own_session_gen_from_pg(own_pg)
 
@@ -567,18 +583,15 @@ async def test_normalize_happy_path_returns_categorized_transactions(
     assert result.normalized_json["transactions"], "expected at least one transaction"
     txn = result.normalized_json["transactions"][0]
     assert txn["category"] in {
-        "groceries",
-        "dining",
+        "housing",
+        "food",
         "transport",
-        "utilities",
-        "rent",
-        "salary",
-        "transfer",
-        "fees",
-        "entertainment",
-        "healthcare",
-        "shopping",
+        "savings",
+        "lifestyle",
         "other",
+        "salary",
+        "transfers_in",
+        "other_income",
     }
     assert txn["duplicate_of"] is None
 
@@ -587,8 +600,8 @@ async def test_normalize_happy_path_returns_categorized_transactions(
 
 
 @pytest.mark.asyncio
-async def test_normalize_unknown_ocr_result_returns_404(monkeypatch, own_pg, seed_categories):
-    session_gen = _normalize_session_gen(None)
+async def test_normalize_unknown_ocr_result_returns_404(monkeypatch, own_pg):
+    session_gen = _normalize_session_gen(None, own_pg=own_pg)
     own_gen = _own_session_gen_from_pg(own_pg)
 
     s3 = _FakeOcrStorage({})
@@ -604,9 +617,12 @@ async def test_normalize_unknown_ocr_result_returns_404(monkeypatch, own_pg, see
 
 
 @pytest.mark.asyncio
-async def test_normalize_missing_ocr_artifacts_returns_502(monkeypatch, own_pg, seed_categories):
+async def test_normalize_missing_ocr_artifacts_returns_502(monkeypatch, own_pg):
     session_gen = _normalize_session_gen(
-        _FakeOcrResult(statement_id=NORM_STATEMENT_ID), user_id=NORM_USER_ID, dup_rows=[]
+        _FakeOcrResult(statement_id=NORM_STATEMENT_ID),
+        user_id=NORM_USER_ID,
+        dup_rows=[],
+        own_pg=own_pg,
     )
     own_gen = _own_session_gen_from_pg(own_pg)
 
@@ -623,9 +639,12 @@ async def test_normalize_missing_ocr_artifacts_returns_502(monkeypatch, own_pg, 
 
 
 @pytest.mark.asyncio
-async def test_normalize_engine_failure_returns_502(monkeypatch, own_pg, seed_categories):
+async def test_normalize_engine_failure_returns_502(monkeypatch, own_pg):
     session_gen = _normalize_session_gen(
-        _FakeOcrResult(statement_id=NORM_STATEMENT_ID), user_id=NORM_USER_ID, dup_rows=[]
+        _FakeOcrResult(statement_id=NORM_STATEMENT_ID),
+        user_id=NORM_USER_ID,
+        dup_rows=[],
+        own_pg=own_pg,
     )
     own_gen = _own_session_gen_from_pg(own_pg)
 
@@ -649,10 +668,14 @@ async def test_normalize_engine_failure_returns_502(monkeypatch, own_pg, seed_ca
 
 @pytest.mark.asyncio
 async def test_normalize_empty_content_returns_success_with_no_transactions(
-    monkeypatch, own_pg, seed_categories
+    monkeypatch,
+    own_pg,
 ):
     session_gen = _normalize_session_gen(
-        _FakeOcrResult(statement_id=NORM_STATEMENT_ID), user_id=NORM_USER_ID, dup_rows=[]
+        _FakeOcrResult(statement_id=NORM_STATEMENT_ID),
+        user_id=NORM_USER_ID,
+        dup_rows=[],
+        own_pg=own_pg,
     )
     own_gen = _own_session_gen_from_pg(own_pg)
 
@@ -673,13 +696,15 @@ async def test_normalize_empty_content_returns_success_with_no_transactions(
 
 @pytest.mark.asyncio
 async def test_normalize_flags_duplicate_when_backend_query_matches(
-    monkeypatch, own_pg, seed_categories
+    monkeypatch,
+    own_pg,
 ):
     existing_id = uuid.uuid4()
     session_gen = _normalize_session_gen(
         _FakeOcrResult(statement_id=NORM_STATEMENT_ID),
         user_id=NORM_USER_ID,
         dup_rows=[(existing_id, "2026-01-01")],
+        own_pg=own_pg,
     )
     own_gen = _own_session_gen_from_pg(own_pg)
 
@@ -708,10 +733,14 @@ async def test_normalize_flags_duplicate_when_backend_query_matches(
 
 @pytest.mark.asyncio
 async def test_normalize_unmatched_category_falls_back_to_other(
-    monkeypatch, own_pg, seed_categories
+    monkeypatch,
+    own_pg,
 ):
     session_gen = _normalize_session_gen(
-        _FakeOcrResult(statement_id=NORM_STATEMENT_ID), user_id=NORM_USER_ID, dup_rows=[]
+        _FakeOcrResult(statement_id=NORM_STATEMENT_ID),
+        user_id=NORM_USER_ID,
+        dup_rows=[],
+        own_pg=own_pg,
     )
     own_gen = _own_session_gen_from_pg(own_pg)
 
@@ -749,10 +778,14 @@ async def test_normalize_unmatched_category_falls_back_to_other(
 
 @pytest.mark.asyncio
 async def test_normalize_transaction_extra_fields_are_passed_through(
-    monkeypatch, own_pg, seed_categories
+    monkeypatch,
+    own_pg,
 ):
     session_gen = _normalize_session_gen(
-        _FakeOcrResult(statement_id=NORM_STATEMENT_ID), user_id=NORM_USER_ID, dup_rows=[]
+        _FakeOcrResult(statement_id=NORM_STATEMENT_ID),
+        user_id=NORM_USER_ID,
+        dup_rows=[],
+        own_pg=own_pg,
     )
     own_gen = _own_session_gen_from_pg(own_pg)
 
@@ -793,10 +826,14 @@ async def test_normalize_transaction_extra_fields_are_passed_through(
 
 @pytest.mark.asyncio
 async def test_normalize_transaction_without_extra_fields_omits_the_key(
-    monkeypatch, own_pg, seed_categories
+    monkeypatch,
+    own_pg,
 ):
     session_gen = _normalize_session_gen(
-        _FakeOcrResult(statement_id=NORM_STATEMENT_ID), user_id=NORM_USER_ID, dup_rows=[]
+        _FakeOcrResult(statement_id=NORM_STATEMENT_ID),
+        user_id=NORM_USER_ID,
+        dup_rows=[],
+        own_pg=own_pg,
     )
     own_gen = _own_session_gen_from_pg(own_pg)
 
@@ -812,10 +849,14 @@ async def test_normalize_transaction_without_extra_fields_omits_the_key(
 
 @pytest.mark.asyncio
 async def test_normalize_skips_transactions_with_malformed_or_missing_date_or_amount(
-    monkeypatch, own_pg, seed_categories
+    monkeypatch,
+    own_pg,
 ):
     session_gen = _normalize_session_gen(
-        _FakeOcrResult(statement_id=NORM_STATEMENT_ID), user_id=NORM_USER_ID, dup_rows=[]
+        _FakeOcrResult(statement_id=NORM_STATEMENT_ID),
+        user_id=NORM_USER_ID,
+        dup_rows=[],
+        own_pg=own_pg,
     )
     own_gen = _own_session_gen_from_pg(own_pg)
 
@@ -885,10 +926,14 @@ async def test_normalize_skips_transactions_with_malformed_or_missing_date_or_am
 
 @pytest.mark.asyncio
 async def test_normalize_persisted_object_matches_returned_result(
-    monkeypatch, own_pg, seed_categories
+    monkeypatch,
+    own_pg,
 ):
     session_gen = _normalize_session_gen(
-        _FakeOcrResult(statement_id=NORM_STATEMENT_ID), user_id=NORM_USER_ID, dup_rows=[]
+        _FakeOcrResult(statement_id=NORM_STATEMENT_ID),
+        user_id=NORM_USER_ID,
+        dup_rows=[],
+        own_pg=own_pg,
     )
     own_gen = _own_session_gen_from_pg(own_pg)
 
@@ -906,14 +951,17 @@ async def test_normalize_persisted_object_matches_returned_result(
 
 
 @pytest.mark.asyncio
-async def test_normalize_reprocessing_overwrites_same_key(monkeypatch, own_pg, seed_categories):
+async def test_normalize_reprocessing_overwrites_same_key(monkeypatch, own_pg):
     s3 = _FakeOcrStorage(_ocr_objects(NORM_STATEMENT_ID))
     _patch_storage(monkeypatch, s3, module="app.features.ingestion.service.normalize")
     own_gen = _own_session_gen_from_pg(own_pg)
 
     for _ in range(2):
         session_gen = _normalize_session_gen(
-            _FakeOcrResult(statement_id=NORM_STATEMENT_ID), user_id=NORM_USER_ID, dup_rows=[]
+            _FakeOcrResult(statement_id=NORM_STATEMENT_ID),
+            user_id=NORM_USER_ID,
+            dup_rows=[],
+            own_pg=own_pg,
         )
         await normalize_statement(
             session_gen=session_gen, own_session_gen=own_gen, ocr_result_id=OCR_RESULT_ID

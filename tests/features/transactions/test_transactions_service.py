@@ -6,6 +6,7 @@ from datetime import date
 
 import pytest
 from sqlalchemy import select, text
+from sqlalchemy.orm import selectinload
 
 from app.backend_db.models import TRANSACTION_EMBEDDING_DIM, Transaction
 
@@ -27,8 +28,9 @@ async def _insert_transaction(
         text(
             "INSERT INTO transactions "
             "(id, user_id, account_id, transaction_date, amount, currency, "
-            "merchant_raw, merchant_normalized, category, transaction_type) "
-            "VALUES (:id, :uid, :aid, :dt, :amt, :cur, :mr, :mn, :cat, :t)"
+            "merchant_raw, merchant_normalized, category_id, transaction_type) "
+            "VALUES (:id, :uid, :aid, :dt, :amt, :cur, :mr, :mn, "
+            "(SELECT id FROM categories WHERE name = :cat), :t)"
         ),
         {
             "id": tid,
@@ -51,7 +53,11 @@ async def _raising_embed_fn(texts, dimensions=None):
 
 async def _fetch(own_pg, tid: uuid.UUID) -> Transaction:
     async with own_pg() as session:
-        result = await session.execute(select(Transaction).where(Transaction.id == tid))
+        result = await session.execute(
+            select(Transaction)
+            .where(Transaction.id == tid)
+            .options(selectinload(Transaction.category))
+        )
         return result.scalar_one()
 
 
@@ -61,7 +67,7 @@ async def test_embed_new_transactions_populates_embedding(own_pg):
 
     t1, t2 = _uuid("us1-a"), _uuid("us1-b")
     async with own_pg() as session:
-        await _insert_transaction(session, t1, merchant_raw="Starbucks", category="dining")
+        await _insert_transaction(session, t1, merchant_raw="Starbucks", category="food")
         await _insert_transaction(session, t2, merchant_raw="Uber", category="transport")
         await session.commit()
 
@@ -232,7 +238,7 @@ async def test_only_embedding_column_changes_on_success(own_pg):
     t1 = _uuid("polish-no-collateral")
     async with own_pg() as session:
         await _insert_transaction(
-            session, t1, merchant_raw="Collateral Co", category="shopping", amount=99.99
+            session, t1, merchant_raw="Collateral Co", category="lifestyle", amount=99.99
         )
         await session.commit()
 
@@ -243,7 +249,7 @@ async def test_only_embedding_column_changes_on_success(own_pg):
         "currency": before.currency,
         "merchant_raw": before.merchant_raw,
         "merchant_normalized": before.merchant_normalized,
-        "category": before.category,
+        "category": before.category.name if before.category else None,
         "user_id": before.user_id,
         "account_id": before.account_id,
     }
@@ -258,7 +264,7 @@ async def test_only_embedding_column_changes_on_success(own_pg):
         "currency": after.currency,
         "merchant_raw": after.merchant_raw,
         "merchant_normalized": after.merchant_normalized,
-        "category": after.category,
+        "category": after.category.name if after.category else None,
         "user_id": after.user_id,
         "account_id": after.account_id,
     }

@@ -26,6 +26,7 @@ from app.backend_db.models.aggregations import (
     SpendingPatternInsight,
 )
 from app.backend_db.models.budgets import Budget, BudgetAllocation, BudgetHistory
+from app.backend_db.models.categories import Category
 from app.backend_db.models.conversations import Conversation, Message, MessageReference
 from app.backend_db.models.feedback import Reaction, ReportedIssue
 from app.backend_db.models.ping import Ping
@@ -66,6 +67,8 @@ __all__ = [
     "Budget",
     "BudgetAllocation",
     "BudgetHistory",
+    # categories
+    "Category",
     # conversations
     "Conversation",
     "Message",

@@ -26,8 +26,9 @@ async def test_detect_recurring_charges(own_pg):
                 text(
                     "INSERT INTO transactions "
                     "(id, user_id, account_id, transaction_date, amount, "
-                    "merchant_raw, category, transaction_type) "
-                    "VALUES (:id, :uid, :aid, :dt, :amt, :m, :c, :t)"
+                    "merchant_raw, category_id, transaction_type) "
+                    "VALUES (:id, :uid, :aid, :dt, :amt, :m, "
+                    "(SELECT id FROM categories WHERE name = :c), :t)"
                 ),
                 {
                     "id": _uuid(f"r{i}"),
@@ -36,7 +37,7 @@ async def test_detect_recurring_charges(own_pg):
                     "dt": date(2026, m, 5),
                     "amt": 29.99,
                     "m": "Netflix",
-                    "c": "entertainment",
+                    "c": "lifestyle",
                     "t": "debit",
                 },
             )
@@ -44,8 +45,9 @@ async def test_detect_recurring_charges(own_pg):
             text(
                 "INSERT INTO transactions "
                 "(id, user_id, account_id, transaction_date, amount, "
-                "merchant_raw, category, transaction_type) "
-                "VALUES (:id, :uid, :aid, :dt, :amt, :m, :c, :t)"
+                "merchant_raw, category_id, transaction_type) "
+                "VALUES (:id, :uid, :aid, :dt, :amt, :m, "
+                "(SELECT id FROM categories WHERE name = :c), :t)"
             ),
             {
                 "id": _uuid("r200"),
