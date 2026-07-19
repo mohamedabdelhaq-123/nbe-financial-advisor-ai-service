@@ -71,7 +71,7 @@ class HttpMineruClient:
     """Real `MineruClient` — POSTs to `/file_parse` and unpacks the ZIP response."""
 
     async def parse_document(self, file_bytes: bytes, filename: str) -> ParsedDocument:
-        timeout = httpx.Timeout(connect=10.0, read=120.0, write=30.0, pool=10.0)
+        timeout = httpx.Timeout(connect=10.0, read=600.0, write=30.0, pool=10.0)
         headers = {"X-Api-Key": settings.mineru_api_key} if settings.mineru_api_key else {}
         data = {
             "response_format_zip": "true",
