@@ -31,4 +31,5 @@ def get_chat_model(max_tokens: int | None = None) -> ChatOpenAI:
         model=settings.model_name,
         api_key=SecretStr(settings.openai_api_key),
         max_tokens=max_tokens,  # type: ignore[call-arg]  # real pydantic field; no mypy plugin configured to see it
+        request_timeout=600,  # don't hang indefinitely on slow/queued free-tier LLM calls
     )
