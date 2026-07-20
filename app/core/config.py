@@ -86,6 +86,15 @@ class Settings(BaseSettings):
     mineru_api_url: str = ""
     mineru_api_key: str = ""  # sent as the X-Api-Key header; optional
 
+    # ── logging ────────────────────────────────────────────────────────────
+    # Minimum severity emitted; validated below (fail fast on an invalid value
+    # rather than silently falling back to a default).
+    log_level: str = "INFO"
+    # Off by default. When true, LLM prompt/completion and DB query content
+    # MAY additionally be logged at DEBUG severity for local troubleshooting.
+    # MUST NEVER be enabled in production — see app/core/logging.py.
+    log_debug_include_raw_content: bool = False
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     @property
@@ -130,6 +139,13 @@ if not settings.ai_service_token:
     raise RuntimeError(
         "AI_SERVICE_TOKEN must be set. "
         'Generate one with: python3 -c "import secrets; print(secrets.token_urlsafe(48))"'
+    )
+
+_VALID_LOG_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
+if settings.log_level.upper() not in _VALID_LOG_LEVELS:
+    raise RuntimeError(
+        f"LOG_LEVEL={settings.log_level!r} is invalid. "
+        f"Must be one of: {', '.join(sorted(_VALID_LOG_LEVELS))}."
     )
 
 _missing_storage_fields = [
