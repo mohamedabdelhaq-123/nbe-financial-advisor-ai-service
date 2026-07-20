@@ -19,6 +19,7 @@ dependencies = [
     "aioboto3>=15.5.0",
     "beautifulsoup4>=4.15.0",
     "tiktoken>=0.13",
+    "structlog>=24.4",
 ]
 
 [dependency-groups]
