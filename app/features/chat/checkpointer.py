@@ -29,6 +29,8 @@ async def build_checkpointer():
         max_size=5,
         kwargs={"autocommit": True},
         open=False,
+        max_lifetime=1800,
+        check=AsyncConnectionPool.check_connection,
     )
     await pool.open()
     saver = AsyncPostgresSaver(conn=pool)  # type: ignore
