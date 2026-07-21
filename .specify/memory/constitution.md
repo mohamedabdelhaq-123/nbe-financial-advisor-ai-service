@@ -1,43 +1,53 @@
 <!--
 SYNC IMPACT REPORT
 ==================
-Version change: 2.1.0 → 2.2.0
-Rationale: MINOR. Principle IV materially expanded to formally document a
-narrow, DB-role-backed write exception against the otherwise READ-ONLY backend
-DB, and to codify the authorization process any future exception MUST follow.
-No existing principle was redefined or removed; the prior absolute "no write
-paths" rule is replaced by "read-only by default, with a small enumerated,
-explicitly-authorized exception list" — the enforced default behavior for
-every feature that is not one of the enumerated exceptions is unchanged.
+Version change: 2.2.0 → 2.3.0
+Rationale: MINOR. Principle III's absolute "redact before inclusion in LLM
+prompts" rule is replaced by a narrow, conditional exception covering the live
+model-inference call only, while the minimization requirement for logs AND
+telemetry/observability exports (e.g. an LLM tracing backend) is preserved and
+made explicit. Mirrors the 2.2.0 precedent set on Principle IV: an absolute
+rule becomes "required by default, with a narrow, explicitly-scoped exception,"
+not a removal — enforced behavior for every case outside that exception is
+unchanged, and the exception itself is bounded to a specific, checkable
+condition (self-hosted model backend) rather than granted unconditionally.
 
 Modified principle (this amendment):
-  - IV. Data Ownership & Access Boundaries — now states the backend DB is
-    read-only *by default*; a write path against it may exist ONLY where both
-    (a) a narrowly-scoped DB-level GRANT already covers exactly that
-    column/table, and (b) a human has explicitly authorized that specific
-    write path in a spec or PR. Write paths MUST NEVER be added speculatively,
-    defensively, or "just in case" — absent both conditions, backend DB access
-    MUST stay strictly read-only, exactly as before this amendment. The two
-    currently-authorized exceptions are enumerated: `transactions.embedding`
-    (UPDATE only) and `monthly_summaries` (full CRUD). Any required
-    per-transaction read-write override (for a role whose default is
-    read-only at the transaction level) MUST be scoped to the single
-    transaction performing an authorized write, never applied broadly.
+  - III. Data Protection & Compliance (NON-NEGOTIABLE) — the live LLM
+    inference request/response is now exempt from prompt-level redaction ONLY
+    while the configured model backend is self-hosted infrastructure under
+    this organization's control; this reflects that (a) the service's core
+    function (financial analysis, statement normalization) structurally
+    requires full-fidelity input to work, and (b) the prior rule was never
+    actually enforced anywhere in the codebase (a `strip_pii()` helper exists
+    in `app/features/chat/guards.py` but is dead code — never called from any
+    prompt-construction site). The exception is scoped to the inference call
+    only: any secondary copy of that same content — logs, telemetry, or an
+    observability/tracing export (e.g. a self-hosted Langfuse instance) —
+    remains subject to the unmodified, unconditional minimization
+    requirement. The exception is void the moment a non-self-hosted backend
+    is configured (`OPENAI_BASE_URL`/`EMBEDDING_BASE_URL` pointed at a real
+    external vendor), since Principle VI deliberately keeps the backend
+    swappable via config alone, with no code change.
 
-Trigger: while planning the transaction-embedding feature (which writes
-computed embeddings directly to `transactions.embedding`), the backend DB's
-`ai_readonly` role was found to already carry narrow write GRANTs
-(`UPDATE (embedding) ON transactions`, full CRUD on `monthly_summaries`)
-provisioned specifically for this service — but Principle IV's text still read
-as an absolute prohibition, contradicting sanctioned, already-provisioned
-access. The requester asked that the exception be recorded formally, paired
-with an explicit reminder that write paths remain opt-in per feature, never a
-default to reach for.
+Trigger: while planning the LLM-observability (Langfuse tracing) feature, the
+plan's Constitution Check surfaced a real contradiction — auto-instrumentation
+must either hide entire prompt/response content (defeating the feature's
+purpose) or export it unredacted (violating Principle III as previously
+worded). Investigation found Principle III's "redact before LLM prompts"
+clause was never implemented for any existing feature, and that the actual
+production plan is a self-hosted model backend, not a third-party vendor call.
+The requester asked that the principle be amended to reflect what's actually
+enforceable and necessary, rather than holding one new feature (tracing) to a
+stricter bar than the rest of the codebase, or silently dropping compliance
+protection for a hosted-vendor scenario that remains structurally possible via
+config alone.
 
-Principle mapping (stable since 1.0.0, extended 2.1.0, IV expanded 2.2.0):
+Principle mapping (stable since 1.0.0, extended 2.1.0, IV expanded 2.2.0, III
+amended 2.3.0):
   - I. Mandatory Automated Testing
   - II. Security & Secrets Discipline
-  - III. Data Protection & Compliance (NON-NEGOTIABLE)
+  - III. Data Protection & Compliance (NON-NEGOTIABLE) (amended 2.3.0)
   - IV. Data Ownership & Access Boundaries (expanded 2.2.0)
   - V. Feature-Bounded Modular Architecture
   - VI. LLM & Agent Architecture
@@ -50,16 +60,21 @@ Quality Gates). Removed sections: none.
 Templates checked for consistency:
   ✅ .specify/templates/plan-template.md — Constitution Check gate is generic
      ("[Gates determined based on constitution file]"), derived fresh from
-     the constitution at plan time; this is exactly how the transaction-
-     embedding feature's plan already produced a Principle-IV gate row
-     without any template change. No fixed row is added here, consistent
-     with the 2.1.0 precedent of keeping principle-specific checks out of the
-     template and in the constitution text itself.
+     the constitution at plan time; the Langfuse feature's plan.md already
+     produced a Principle-III gate row that this amendment now makes
+     satisfiable without contradiction. No template change needed.
   ✅ .specify/templates/spec-template.md — no mandatory-section conflicts.
   ✅ .specify/templates/tasks-template.md — no new task category required.
   ✅ .specify/templates/checklist-template.md — no conflicts.
 
-Follow-up TODOs: none.
+Follow-up TODOs:
+  - The pre-existing gap this amendment surfaced — no prompt-level redaction
+    exists anywhere today, self-hosted or not (`strip_pii()` is dead code) —
+    is NOT resolved by this amendment and remains open. It no longer blocks
+    the Langfuse feature, whose redaction work is now correctly scoped to the
+    export/telemetry boundary only, but wiring real minimization into the
+    prompt-construction layer (chat analysis, ingestion normalization, plan
+    generation) is separate, tracked follow-up work.
 Deferred (by decision, not omission): the Django-facing API shape — this
 constitution is intentionally API-shape-agnostic.
 -->
@@ -100,23 +115,52 @@ serving in an insecure state.
 
 ### III. Data Protection & Compliance (NON-NEGOTIABLE)
 Personally identifiable and financial data MUST be minimized and redacted before
-it leaves a trust boundary — including before inclusion in LLM prompts and logs.
+it leaves a trust boundary — including before inclusion in logs and any
+telemetry/observability export (e.g. an LLM tracing backend such as Langfuse).
 Because backend mirror models expose FULL backend tables (see Principle IV), data
 minimization MUST be enforced at the query/DTO **egress layer**, not the model
 layer: queries MUST SELECT and project only the columns a feature needs, and
 values MUST be mapped into purpose-scoped DTOs (with redaction) before crossing
 any trust boundary. The mere presence of a column on a mirror model MUST NOT be
-treated as license to read or egress it. Every privileged action MUST be recorded
-to an audit log in the service's own database. Data retention and data-residency
-rules MUST be defined and enforced; data MUST NOT be retained longer than its
-stated purpose requires.
+treated as license to read or egress it.
 
-**Rationale**: This is regulated financial data. PII exposure through prompts,
-logs, or over-retention creates compliance and reputational liability that no
-feature benefit can justify. Generated full-table mirrors are convenient but wide,
-so the minimization guarantee has to live where data actually leaves the service
-— the query and DTO boundary — rather than relying on a hand-curated column list.
-An immutable audit trail is a baseline expectation for a financial system.
+**Exception — live LLM inference only**: the model-inference request/response
+itself is exempt from this minimization rule, but ONLY while the configured
+model backend is self-hosted infrastructure under this organization's own
+control. This exists because the service's core function — real financial
+analysis and statement normalization — structurally requires full-fidelity
+input to work at all, and a genuinely self-hosted call never leaves the
+org's infrastructure. This exception is narrow and does NOT extend to any
+secondary copy of that same content: logs, telemetry, and observability/
+tracing exports (including everything captured by an LLM tracing backend)
+remain fully subject to the unconditional minimization rule above — a trace
+of an inference call is a second, persisted, more broadly-accessible copy of
+that content and gets no exemption from the inference call it observes. The
+exception is void the moment a non-self-hosted backend is configured (e.g.
+`OPENAI_BASE_URL` / `EMBEDDING_BASE_URL` pointed at a real external vendor),
+since Principle VI deliberately keeps the backend swappable via config alone
+with no code change — this exception MUST NOT be read as a blanket allowance
+for "LLM prompts" independent of where the model actually runs.
+
+Every privileged action MUST be recorded to an audit log in the service's own
+database. Data retention and data-residency rules MUST be defined and enforced;
+data MUST NOT be retained longer than its stated purpose requires.
+
+**Rationale**: This is regulated financial data. The service cannot deliver its
+core function on redacted or pseudonymized input, so requiring prompt-level
+redaction for a genuinely self-hosted model was unenforceable by design and
+was, in practice, never real — no prompt-construction site in the codebase
+performs redaction today. What full fidelity does NOT require is a second,
+persisted copy of that content in a debugging/telemetry system, so the
+minimization requirement stays absolute for logs and tracing exports. Tying
+the inference exception to self-hosting, rather than granting it
+unconditionally, matters because Principle VI keeps the model backend
+swappable via config with no code change — an unconditional exception would
+silently also cover a future external-vendor call. Generated full-table
+mirrors are convenient but wide, so the minimization guarantee has to live
+where data actually leaves the service — the query and DTO boundary — rather
+than relying on a hand-curated column list. An immutable audit trail is a
+baseline expectation for a financial system.
 
 ### IV. Data Ownership & Access Boundaries
 The service uses two databases behind two separate SQLAlchemy `DeclarativeBase`
@@ -284,4 +328,4 @@ deviations MUST be justified explicitly in the PR. Runtime development guidance
 lives in repository docs and agent guidance files and MUST stay consistent with
 this constitution.
 
-**Version**: 2.2.0 | **Ratified**: 2026-07-09 | **Last Amended**: 2026-07-14
+**Version**: 2.3.0 | **Ratified**: 2026-07-09 | **Last Amended**: 2026-07-20
