@@ -1,34 +1,29 @@
-# Self-contained validation of the hardened `prod` image: builds it, boots it
-# fully mocked with zero external dependencies, and checks its HEALTHCHECK
-# passes. This is NOT the deployment path — the platform is actually deployed
-# via nbe-financial-advisor-backend/deploy/docker-compose.yml, which builds
-# this repo with the same `prod` target and wires it to real Postgres/S3.
-# Use this only as a fast local/CI gate before an image reaches that stack.
+# Real production overlay. Boots the hardened `prod` image and joins
+# `nbe-prod` — the network nbe-financial-advisor-backend/deploy/docker-compose.yml
+# creates — so this container is reachable at `http://ai-service:8001` from
+# `backend`/`celery-worker` there (deploy/docker-compose.yml no longer
+# builds/runs ai-service itself; this file is that side of the real
+# deployment path).
 #
-# Usage: make prod-smoke  (or: docker compose -f compose/docker-compose.yml -f compose/docker-compose.prod.yml up --build)
+# All runtime config (DB/S3/LLM/MinerU credentials, token, etc.) comes from
+# `../.env` via the base file's `env_file:` — same single source of truth as
+# dev. Put real production values there before running this; nothing here
+# pins mock/dummy overrides.
+#
+# REQUIRES the `nbe-prod` network to already exist (created by bringing up
+# nbe-financial-advisor-backend/deploy/docker-compose.yml, or manually via
+# `docker network create nbe-prod`) — `docker compose up` fails immediately
+# otherwise ("network nbe-prod declared as external, but could not be
+# found").
+#
+# Usage: make prod-up  (or: docker compose -f compose/docker-compose.yml -f compose/docker-compose.prod.yml up --build -d)
 services:
   ai-service:
     build:
       target: prod
     restart: unless-stopped
-    environment:
-      USE_MOCK_LLM: 1
-      USE_MOCK_MINERU: 1
-      AI_SERVICE_TOKEN: ${AI_SERVICE_TOKEN:-smoke-test-token}
-      # Pinned off for the same reason as the DB/storage overrides below —
-      # LANGFUSE_ENABLED defaults to true, which would otherwise have this
-      # smoke test attempt (fail-open, but non-deterministic) network calls.
-      LANGFUSE_ENABLED: "false"
-      # Pinned rather than left to the base file's ${VAR:-postgres} defaults,
-      # which fall back to whatever POSTGRES_HOST/BACKEND_DB_HOST happen to be
-      # in the developer's local .env (compose auto-loads it for interpolation)
-      # — this file must stay deterministic and dependency-free regardless.
-      POSTGRES_HOST: smoke-test-no-db
-      BACKEND_DB_HOST: smoke-test-no-db
-      STORAGE_S3_BUCKET: smoke-test-bucket
-      STORAGE_S3_ENDPOINT_URL: http://smoke-test:9000
-      STORAGE_S3_REGION: us-east-1
-      STORAGE_S3_ACCESS_KEY: smoke-test
-      STORAGE_S3_SECRET_KEY: smoke-test
-      STORAGE_S3_USE_PATH_STYLE: "true"
-      STORAGE_S3_OCR_BUCKET: smoke-test-ocr
+
+networks:
+  default:
+    name: ${PROD_NETWORK_NAME:-nbe-prod}
+    external: true
