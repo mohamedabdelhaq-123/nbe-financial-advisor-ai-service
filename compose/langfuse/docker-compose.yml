@@ -1,0 +1,193 @@
+# Self-hosted Langfuse v3 sub-stack, vendored from the upstream reference
+# (https://github.com/langfuse/langfuse/blob/main/docker-compose.yml) and
+# adapted to this repo's conventions:
+#   - explicit, env-overridable pinned image versions (no `:latest` tags),
+#     matching the `${MINERU_VERSION:-3.4.2}` pattern in ../mineru/docker-compose.yml
+#   - only `langfuse-web` (port 3000) is published to the host; every other
+#     service here is reachable only from inside the Compose network
+#   - `postgres`/`clickhouse` pinned to TZ=UTC (non-UTC breaks Langfuse's
+#     trace queries); `redis` runs with --maxmemory-policy noeviction
+#     (eviction under memory pressure silently drops queued ingestion jobs)
+#   - DB/queue/blob env var names are Langfuse-prefixed (LANGFUSE_DB_*, not
+#     POSTGRES_*) so they never collide with this repo's own POSTGRES_* vars,
+#     which configure a completely separate database (ai_appdb) — this stack
+#     shares no database or credentials with that one
+#
+# Included into the top-level compose/docker-compose.yml via `include:`, so
+# a `docker compose up` that also activates the `observability` profile
+# starts this alongside `ai-service`/`mineru-server` with no extra step
+# (spec SC-003 / FR-003).
+#
+# Opt-in, not started by default: every service below is tagged
+# `profiles: ["observability"]`, so a plain `docker compose up` skips all six
+# — this lets `ai-service` instead point at a cloud-hosted Langfuse via
+# `.env` alone, and keeps unrelated compose invocations (e.g. `make
+# prod-smoke`) free of six extra containers they don't need. Enable with
+# `docker compose --profile observability up` (or `make dev-up-observability`).
+# All six services carry the identical profile — they only make sense
+# together (langfuse-web/-worker depend on all four backing services), so
+# they must move as one unit; Compose profiles are inherently per-service,
+# there's no way to gate the whole `include:`d file in one place.
+#
+# All secrets below ship with obviously-fake local-dev defaults (mirroring
+# upstream's own CHANGEME convention) — fine for local/dev per this feature's
+# scope (spec Assumptions: local/dev only), but must be overridden via `.env`
+# for anything longer-lived.
+
+services:
+  langfuse-worker:
+    image: docker.io/langfuse/langfuse-worker:${LANGFUSE_VERSION:-3.222.0}
+    restart: unless-stopped
+    profiles: ["observability"]
+    depends_on: &langfuse-depends-on
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+    environment: &langfuse-worker-env
+      NEXTAUTH_URL: ${LANGFUSE_NEXTAUTH_URL:-http://localhost:3000}
+      DATABASE_URL: postgresql://${LANGFUSE_DB_USER:-langfuse}:${LANGFUSE_DB_PASSWORD:-change-me-langfuse-db-pass}@postgres:5432/${LANGFUSE_DB_NAME:-langfuse}
+      SALT: ${LANGFUSE_SALT:-change-me-langfuse-salt}
+      ENCRYPTION_KEY: ${LANGFUSE_ENCRYPTION_KEY:-0000000000000000000000000000000000000000000000000000000000000000}
+      TELEMETRY_ENABLED: ${LANGFUSE_TELEMETRY_ENABLED:-false}
+      CLICKHOUSE_MIGRATION_URL: clickhouse://clickhouse:9000
+      CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_USER: ${LANGFUSE_CLICKHOUSE_USER:-clickhouse}
+      CLICKHOUSE_PASSWORD: ${LANGFUSE_CLICKHOUSE_PASSWORD:-change-me-clickhouse-pass}
+      # Must be explicit: unset defaults Langfuse's own migration runner to a
+      # clustered ReplicatedMergeTree schema, which then fails outright
+      # against this single-node ClickHouse (no Zookeeper) — confirmed
+      # against a real `docker compose up` of this stack.
+      CLICKHOUSE_CLUSTER_ENABLED: "false"
+      LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse
+      LANGFUSE_S3_EVENT_UPLOAD_REGION: auto
+      LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: ${LANGFUSE_MINIO_ROOT_USER:-langfuse-minio}
+      LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: ${LANGFUSE_MINIO_ROOT_PASSWORD:-change-me-minio-pass}
+      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://minio:9000
+      LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
+      LANGFUSE_S3_EVENT_UPLOAD_PREFIX: events/
+      LANGFUSE_S3_MEDIA_UPLOAD_BUCKET: langfuse
+      LANGFUSE_S3_MEDIA_UPLOAD_REGION: auto
+      LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID: ${LANGFUSE_MINIO_ROOT_USER:-langfuse-minio}
+      LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY: ${LANGFUSE_MINIO_ROOT_PASSWORD:-change-me-minio-pass}
+      LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: http://minio:9000
+      LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE: "true"
+      LANGFUSE_S3_MEDIA_UPLOAD_PREFIX: media/
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_AUTH: ${LANGFUSE_REDIS_AUTH:-change-me-redis-pass}
+
+  langfuse-web:
+    image: docker.io/langfuse/langfuse:${LANGFUSE_VERSION:-3.222.0}
+    restart: unless-stopped
+    profiles: ["observability"]
+    depends_on: *langfuse-depends-on
+    ports:
+      - "3000:3000"
+    environment:
+      <<: *langfuse-worker-env
+      NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET:-change-me-nextauth-secret}
+      # Headless initialization (Langfuse's own first-class bootstrap:
+      # https://langfuse.com/self-hosting/administration/headless-initialization)
+      # — auto-creates the org/project/admin user/API-key pair on first boot,
+      # idempotently skipped on later restarts if they already exist. Removes
+      # the manual UI signup step entirely (spec SC-003, US3-AS1). The key
+      # pair reuses this repo's own LANGFUSE_PUBLIC_KEY/LANGFUSE_SECRET_KEY so
+      # the same values that provision the project here are exactly what
+      # ai-service (compose/docker-compose.yml) authenticates with — one pair
+      # to set, not two.
+      LANGFUSE_INIT_ORG_ID: ${LANGFUSE_INIT_ORG_ID:-nbe-ai-service}
+      LANGFUSE_INIT_ORG_NAME: ${LANGFUSE_INIT_ORG_NAME:-NBE AI Service}
+      LANGFUSE_INIT_PROJECT_ID: ${LANGFUSE_INIT_PROJECT_ID:-nbe-ai-service}
+      LANGFUSE_INIT_PROJECT_NAME: ${LANGFUSE_INIT_PROJECT_NAME:-NBE AI Service}
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-pk-lf-00000000-0000-0000-0000-000000000000}
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-sk-lf-00000000-0000-0000-0000-000000000000}
+      LANGFUSE_INIT_USER_EMAIL: ${LANGFUSE_INIT_USER_EMAIL:-admin@localhost}
+      LANGFUSE_INIT_USER_NAME: ${LANGFUSE_INIT_USER_NAME:-Admin}
+      LANGFUSE_INIT_USER_PASSWORD: ${LANGFUSE_INIT_USER_PASSWORD:-change-me-langfuse-admin-pass}
+      # The account above is always seeded on boot, so self-service signup is
+      # never needed — closed by default (FR-007). Flip to false only to
+      # interactively create additional accounts.
+      LANGFUSE_AUTH_DISABLE_SIGNUP: ${LANGFUSE_AUTH_DISABLE_SIGNUP:-true}
+
+  postgres:
+    image: docker.io/postgres:${LANGFUSE_POSTGRES_VERSION:-17.10}
+    restart: unless-stopped
+    profiles: ["observability"]
+    environment:
+      TZ: UTC
+      PGTZ: UTC
+      POSTGRES_USER: ${LANGFUSE_DB_USER:-langfuse}
+      POSTGRES_PASSWORD: ${LANGFUSE_DB_PASSWORD:-change-me-langfuse-db-pass}
+      POSTGRES_DB: ${LANGFUSE_DB_NAME:-langfuse}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${LANGFUSE_DB_USER:-langfuse}"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+    volumes:
+      - langfuse_postgres_data:/var/lib/postgresql/data
+
+  clickhouse:
+    image: docker.io/clickhouse/clickhouse-server:${LANGFUSE_CLICKHOUSE_VERSION:-25.8.28.1}
+    restart: unless-stopped
+    profiles: ["observability"]
+    user: "101:101"
+    environment:
+      TZ: UTC
+      CLICKHOUSE_DB: default
+      CLICKHOUSE_USER: ${LANGFUSE_CLICKHOUSE_USER:-clickhouse}
+      CLICKHOUSE_PASSWORD: ${LANGFUSE_CLICKHOUSE_PASSWORD:-change-me-clickhouse-pass}
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8123/ping || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 1s
+    volumes:
+      - langfuse_clickhouse_data:/var/lib/clickhouse
+      - langfuse_clickhouse_logs:/var/log/clickhouse-server
+
+  redis:
+    image: docker.io/redis:${LANGFUSE_REDIS_VERSION:-7.4.9}
+    restart: unless-stopped
+    profiles: ["observability"]
+    command: >
+      --requirepass ${LANGFUSE_REDIS_AUTH:-change-me-redis-pass}
+      --maxmemory-policy noeviction
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${LANGFUSE_REDIS_AUTH:-change-me-redis-pass}", "ping"]
+      interval: 3s
+      timeout: 10s
+      retries: 10
+    volumes:
+      - langfuse_redis_data:/data
+
+  minio:
+    image: docker.io/minio/minio:${LANGFUSE_MINIO_VERSION:-RELEASE.2025-09-07T16-13-09Z}
+    restart: unless-stopped
+    profiles: ["observability"]
+    entrypoint: sh
+    command: -c 'mkdir -p /data/langfuse && minio server --address ":9000" --console-address ":9001" /data'
+    environment:
+      MINIO_ROOT_USER: ${LANGFUSE_MINIO_ROOT_USER:-langfuse-minio}
+      MINIO_ROOT_PASSWORD: ${LANGFUSE_MINIO_ROOT_PASSWORD:-change-me-minio-pass}
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 1s
+      timeout: 5s
+      retries: 5
+      start_period: 1s
+    volumes:
+      - langfuse_minio_data:/data
+
+volumes:
+  langfuse_postgres_data:
+  langfuse_clickhouse_data:
+  langfuse_clickhouse_logs:
+  langfuse_redis_data:
+  langfuse_minio_data:

@@ -3,6 +3,16 @@
 # the directory this file lives in).
 name: nbe-ai-service
 
+# Vendored, self-contained observability sub-stack (Langfuse v3 + its own
+# Postgres/ClickHouse/Redis/MinIO) — pulled in as a unit so a `docker compose
+# up --profile observability` starts it alongside ai-service/mineru-server
+# with no separate command. Opt-in: all six of its services carry `profiles:
+# ["observability"]` (see langfuse/docker-compose.yml), so a plain `docker
+# compose up` (no `--profile` flag) skips them entirely
+# (spec SC-003, contracts/observability-config.md §2, research.md §9).
+include:
+  - langfuse/docker-compose.yml
+
 services:
   ai-service:
     build: ..
@@ -12,6 +22,13 @@ services:
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
       MODEL_NAME: ${MODEL_NAME:-gpt-4o-mini}
       USE_MOCK_LLM: ${USE_MOCK_LLM:-0}
+      # Observability — LANGFUSE_ENABLED is the on/off switch; host/keys
+      # default to the local self-hosted stack (langfuse/docker-compose.yml's
+      # own "observability" compose profile — see app/core/observability.py).
+      LANGFUSE_ENABLED: ${LANGFUSE_ENABLED:-true}
+      LANGFUSE_HOST: ${LANGFUSE_HOST:-http://langfuse-web:3000}
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-pk-lf-00000000-0000-0000-0000-000000000000}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-sk-lf-00000000-0000-0000-0000-000000000000}
       # Own database (READ-WRITE) — a SEPARATE db owned by a dedicated role.
       POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
       POSTGRES_PORT: ${POSTGRES_PORT:-5432}
