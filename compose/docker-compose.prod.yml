@@ -15,6 +15,10 @@ services:
       USE_MOCK_LLM: 1
       USE_MOCK_MINERU: 1
       AI_SERVICE_TOKEN: ${AI_SERVICE_TOKEN:-smoke-test-token}
+      # Pinned off for the same reason as the DB/storage overrides below —
+      # LANGFUSE_ENABLED defaults to true, which would otherwise have this
+      # smoke test attempt (fail-open, but non-deterministic) network calls.
+      LANGFUSE_ENABLED: "false"
       # Pinned rather than left to the base file's ${VAR:-postgres} defaults,
       # which fall back to whatever POSTGRES_HOST/BACKEND_DB_HOST happen to be
       # in the developer's local .env (compose auto-loads it for interpolation)

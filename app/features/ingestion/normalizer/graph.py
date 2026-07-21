@@ -7,17 +7,17 @@ sequential; raising it trades budget headroom for speed.
 """
 
 import asyncio
-import logging
 import time
 from typing import cast
 
 from typing_extensions import TypedDict
 
 from app.core.config import settings
+from app.core.logging import get_logger, raw_content_fields
 from app.features.ingestion.normalizer.chunking import _build_prompt, _split_into_chunks
 from app.features.ingestion.normalizer.schemas import ExtractedStatement, ExtraField
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class _NormalizationState(TypedDict):
@@ -52,20 +52,27 @@ async def _extract_one_chunk(
         .with_structured_output(ExtractedStatement)
         .with_retry(stop_after_attempt=3)
     )
-    logger.info("normalize chunk %d: dispatching (%d chars)", chunk_index, len(prompt))
+    logger.info(
+        "normalize_chunk_dispatching",
+        chunk_index=chunk_index,
+        prompt_chars=len(prompt),
+        **raw_content_fields(prompt=prompt),
+    )
     start = time.monotonic()
     try:
         result = cast(ExtractedStatement, await structured_llm.ainvoke(prompt))
     except Exception:
         logger.warning(
-            "normalize chunk %d: failed after %.1fs", chunk_index, time.monotonic() - start
+            "normalize_chunk_failed",
+            chunk_index=chunk_index,
+            duration_s=round(time.monotonic() - start, 1),
         )
         raise
     logger.info(
-        "normalize chunk %d: done in %.1fs (%d transactions)",
-        chunk_index,
-        time.monotonic() - start,
-        len(result.transactions),
+        "normalize_chunk_done",
+        chunk_index=chunk_index,
+        duration_s=round(time.monotonic() - start, 1),
+        transaction_count=len(result.transactions),
     )
     return result
 
@@ -74,11 +81,11 @@ async def _extract_batch_node(state: _NormalizationState) -> dict:
     start_index = state["index"]
     batch = state["chunks"][start_index : start_index + state["max_parallel"]]
     logger.info(
-        "normalize batch: chunks %d-%d of %d (max_parallel=%d)",
-        start_index,
-        start_index + len(batch) - 1,
-        len(state["chunks"]),
-        state["max_parallel"],
+        "normalize_batch_starting",
+        chunk_start=start_index,
+        chunk_end=start_index + len(batch) - 1,
+        total_chunks=len(state["chunks"]),
+        max_parallel=state["max_parallel"],
     )
     batch_start = time.monotonic()
     results = await asyncio.gather(
@@ -87,7 +94,7 @@ async def _extract_batch_node(state: _NormalizationState) -> dict:
             for i, chunk in enumerate(batch)
         )
     )
-    logger.info("normalize batch: finished in %.1fs", time.monotonic() - batch_start)
+    logger.info("normalize_batch_finished", duration_s=round(time.monotonic() - batch_start, 1))
 
     bank_name = state["bank_name"]
     account_hint = state["account_hint"]
@@ -142,9 +149,9 @@ class LangGraphNormalizerClient:
             }, settings.model_name
 
         logger.info(
-            "normalize: starting %d chunk(s), max_parallel=%d",
-            len(chunks),
-            max(1, settings.normalization_max_parallel_chunks),
+            "normalize_starting",
+            chunk_count=len(chunks),
+            max_parallel=max(1, settings.normalization_max_parallel_chunks),
         )
         overall_start = time.monotonic()
         final_state = await self._graph.ainvoke(
@@ -160,9 +167,9 @@ class LangGraphNormalizerClient:
             }
         )
         logger.info(
-            "normalize: finished in %.1fs (%d transactions)",
-            time.monotonic() - overall_start,
-            len(final_state["transactions"]),
+            "normalize_finished",
+            duration_s=round(time.monotonic() - overall_start, 1),
+            transaction_count=len(final_state["transactions"]),
         )
 
         normalized = {

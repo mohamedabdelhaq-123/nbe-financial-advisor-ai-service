@@ -1,6 +1,6 @@
 # Convenience targets for the NBE AI service. Run `make help` for the list.
 
-.PHONY: help gen-backend-models dev-up dev-down prod-build prod-smoke
+.PHONY: help gen-backend-models dev-up dev-up-observability dev-down prod-build prod-smoke
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -18,8 +18,17 @@ COMPOSE := docker compose --env-file .env -f compose/docker-compose.yml
 dev-up: ## Start the ai-service in dev mode (hot reload, joins nbe-dev network)
 	$(COMPOSE) -f compose/docker-compose.dev.yml up --build
 
-dev-down: ## Stop the dev stack
-	$(COMPOSE) -f compose/docker-compose.dev.yml down
+# Same as dev-up, plus the local self-hosted Langfuse stack (6 extra
+# containers, gated behind the "observability" compose profile — off by
+# default so plain `dev-up`/`prod-smoke` stay free of them). Auto-provisions
+# its own project/API keys on first boot; see .env.example's LANGFUSE_* vars.
+dev-up-observability: ## Start the dev stack plus local self-hosted Langfuse (compose profile "observability")
+	$(COMPOSE) -f compose/docker-compose.dev.yml --profile observability up --build
+
+# --profile observability here too, so this also tears down the Langfuse
+# containers if dev-up-observability was used — a no-op otherwise.
+dev-down: ## Stop the dev stack (including Langfuse, if it was started)
+	$(COMPOSE) -f compose/docker-compose.dev.yml --profile observability down
 
 prod-build: ## Build the hardened prod image
 	$(COMPOSE) -f compose/docker-compose.prod.yml build

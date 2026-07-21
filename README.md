@@ -28,9 +28,44 @@ make dev-up   # builds the `dev` image target, runs alembic, serves with --reloa
 
 `compose/docker-compose.yml` is the shared base service definition;
 `compose/docker-compose.dev.yml` layers on hot reload, a published port, and
-attaches to the backend's `nbe-dev` network. To validate the hardened production
-image in isolation (fully mocked, no external dependencies — a fast pre-deploy
-sanity check, not the deploy path itself):
+attaches to the backend's `nbe-dev` network.
+
+### LLM observability (Langfuse)
+
+Every LLM call the service makes (chat, statement normalization, plan
+generation, embeddings) is auto-instrumented and traced to Langfuse — no
+per-call-site changes. `LANGFUSE_ENABLED=true` and a matching
+`LANGFUSE_HOST`/`LANGFUSE_PUBLIC_KEY`/`LANGFUSE_SECRET_KEY` are already
+`.env.example`'s defaults, pointed at a local self-hosted Langfuse v3 stack
+(its own Postgres, ClickHouse, Redis, and MinIO — see
+`compose/langfuse/docker-compose.yml`) that starts with no signup step:
+`langfuse-web` seeds its own admin account/project/API-key pair on first boot
+via Langfuse's headless initialization, using those same `LANGFUSE_*` values.
+
+That stack is opt-in — `make dev-up` alone does **not** start it, to keep the
+base stack free of six extra containers for anyone not using local tracing:
+
+```bash
+make dev-up-observability   # dev-up + the local Langfuse stack
+```
+
+Without it, `ai-service` still starts fine (`LANGFUSE_ENABLED` defaults to
+`true`) — it just fails open silently, since nothing is listening at
+`LANGFUSE_HOST` yet; no effect on requests either way. To point at a
+cloud-hosted Langfuse instead, set the three `LANGFUSE_*` vars to its real
+values and skip `dev-up-observability`. To disable tracing outright, set
+`LANGFUSE_ENABLED=false` (the only state where the three connection settings
+aren't required — leaving them unset while `LANGFUSE_ENABLED=true` fails
+startup immediately rather than silently degrading).
+
+See `specs/013-langfuse-observability/quickstart.md` for the full validation
+walkthrough.
+
+### Production image smoke test
+
+To validate the hardened production image in isolation (fully mocked, no
+external dependencies — a fast pre-deploy sanity check, not the deploy path
+itself):
 
 ```bash
 make prod-smoke
