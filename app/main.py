@@ -14,6 +14,7 @@ from pathlib import Path
 from fastapi import FastAPI
 
 from app.core import logging as app_logging
+from app.core import observability as app_observability
 from app.core import system
 from app.core.request_logging import RequestLoggingMiddleware
 from app.features.analytics import router as analytics
@@ -25,6 +26,7 @@ from app.features.recommendations import router as recommendations
 from app.features.transactions import router as transactions
 
 app_logging.configure()
+app_observability.configure()
 
 
 def _resolve_version() -> str:

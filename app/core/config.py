@@ -86,6 +86,21 @@ class Settings(BaseSettings):
     mineru_api_url: str = ""
     mineru_api_key: str = ""  # sent as the X-Api-Key header; optional
 
+    # ── observability (Langfuse LLM tracing) ────────────────────────────────
+    # Independent of the fail-fast checks below — misconfiguration disables
+    # tracing rather than failing startup (FR-005). langfuse_enabled is the
+    # on/off switch; host/key default to the local self-hosted stack's own
+    # headless-init values (compose/langfuse/docker-compose.yml, opt-in via
+    # its "observability" compose profile) so enabling that profile alone is
+    # enough to start seeing traces — no further config needed. If that
+    # profile isn't running, tracing attempts simply fail open (FR-005,
+    # app/core/observability.py). Point host/keys at a cloud-hosted Langfuse
+    # instance instead, or set langfuse_enabled=False to disable outright.
+    langfuse_enabled: bool = True
+    langfuse_host: str = "http://langfuse-web:3000"
+    langfuse_public_key: str = "pk-lf-00000000-0000-0000-0000-000000000000"
+    langfuse_secret_key: str = "sk-lf-00000000-0000-0000-0000-000000000000"
+
     # ── logging ────────────────────────────────────────────────────────────
     # Minimum severity emitted; validated below (fail fast on an invalid value
     # rather than silently falling back to a default).
@@ -168,4 +183,19 @@ if not settings.use_mock_mineru and not settings.mineru_api_url:
     raise RuntimeError(
         "MINERU_API_URL must be set when USE_MOCK_MINERU is false. "
         "Set USE_MOCK_MINERU=1 to run without a reachable MinerU instance."
+    )
+
+_missing_langfuse_fields = [
+    name
+    for name, value in (
+        ("LANGFUSE_HOST", settings.langfuse_host),
+        ("LANGFUSE_PUBLIC_KEY", settings.langfuse_public_key),
+        ("LANGFUSE_SECRET_KEY", settings.langfuse_secret_key),
+    )
+    if not value
+]
+if settings.langfuse_enabled and _missing_langfuse_fields:
+    raise RuntimeError(
+        f"{', '.join(_missing_langfuse_fields)} must be set when LANGFUSE_ENABLED is true "
+        "(research.md §10). Set LANGFUSE_ENABLED=false to disable tracing instead."
     )

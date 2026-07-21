@@ -88,3 +88,34 @@ def test_missing_storage_s3_config_raises(monkeypatch, missing_field):
 
     with pytest.raises(RuntimeError, match="STORAGE_S3"):
         importlib.reload(cfg)
+
+
+@pytest.mark.parametrize(
+    "missing_field",
+    ["LANGFUSE_HOST", "LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY"],
+)
+def test_missing_langfuse_config_raises_when_enabled(monkeypatch, missing_field):
+    """research.md §11: LANGFUSE_ENABLED=true with any connection setting
+    blank must fail fast, not silently disable tracing at runtime."""
+    monkeypatch.setenv("LANGFUSE_ENABLED", "true")
+    monkeypatch.setenv("LANGFUSE_HOST", "http://langfuse-web:3000")
+    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-test")
+    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-test")
+    monkeypatch.setenv(missing_field, "")
+
+    import app.core.config as cfg
+
+    with pytest.raises(RuntimeError, match=missing_field):
+        importlib.reload(cfg)
+
+
+def test_langfuse_config_optional_when_disabled(monkeypatch):
+    """LANGFUSE_ENABLED=false must not require any connection setting."""
+    monkeypatch.setenv("LANGFUSE_ENABLED", "false")
+    monkeypatch.setenv("LANGFUSE_HOST", "")
+    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "")
+    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "")
+
+    import app.core.config as cfg
+
+    importlib.reload(cfg)  # must not raise
