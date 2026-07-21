@@ -48,7 +48,7 @@ async def _extract_one_chunk(
     # succeeds. `with_retry` is the Runnable's own mechanism (Constitution
     # VIII) rather than a hand-rolled retry loop.
     structured_llm = (
-        get_chat_model(max_tokens=settings.normalization_chunk_max_tokens)
+        get_chat_model(max_tokens=settings.chat_model.normalization_chunk_max_tokens)
         .with_structured_output(ExtractedStatement)
         .with_retry(stop_after_attempt=3)
     )
@@ -146,19 +146,19 @@ class LangGraphNormalizerClient:
                 "bank_name": None,
                 "account_hint": None,
                 "transactions": [],
-            }, settings.model_name
+            }, settings.chat_model.model_name
 
         logger.info(
             "normalize_starting",
             chunk_count=len(chunks),
-            max_parallel=max(1, settings.normalization_max_parallel_chunks),
+            max_parallel=max(1, settings.chat_model.normalization_max_parallel_chunks),
         )
         overall_start = time.monotonic()
         final_state = await self._graph.ainvoke(
             {
                 "chunks": chunks,
                 "index": 0,
-                "max_parallel": max(1, settings.normalization_max_parallel_chunks),
+                "max_parallel": max(1, settings.chat_model.normalization_max_parallel_chunks),
                 "known_categories": known_categories,
                 "bank_name": None,
                 "account_hint": None,
@@ -179,4 +179,4 @@ class LangGraphNormalizerClient:
         }
         if final_state["extra_fields"]:
             normalized["extra_fields"] = final_state["extra_fields"]
-        return normalized, settings.model_name
+        return normalized, settings.chat_model.model_name

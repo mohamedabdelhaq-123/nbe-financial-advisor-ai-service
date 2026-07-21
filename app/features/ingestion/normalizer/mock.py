@@ -13,7 +13,7 @@ class MockNormalizerClient:
                 "bank_name": None,
                 "account_hint": None,
                 "transactions": [],
-            }, settings.model_name
+            }, settings.chat_model.model_name
 
         return {
             "bank_name": "Mock Bank",
@@ -32,4 +32,4 @@ class MockNormalizerClient:
                     "transaction_type": "debit",
                 }
             ],
-        }, settings.model_name
+        }, settings.chat_model.model_name

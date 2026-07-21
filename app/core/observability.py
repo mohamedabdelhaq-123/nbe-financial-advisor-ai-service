@@ -137,10 +137,10 @@ def configure() -> None:
     global _tracer_provider
     if _tracer_provider is not None:
         return
-    if not settings.langfuse_enabled:
+    if not settings.langfuse.enabled:
         return
     if not (
-        settings.langfuse_host and settings.langfuse_public_key and settings.langfuse_secret_key
+        settings.langfuse.host and settings.langfuse.public_key and settings.langfuse.secret_key
     ):
         logger.warning("observability_enabled_but_missing_connection_settings")
         return
@@ -156,10 +156,10 @@ def configure() -> None:
         # it (verified against the pinned opentelemetry-sdk version).
         # Passing headers as a dict sidesteps that parsing path entirely.
         credentials = base64.b64encode(
-            f"{settings.langfuse_public_key}:{settings.langfuse_secret_key}".encode()
+            f"{settings.langfuse.public_key}:{settings.langfuse.secret_key.get_secret_value()}".encode()
         ).decode()
         exporter = OTLPSpanExporter(
-            endpoint=f"{settings.langfuse_host.rstrip('/')}/api/public/otel/v1/traces",
+            endpoint=f"{settings.langfuse.host.rstrip('/')}/api/public/otel/v1/traces",
             headers={"Authorization": f"Basic {credentials}"},
         )
         provider = TracerProvider()

@@ -89,7 +89,7 @@ def configure() -> None:
 
     root_logger = logging.getLogger()
     root_logger.handlers = [handler]
-    root_logger.setLevel(settings.log_level.upper())
+    root_logger.setLevel(settings.logging.level.upper())
 
     # Uvicorn's own dictConfig gives "uvicorn", "uvicorn.error", and
     # "uvicorn.access" their own handlers with propagate=False, which would
@@ -100,7 +100,7 @@ def configure() -> None:
         uvicorn_logger.handlers = []
         uvicorn_logger.propagate = True
 
-    if settings.log_debug_include_raw_content:
+    if settings.logging.debug_include_raw_content:
         get_logger(__name__).warning(
             "raw_content_logging_enabled",
             detail=(
@@ -122,6 +122,6 @@ def raw_content_fields(**fields: object) -> dict[str, object]:
     them through this helper instead of passing them directly, so FR-011's
     default-off, explicit-opt-in guarantee holds regardless of `log_level`.
     """
-    if settings.log_debug_include_raw_content:
+    if settings.logging.debug_include_raw_content:
         return fields
     return {}

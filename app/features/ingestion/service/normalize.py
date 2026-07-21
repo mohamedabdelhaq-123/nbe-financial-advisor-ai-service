@@ -40,7 +40,7 @@ async def normalize_statement(
         raise HTTPException(status_code=404, detail="ocr result not found")
 
     statement_id = str(ocr_result.statement_id)
-    bucket = settings.storage_s3_ocr_bucket
+    bucket = settings.storage.s3_ocr_bucket
     prefix = f"{statement_id}/"
 
     try:

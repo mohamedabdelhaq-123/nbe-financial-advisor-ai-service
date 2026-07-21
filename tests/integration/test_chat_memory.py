@@ -14,11 +14,11 @@ def _docker_available() -> bool:
 @pytest.mark.asyncio
 async def test_chat_memory_persists_across_turns(monkeypatch):
     with PostgresContainer("pgvector/pgvector:pg16") as pg:
-        monkeypatch.setenv("POSTGRES_HOST", pg.get_container_host_ip())
-        monkeypatch.setenv("POSTGRES_PORT", str(pg.get_exposed_port(5432)))
-        monkeypatch.setenv("POSTGRES_DB", pg.dbname)
-        monkeypatch.setenv("POSTGRES_USER", pg.username)
-        monkeypatch.setenv("POSTGRES_PASSWORD", pg.password)
+        monkeypatch.setenv("AI_SERVICE_OWN_DB__POSTGRES_HOST", pg.get_container_host_ip())
+        monkeypatch.setenv("AI_SERVICE_OWN_DB__POSTGRES_PORT", str(pg.get_exposed_port(5432)))
+        monkeypatch.setenv("AI_SERVICE_OWN_DB__POSTGRES_DB", pg.dbname)
+        monkeypatch.setenv("AI_SERVICE_OWN_DB__POSTGRES_USER", pg.username)
+        monkeypatch.setenv("AI_SERVICE_OWN_DB__POSTGRES_PASSWORD", pg.password)
 
         import importlib
 

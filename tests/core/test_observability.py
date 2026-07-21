@@ -14,6 +14,7 @@ from openinference.instrumentation.langchain import LangChainInstrumentor
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+from pydantic import SecretStr
 
 from app.core import observability
 from app.core.request_logging import current_feature
@@ -35,14 +36,14 @@ def _reset_instrumentation():
 
 
 def _disable_langfuse(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(observability.settings, "langfuse_enabled", False)
+    monkeypatch.setattr(observability.settings.langfuse, "enabled", False)
 
 
 def _set_dummy_langfuse_settings(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(observability.settings, "langfuse_enabled", True)
-    monkeypatch.setattr(observability.settings, "langfuse_host", "http://localhost:3000")
-    monkeypatch.setattr(observability.settings, "langfuse_public_key", "pk-test")
-    monkeypatch.setattr(observability.settings, "langfuse_secret_key", "sk-test")
+    monkeypatch.setattr(observability.settings.langfuse, "enabled", True)
+    monkeypatch.setattr(observability.settings.langfuse, "host", "http://localhost:3000")
+    monkeypatch.setattr(observability.settings.langfuse, "public_key", "pk-test")
+    monkeypatch.setattr(observability.settings.langfuse, "secret_key", SecretStr("sk-test"))
 
 
 class TestConfigureNoCrashBehavior:
@@ -54,9 +55,7 @@ class TestConfigureNoCrashBehavior:
         assert observability._tracer_provider is None
         assert not LangChainInstrumentor()._is_instrumented_by_opentelemetry
 
-    @pytest.mark.parametrize(
-        "missing_field", ["langfuse_host", "langfuse_public_key", "langfuse_secret_key"]
-    )
+    @pytest.mark.parametrize("missing_field", ["host", "public_key", "secret_key"])
     def test_noop_when_enabled_but_any_single_connection_setting_absent(
         self, monkeypatch, missing_field
     ):
@@ -64,7 +63,12 @@ class TestConfigureNoCrashBehavior:
         "tracing off" state, not a startup failure (contracts/
         observability-config.md §1) — logs a warning instead."""
         _set_dummy_langfuse_settings(monkeypatch)
-        monkeypatch.setattr(observability.settings, missing_field, "")
+        # Blank the targeted field using the right type (str vs SecretStr).
+        monkeypatch.setattr(
+            observability.settings.langfuse,
+            missing_field,
+            SecretStr("") if missing_field == "secret_key" else "",
+        )
 
         observability.configure()
 

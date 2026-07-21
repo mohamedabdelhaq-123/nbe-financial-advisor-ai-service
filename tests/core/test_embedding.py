@@ -11,7 +11,7 @@ from app.core.embedding import get_embedding_model
 async def test_mock_mode_returns_default_dimension_vector():
     model = get_embedding_model()
     vectors = await model.aembed_documents(["hello world"])
-    assert len(vectors[0]) == settings.embedding_dimensions == 768
+    assert len(vectors[0]) == settings.embeddings.dimensions == 768
 
 
 @pytest.mark.asyncio
@@ -35,16 +35,16 @@ def test_mode_flip_after_cache_population_returns_fresh_real_model(monkeypatch):
     """Regression test for the cache-key bug found during /speckit-analyze.
 
     Calling get_embedding_model() in mock mode first (populating any cache keyed only
-    on dimensions), then flipping settings.use_mock_llm to False, must return a fresh
-    real-mode model on the next call with the same default dimensions — not a stale
-    cached mock instance.
+    on dimensions), then flipping settings.chat_model.use_mock to False, must
+    return a fresh real-mode model on the next call with the same default
+    dimensions — not a stale cached mock instance.
     """
     get_embedding_model()  # populate cache in mock mode with default dimensions first
 
-    monkeypatch.setattr(settings, "use_mock_llm", False)
-    monkeypatch.setattr(settings, "embedding_api_key", "sk-test-not-a-placeholder")
+    monkeypatch.setattr(settings.chat_model, "use_mock", False)
+    monkeypatch.setattr(settings.embeddings, "api_key", "sk-test-not-a-placeholder")
 
     model = get_embedding_model()
 
     assert isinstance(model, OpenAIEmbeddings)
-    assert model.model == settings.embedding_model_name
+    assert model.model == settings.embeddings.model_name

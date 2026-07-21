@@ -244,7 +244,9 @@ class _ConcurrencyTrackingLLM:
 async def test_langgraph_client_max_parallel_dispatches_batch_concurrently(monkeypatch):
     import app.features.ingestion.normalizer as normalizer_module
 
-    monkeypatch.setattr(normalizer_module.settings, "normalization_max_parallel_chunks", 3)
+    monkeypatch.setattr(
+        normalizer_module.settings.chat_model, "normalization_max_parallel_chunks", 3
+    )
 
     content_list = [
         {"type": "text", "text": "A" * 2500},
@@ -361,14 +363,14 @@ def test_get_normalizer_client_returns_mock_when_use_mock_llm(monkeypatch):
     # normalizer.py (imported before the reload) no longer shares.
     import app.features.ingestion.normalizer as normalizer_module
 
-    monkeypatch.setattr(normalizer_module.settings, "use_mock_llm", True)
+    monkeypatch.setattr(normalizer_module.settings.chat_model, "use_mock", True)
     assert isinstance(get_normalizer_client(), MockNormalizerClient)
 
 
 def test_get_normalizer_client_returns_langgraph_when_not_mock(monkeypatch):
     import app.features.ingestion.normalizer as normalizer_module
 
-    monkeypatch.setattr(normalizer_module.settings, "use_mock_llm", False)
+    monkeypatch.setattr(normalizer_module.settings.chat_model, "use_mock", False)
     assert isinstance(get_normalizer_client(), LangGraphNormalizerClient)
 
 

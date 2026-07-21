@@ -3,7 +3,7 @@
 Consumers depend only on the `MineruClient` protocol, obtained via
 `get_mineru_client()` — never on `HttpMineruClient` or `MockMineruClient`
 directly. `HttpMineruClient` and `MockMineruClient` are the two swappable
-implementations behind the protocol, selected by `settings.use_mock_mineru`,
+implementations behind the protocol, selected by `settings.mineru.use_mock`,
 mirroring `get_normalizer_client()` in
 `app/features/ingestion/normalizer/__init__.py`.
 """
@@ -72,7 +72,8 @@ class HttpMineruClient:
 
     async def parse_document(self, file_bytes: bytes, filename: str) -> ParsedDocument:
         timeout = httpx.Timeout(connect=10.0, read=600.0, write=30.0, pool=10.0)
-        headers = {"X-Api-Key": settings.mineru_api_key} if settings.mineru_api_key else {}
+        api_key = settings.mineru.api_key.get_secret_value()
+        headers = {"X-Api-Key": api_key} if api_key else {}
         data = {
             "response_format_zip": "true",
             "return_md": "true",
@@ -83,7 +84,7 @@ class HttpMineruClient:
 
         async with httpx.AsyncClient(timeout=timeout) as client:
             response = await client.post(
-                f"{settings.mineru_api_url}/file_parse",
+                f"{settings.mineru.api_url}/file_parse",
                 data=data,
                 files=files,
                 headers=headers,
@@ -122,6 +123,6 @@ class MockMineruClient:
 
 def get_mineru_client() -> MineruClient:
     """Return the configured `MineruClient` — mock or real HTTP client."""
-    if settings.use_mock_mineru:
+    if settings.mineru.use_mock:
         return MockMineruClient()
     return HttpMineruClient()

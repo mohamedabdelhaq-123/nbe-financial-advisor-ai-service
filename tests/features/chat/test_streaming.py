@@ -87,7 +87,7 @@ def real_mode(monkeypatch):
     """Disable the mock short-circuit so the graph streaming path is exercised."""
     from app.core.config import settings
 
-    monkeypatch.setattr(settings, "use_mock_llm", False)
+    monkeypatch.setattr(settings.chat_model, "use_mock", False)
     return _fake_app()
 
 

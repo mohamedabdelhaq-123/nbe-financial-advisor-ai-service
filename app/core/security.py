@@ -16,7 +16,7 @@ def require_token(
     Applied to every route beyond the liveness/readiness probes. The token is
     the shared secret between the Django backend and this internal service.
     """
-    if credentials is None or credentials.credentials != settings.ai_service_token:
+    if credentials is None or credentials.credentials != settings.token.get_secret_value():
         raise HTTPException(status_code=401, detail="Invalid or missing token")
 
 

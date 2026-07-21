@@ -44,6 +44,6 @@ __all__ = [
 
 def get_normalizer_client() -> NormalizerClient:
     """Return the configured `NormalizerClient` — mock or real LangGraph pipeline."""
-    if settings.use_mock_llm:
+    if settings.chat_model.use_mock:
         return MockNormalizerClient()
     return LangGraphNormalizerClient()

@@ -43,7 +43,7 @@ async def stream_chat(app, request: ChatTurnRequest) -> AsyncIterator[str]:
 
     checkpointer = getattr(app.state, "checkpointer", None)
 
-    if settings.use_mock_llm:
+    if settings.chat_model.use_mock:
         # FR-011: mock mode adopts the same envelope (one token batch + one done).
         mock_content = f"Mock response to: {request.message[:50]}"
         yield f"data: {TokenEvent(data=mock_content).model_dump_json()}\n\n"

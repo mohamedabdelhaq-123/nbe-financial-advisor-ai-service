@@ -11,7 +11,6 @@ from functools import lru_cache
 
 from langchain_core.embeddings import DeterministicFakeEmbedding, Embeddings
 from langchain_openai import OpenAIEmbeddings
-from pydantic import SecretStr
 
 from app.core.config import settings
 
@@ -21,16 +20,16 @@ def _build_embedding_model(dimensions: int, mock: bool) -> Embeddings:
     """Construct and cache an embedding model for a given (dimensions, mock) pair.
 
     Keyed on `mock` as well as `dimensions` — a single-key cache (dimensions only)
-    would let a stale mock instance survive a settings.use_mock_llm flip, since the
-    public get_embedding_model() below is otherwise the only thing re-reading that
-    setting on each call.
+    would let a stale mock instance survive a settings.chat_model.use_mock
+    flip, since the public get_embedding_model() below is otherwise the only
+    thing re-reading that setting on each call.
     """
     if mock:
         return DeterministicFakeEmbedding(size=dimensions)
     return OpenAIEmbeddings(
-        base_url=settings.embedding_base_url,
-        api_key=SecretStr(settings.embedding_api_key),
-        model=settings.embedding_model_name,
+        base_url=settings.embeddings.base_url,
+        api_key=settings.embeddings.api_key,
+        model=settings.embeddings.model_name,
         dimensions=dimensions,
         # Without this, OpenAIEmbeddings pre-tokenizes input via tiktoken and sends
         # token-ID arrays instead of raw text (its "length-safe" chunking strategy) —
@@ -46,9 +45,10 @@ def _build_embedding_model(dimensions: int, mock: bool) -> Embeddings:
 def get_embedding_model(dimensions: int | None = None) -> Embeddings:
     """Return the configured embedding model, or a deterministic mock in mock mode.
 
-    `dimensions` defaults to settings.embedding_dimensions when omitted. Always
-    re-reads settings.use_mock_llm so a config change is reflected on the very next
-    call, never masked by a cached instance built under a previous mode.
+    `dimensions` defaults to settings.embeddings.dimensions when omitted.
+    Always re-reads settings.chat_model.use_mock so a config change is
+    reflected on the very next call, never masked by a cached instance built
+    under a previous mode.
     """
-    dim = dimensions or settings.embedding_dimensions
-    return _build_embedding_model(dim, settings.use_mock_llm)
+    dim = dimensions or settings.embeddings.dimensions
+    return _build_embedding_model(dim, settings.chat_model.use_mock)

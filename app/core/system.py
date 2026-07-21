@@ -33,15 +33,16 @@ async def ready() -> dict:
 async def mineru_health() -> dict:
     """MinerU reachability probe.
 
-    In mock mode (`USE_MOCK_MINERU=1`) reports ready with no network call. In
-    real mode it GETs MinerU's own `/health` with a short timeout: `ready` is
-    true only on a 200, so a cold/starting or dead endpoint reads as not-ready
-    with a `detail` instead of surfacing later as a confusing upload failure.
+    In mock mode (`AI_SERVICE_MINERU__USE_MOCK=1`) reports ready with no network
+    call. In real mode it GETs MinerU's own `/health` with a short timeout:
+    `ready` is true only on a 200, so a cold/starting or dead endpoint reads
+    as not-ready with a `detail` instead of surfacing later as a confusing
+    upload failure.
     """
-    if settings.use_mock_mineru:
+    if settings.mineru.use_mock:
         return {"mode": "mock", "ready": True}
 
-    url = settings.mineru_api_url
+    url = settings.mineru.api_url
     if not url:
         return {"mode": "real", "ready": False, "detail": "MINERU_API_URL is not set"}
 

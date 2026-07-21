@@ -11,11 +11,12 @@ from app.core.config import settings
 
 
 def _psycopg_conn_string() -> str:
-    user = quote(str(settings.postgres_user), safe="")
-    password = quote(str(settings.postgres_password), safe="")
+    user = quote(str(settings.own_db.postgres_user), safe="")
+    password = quote(settings.own_db.postgres_password.get_secret_value(), safe="")
     return (
         f"postgresql://{user}:{password}"
-        f"@{settings.postgres_host}:{settings.postgres_port}/{settings.postgres_db}"
+        f"@{settings.own_db.postgres_host}:{settings.own_db.postgres_port}"
+        f"/{settings.own_db.postgres_db}"
     )
 
 

@@ -19,7 +19,7 @@ async def summarize_node(state: ConversationState) -> dict:
     if not old:
         return {"messages": messages}
 
-    if settings.use_mock_llm:
+    if settings.chat_model.use_mock:
         summary_text = f"Summary of {len(old)} earlier messages in the conversation."
     else:
         from app.core.llm import get_chat_model

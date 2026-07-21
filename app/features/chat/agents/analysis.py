@@ -48,7 +48,7 @@ async def analysis_node(state: ConversationState) -> dict:
             category = getattr(txn, "category", "uncategorized")
             lines.append(f"- {desc} ({category}): {amount}")
 
-        if settings.use_mock_llm:
+        if settings.chat_model.use_mock:
             reply = "Based on your transactions:\n" + "\n".join(lines)
         else:
             from app.core.llm import get_chat_model

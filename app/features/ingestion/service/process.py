@@ -59,7 +59,7 @@ async def process_statement(
             status_code=502, detail=f"document processing engine failed: {exc}"
         ) from exc
 
-    bucket = settings.storage_s3_ocr_bucket
+    bucket = settings.storage.s3_ocr_bucket
     prefix = f"{statement_id}/"
 
     async with get_storage_backend() as s3:
