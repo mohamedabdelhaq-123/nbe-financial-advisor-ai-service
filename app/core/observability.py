@@ -107,6 +107,13 @@ class RedactionSpanProcessor(SpanProcessor):
                 redacted = _redact(value)
                 if redacted != value:
                     attributes._dict[key] = redacted  # noqa
+            elif isinstance(value, (list, tuple)) and all(isinstance(v, str) for v in value):
+                # E.g. OpenInference's `tag.tags` (langchain run tags), set as a
+                # real List[str] attribute rather than flattened indexed keys —
+                # Principle III's redaction is unconditional across all attributes.
+                redacted_seq = tuple(_redact(v) for v in value)
+                if redacted_seq != tuple(value):
+                    attributes._dict[key] = redacted_seq  # noqa
 
         feature = current_feature.get()
         if feature is not None:
@@ -128,6 +135,8 @@ def configure() -> None:
     research.md §4).
     """
     global _tracer_provider
+    if _tracer_provider is not None:
+        return
     if not settings.langfuse_enabled:
         return
     if not (

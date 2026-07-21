@@ -25,9 +25,7 @@ import uuid
 from contextvars import ContextVar
 
 import structlog
-from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
-from starlette.requests import Request
-from starlette.responses import Response
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.core.logging import get_logger
 
@@ -43,28 +41,56 @@ def _feature_from_path(path: str) -> str | None:
     return match.group(1) if match else None
 
 
-class RequestLoggingMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
+class RequestLoggingMiddleware:
+    """Pure ASGI middleware — not `BaseHTTPMiddleware`, whose `dispatch()`
+    returns as soon as response headers are ready rather than after the body
+    finishes sending. That breaks both `duration_ms` and exception capture
+    for the chat slice's SSE `StreamingResponse` (app/features/chat/router.py),
+    where the body can keep streaming long after headers are sent."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        http_method = scope["method"]
+        http_path = scope["path"]
         structlog.contextvars.bind_contextvars(correlation_id=str(uuid.uuid4()))
-        feature_token = current_feature.set(_feature_from_path(request.url.path))
+        feature_token = current_feature.set(_feature_from_path(http_path))
         start = time.monotonic()
         status_code = 500
+
+        async def send_wrapper(message: Message) -> None:
+            nonlocal status_code
+            if message["type"] == "http.response.start":
+                status_code = message["status"]
+            await send(message)
+
         try:
-            response = await call_next(request)
-            status_code = response.status_code
-            return response
+            # For a StreamingResponse, Starlette runs the body-sending
+            # coroutine in a task-group-spawned child task; this await only
+            # returns once that task group's __aexit__ has rejoined it, i.e.
+            # after the full stream has actually been sent — not just headers.
+            await self.app(scope, receive, send_wrapper)
         except Exception:
             logger.exception(
                 "unhandled_exception",
-                http_method=request.method,
-                http_path=request.url.path,
+                http_method=http_method,
+                http_path=http_path,
             )
             raise
         finally:
+            # Deliberately not done from inside send_wrapper: that callable
+            # may run in the child task's own context copy for a streamed
+            # response, and a ContextVar token can only be reset in the
+            # context it was created in.
             logger.info(
                 "request_completed",
-                http_method=request.method,
-                http_path=request.url.path,
+                http_method=http_method,
+                http_path=http_path,
                 http_status=status_code,
                 duration_ms=round((time.monotonic() - start) * 1000, 2),
             )

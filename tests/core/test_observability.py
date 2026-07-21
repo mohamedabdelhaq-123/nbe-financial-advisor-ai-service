@@ -101,7 +101,7 @@ class TestRedactionSpanProcessor:
     an InMemorySpanExporter) and asserts on what the processor lets through."""
 
     @staticmethod
-    def _process(attributes: dict[str, str]) -> dict[str, object]:
+    def _process(attributes: dict[str, object]) -> dict[str, object]:
         exporter = InMemorySpanExporter()
         provider = TracerProvider()
         provider.add_span_processor(observability.RedactionSpanProcessor())
@@ -144,8 +144,8 @@ class TestRedactionSpanProcessor:
         assert "[CARD]" in result["input.value"]
 
     def test_non_string_attributes_pass_through_unmodified(self):
-        result = self._process({"llm.token_count.total": "42"})
-        assert result["llm.token_count.total"] == "42"
+        result = self._process({"llm.token_count.total": 42})
+        assert result["llm.token_count.total"] == 42
 
     def test_stamps_current_feature_onto_spans_processed_during_a_request(self):
         token = current_feature.set("chat")

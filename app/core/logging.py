@@ -91,6 +91,15 @@ def configure() -> None:
     root_logger.handlers = [handler]
     root_logger.setLevel(settings.log_level.upper())
 
+    # Uvicorn's own dictConfig gives "uvicorn", "uvicorn.error", and
+    # "uvicorn.access" their own handlers with propagate=False, which would
+    # otherwise bypass this JSON/redaction pipeline entirely for every
+    # startup, shutdown, error, and access-log message it emits.
+    for uvicorn_logger_name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
+        uvicorn_logger = logging.getLogger(uvicorn_logger_name)
+        uvicorn_logger.handlers = []
+        uvicorn_logger.propagate = True
+
     if settings.log_debug_include_raw_content:
         get_logger(__name__).warning(
             "raw_content_logging_enabled",
