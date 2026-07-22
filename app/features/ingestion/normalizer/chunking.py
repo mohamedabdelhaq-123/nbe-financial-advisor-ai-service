@@ -8,6 +8,8 @@ import json
 
 from bs4 import BeautifulSoup
 
+from app.features.ingestion.normalizer import prompts
+
 # Sized for OUTPUT, not input: per-transaction `extra_fields` roughly triples
 # response verbosity, so a chunk sized only for input prompt length can still
 # produce a completion that gets cut off mid-JSON. Confirmed against a real
@@ -73,27 +75,6 @@ def _split_into_chunks(
 
 
 def _build_prompt(chunk: list[dict], known_categories: list[str] | None) -> str:
-    category_hint = (
-        f"Choose each transaction's category from exactly this list (no other values): "
-        f"{known_categories}.\n"
-        if known_categories
-        else ""
-    )
-    return (
-        "Extract structured transaction data from this fragment of a bank statement's "
-        "OCR output. This may be only part of the full statement — extract only what's "
-        "present here.\n\n"
-        f"Content:\n{json.dumps(chunk)}\n\n"
-        f"{category_hint}"
-        "transaction_date must be converted to YYYY-MM-DD even if the source uses a "
-        "different format (e.g. '30-October-2024' becomes '2024-10-30').\n"
-        "Omit any transaction whose date or amount you cannot confidently determine.\n"
-        "ai_description must be a verbose, multi-sentence natural-language description of "
-        "each transaction — do not just repeat merchant_raw. Explain what the transaction "
-        "likely was for and include any other relevant context from this fragment.\n"
-        "If bank_name or account_hint isn't stated in this fragment, use null — never "
-        "a placeholder phrase like 'not mentioned' or 'unknown', and never add bank_name "
-        "or account_hint as an extra_fields entry (they always belong in the dedicated "
-        "top-level fields, never duplicated into extra_fields). Each key in extra_fields "
-        "must be unique — do not repeat the same key with a different value."
+    return prompts.get_normalization_prompt().render(
+        chunk=json.dumps(chunk), known_categories=known_categories
     )

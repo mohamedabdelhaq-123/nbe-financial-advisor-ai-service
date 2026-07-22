@@ -3,6 +3,7 @@
 import asyncio
 import datetime
 import decimal
+import json
 import uuid
 
 import pytest
@@ -17,6 +18,7 @@ from app.features.ingestion.normalizer import (
     find_duplicate,
     get_normalizer_client,
 )
+from app.features.ingestion.normalizer.prompts import get_normalization_prompt
 
 
 def _txn_row(**overrides) -> dict:
@@ -459,3 +461,64 @@ async def test_find_duplicate_returns_none_when_no_match(own_pg, mock_backend_se
         )
 
     assert result is None
+
+
+# ---------------------------------------------------------------------------
+# Prompt-template golden-string tests (FR-005: byte-for-byte wording preservation)
+# ---------------------------------------------------------------------------
+
+_CHUNK = [{"type": "text", "text": "Bank statement line"}]
+
+_GOLDEN_WITH_CATEGORIES = (
+    "Extract structured transaction data from this fragment of a bank statement's "
+    "OCR output. This may be only part of the full statement — extract only what's "
+    "present here.\n\n"
+    'Content:\n[{"type": "text", "text": "Bank statement line"}]\n\n'
+    "Choose each transaction's category from exactly this list (no other values): "
+    "['groceries', 'rent'].\n"
+    "transaction_date must be converted to YYYY-MM-DD even if the source uses a "
+    "different format (e.g. '30-October-2024' becomes '2024-10-30').\n"
+    "Omit any transaction whose date or amount you cannot confidently determine.\n"
+    "ai_description must be a verbose, multi-sentence natural-language description of "
+    "each transaction — do not just repeat merchant_raw. Explain what the transaction "
+    "likely was for and include any other relevant context from this fragment.\n"
+    "If bank_name or account_hint isn't stated in this fragment, use null — never "
+    "a placeholder phrase like 'not mentioned' or 'unknown', and never add bank_name "
+    "or account_hint as an extra_fields entry (they always belong in the dedicated "
+    "top-level fields, never duplicated into extra_fields). Each key in extra_fields "
+    "must be unique — do not repeat the same key with a different value."
+)
+
+_GOLDEN_WITHOUT_CATEGORIES = (
+    "Extract structured transaction data from this fragment of a bank statement's "
+    "OCR output. This may be only part of the full statement — extract only what's "
+    "present here.\n\n"
+    'Content:\n[{"type": "text", "text": "Bank statement line"}]\n\n'
+    "transaction_date must be converted to YYYY-MM-DD even if the source uses a "
+    "different format (e.g. '30-October-2024' becomes '2024-10-30').\n"
+    "Omit any transaction whose date or amount you cannot confidently determine.\n"
+    "ai_description must be a verbose, multi-sentence natural-language description of "
+    "each transaction — do not just repeat merchant_raw. Explain what the transaction "
+    "likely was for and include any other relevant context from this fragment.\n"
+    "If bank_name or account_hint isn't stated in this fragment, use null — never "
+    "a placeholder phrase like 'not mentioned' or 'unknown', and never add bank_name "
+    "or account_hint as an extra_fields entry (they always belong in the dedicated "
+    "top-level fields, never duplicated into extra_fields). Each key in extra_fields "
+    "must be unique — do not repeat the same key with a different value."
+)
+
+
+def test_normalization_prompt_matches_hardcoded_output_with_categories():
+    """US1 acceptance #1 — template output is byte-for-byte the old hardcoded prompt."""
+    rendered = get_normalization_prompt().render(
+        chunk=json.dumps(_CHUNK), known_categories=["groceries", "rent"]
+    )
+    assert rendered == _GOLDEN_WITH_CATEGORIES
+
+
+def test_normalization_prompt_omits_category_clause_when_none():
+    """US1 acceptance #2 — known_categories=None drops the category hint entirely."""
+    rendered = get_normalization_prompt().render(chunk=json.dumps(_CHUNK), known_categories=None)
+    assert rendered == _GOLDEN_WITHOUT_CATEGORIES
+    # The hint clause must be fully absent, not just an empty interpolation.
+    assert "Choose each transaction's category" not in rendered
