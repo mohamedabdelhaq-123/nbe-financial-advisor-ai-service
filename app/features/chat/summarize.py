@@ -23,10 +23,10 @@ async def summarize_node(state: ConversationState) -> dict:
         summary_text = f"Summary of {len(old)} earlier messages in the conversation."
     else:
         from app.core.llm import get_chat_model
+        from app.features.chat.prompts import get_summary_prompt
 
-        prompt = "Summarise the following conversation turns concisely:\n\n" + "\n".join(
-            f"{m.type}: {m.content[:200]}" for m in old if hasattr(m, "content")
-        )
+        turns = [f"{m.type}: {m.content[:200]}" for m in old if hasattr(m, "content")]
+        prompt = get_summary_prompt().render(turns=turns)
         result = await get_chat_model().ainvoke(prompt)
         summary_text = result.content if isinstance(result.content, str) else str(result.content)
 

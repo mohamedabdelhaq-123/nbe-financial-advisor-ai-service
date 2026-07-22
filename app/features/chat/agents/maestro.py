@@ -65,12 +65,9 @@ async def maestro_node(state: ConversationState) -> dict:
         intent = classify_intent(text)
     else:
         from app.core.llm import get_chat_model
+        from app.features.chat.prompts import get_intent_classification_prompt
 
-        prompt = (
-            "Classify the intent of this user message into one of: "
-            "analysis, planning, recommendation, general.\n"
-            f"Message: {text}\nRespond with ONLY the intent word."
-        )
+        prompt = get_intent_classification_prompt().render(message=text)
         result = await get_chat_model().ainvoke(prompt)
         raw = result.content if isinstance(result.content, str) else str(result.content)
         classified = raw.strip().lower()

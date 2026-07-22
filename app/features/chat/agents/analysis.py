@@ -52,13 +52,10 @@ async def analysis_node(state: ConversationState) -> dict:
             reply = "Based on your transactions:\n" + "\n".join(lines)
         else:
             from app.core.llm import get_chat_model
+            from app.features.chat.prompts import get_grounded_analysis_prompt
 
             data_context = "\n".join(lines)
-            prompt = (
-                f"User asked about their spending. Here are their transactions:\n{data_context}\n"
-                "Provide a grounded summary. Cite specific figures only from this data. "
-                "State 'I don't have that data yet' for anything not covered."
-            )
+            prompt = get_grounded_analysis_prompt().render(data_context=data_context)
             llm_result = await get_chat_model().ainvoke(prompt)
             raw_content = (
                 llm_result.content
