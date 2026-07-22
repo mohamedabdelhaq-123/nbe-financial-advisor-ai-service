@@ -3,6 +3,8 @@
 import asyncio
 from collections.abc import AsyncIterator
 
+from langchain_core.messages import HumanMessage
+
 from app.core.logging import get_logger
 from app.features.chat.schemas import (
     ChatTurnRequest,
@@ -63,7 +65,7 @@ async def stream_chat(app, request: ChatTurnRequest) -> AsyncIterator[str]:
     snapshot = await graph.aget_state(config)
     prev_values = snapshot.values if snapshot else {}
 
-    initial_messages = [request.message]
+    initial_messages = [HumanMessage(content=request.message)]
     conversation_context = (
         request.initial_context
         if request.initial_context is not None
