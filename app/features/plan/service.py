@@ -49,15 +49,10 @@ async def generate_plan(
         return _mock_plan(answers)
 
     from app.core.llm import get_chat_model
+    from app.features.plan.prompts import get_budget_allocation_prompt
 
     llm = get_chat_model()
-    prompt = (
-        f"Generate a monthly budget allocation as percentages summing to exactly 100. "
-        f"User context: {user_context}. Answers: {answers}. "
-        f"Return ONLY a JSON object mapping category names to integer percentages. "
-        f'Example: {{"housing": 30, "food": 20, "savings": 20, "transport": 10, '
-        f'"entertainment": 10, "utilities": 5, "other": 5}}'
-    )
+    prompt = get_budget_allocation_prompt().render(user_context=user_context, answers=answers)
     response = await llm.ainvoke(prompt)
     raw = str(response.content).strip()
 

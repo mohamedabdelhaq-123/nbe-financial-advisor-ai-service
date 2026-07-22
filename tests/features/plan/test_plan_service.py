@@ -2,6 +2,7 @@
 
 import pytest
 
+from app.features.plan.prompts import get_budget_allocation_prompt
 from app.features.plan.service import MAX_QUESTIONS, generate_plan, next_question
 
 
@@ -52,3 +53,27 @@ async def test_generate_plan_categories_present():
     categories = {a.category for a in allocations}
     assert "housing" in categories
     assert "savings" in categories
+
+
+# ---------------------------------------------------------------------------
+# Prompt-template golden-string test (FR-005: byte-for-byte wording preservation)
+# ---------------------------------------------------------------------------
+
+_GOLDEN_BUDGET = (
+    "Generate a monthly budget allocation as percentages summing to exactly 100. "
+    "User context: {'monthly_income': 5000}. Answers: {'savings_goal': 'yes'}. "
+    "Return ONLY a JSON object mapping category names to integer percentages. "
+    'Example: {"housing": 30, "food": 20, "savings": 20, "transport": 10, '
+    '"entertainment": 10, "utilities": 5, "other": 5}'
+)
+
+
+def test_budget_allocation_prompt_matches_hardcoded_output():
+    """US3 acceptance #1 — template matches the old inline prompt incl. example JSON."""
+    rendered = get_budget_allocation_prompt().render(
+        user_context={"monthly_income": 5000}, answers={"savings_goal": "yes"}
+    )
+    assert rendered == _GOLDEN_BUDGET
+    # The example JSON percentage breakdown must remain present and unescaped.
+    assert '{"housing": 30, "food": 20' in rendered
+    assert "&quot;" not in rendered
