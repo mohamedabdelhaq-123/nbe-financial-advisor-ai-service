@@ -33,12 +33,28 @@
 # upstream's own CHANGEME convention) — fine for local/dev per this feature's
 # scope (spec Assumptions: local/dev only), but must be overridden via `.env`
 # for anything longer-lived.
+#
+# postgres/clickhouse/redis/minio/langfuse-worker sit only on langfuse-internal
+# below, not the project's `default` network — `docker-compose.dev.yml`/
+# `docker-compose.prod.yml` point `default` at the external nbe-dev/nbe-prod
+# network shared with the backend repo's own stack, which runs its own
+# `postgres`/`redis` services there too. Compose aliases every service to its
+# short name on every network it joins, so if this stack's `postgres`/`redis`
+# joined `default` as well, they'd collide with the backend's same-named
+# containers and Docker's embedded DNS could resolve `postgres`/`redis` to
+# either one non-deterministically — confirmed against a real dual-stack run,
+# where that had the Langfuse services' DB connections landing on the
+# backend's Postgres and failing auth (different credentials, no `langfuse`
+# role). `langfuse-web` alone stays on `default` too, since ai-service reaches
+# it at `http://langfuse-web:3000` (.env.example) and the host port publish
+# below is unaffected by network membership either way.
 
 services:
   langfuse-worker:
     image: docker.io/langfuse/langfuse-worker:${LANGFUSE_VERSION:-3.222.0}
     restart: unless-stopped
     profiles: ["observability"]
+    networks: ["langfuse-internal"]
     depends_on: &langfuse-depends-on
       postgres:
         condition: service_healthy
@@ -85,39 +101,29 @@ services:
     image: docker.io/langfuse/langfuse:${LANGFUSE_VERSION:-3.222.0}
     restart: unless-stopped
     profiles: ["observability"]
+    networks: ["default", "langfuse-internal"]
     depends_on: *langfuse-depends-on
     ports:
       - "3000:3000"
     environment:
       <<: *langfuse-worker-env
+      # Next.js's standalone server.js binds to `process.env.HOSTNAME`,
+      # which Docker auto-sets to the container ID and which /etc/hosts then
+      # resolves to whichever network's IP appears first for that hostname —
+      # ambiguous now that this service sits on two networks (default +
+      # langfuse-internal). Pinning it to 0.0.0.0 binds all interfaces so it
+      # stays reachable from both regardless of network attach order
+      # (confirmed by hand: without this, it silently bound only to the
+      # langfuse-internal IP and became unreachable from ai-service).
+      HOSTNAME: "0.0.0.0"
       NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET:-change-me-nextauth-secret}
-      # Headless initialization (Langfuse's own first-class bootstrap:
-      # https://langfuse.com/self-hosting/administration/headless-initialization)
-      # — auto-creates the org/project/admin user/API-key pair on first boot,
-      # idempotently skipped on later restarts if they already exist. Removes
-      # the manual UI signup step entirely (spec SC-003, US3-AS1). The key
-      # pair reuses this repo's own LANGFUSE_PUBLIC_KEY/LANGFUSE_SECRET_KEY so
-      # the same values that provision the project here are exactly what
-      # ai-service (compose/docker-compose.yml) authenticates with — one pair
-      # to set, not two.
-      LANGFUSE_INIT_ORG_ID: ${LANGFUSE_INIT_ORG_ID:-nbe-ai-service}
-      LANGFUSE_INIT_ORG_NAME: ${LANGFUSE_INIT_ORG_NAME:-NBE AI Service}
-      LANGFUSE_INIT_PROJECT_ID: ${LANGFUSE_INIT_PROJECT_ID:-nbe-ai-service}
-      LANGFUSE_INIT_PROJECT_NAME: ${LANGFUSE_INIT_PROJECT_NAME:-NBE AI Service}
-      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-pk-lf-00000000-0000-0000-0000-000000000000}
-      LANGFUSE_INIT_PROJECT_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-sk-lf-00000000-0000-0000-0000-000000000000}
-      LANGFUSE_INIT_USER_EMAIL: ${LANGFUSE_INIT_USER_EMAIL:-admin@localhost}
-      LANGFUSE_INIT_USER_NAME: ${LANGFUSE_INIT_USER_NAME:-Admin}
-      LANGFUSE_INIT_USER_PASSWORD: ${LANGFUSE_INIT_USER_PASSWORD:-change-me-langfuse-admin-pass}
-      # The account above is always seeded on boot, so self-service signup is
-      # never needed — closed by default (FR-007). Flip to false only to
-      # interactively create additional accounts.
       LANGFUSE_AUTH_DISABLE_SIGNUP: ${LANGFUSE_AUTH_DISABLE_SIGNUP:-true}
 
   postgres:
     image: docker.io/postgres:${LANGFUSE_POSTGRES_VERSION:-17.10}
     restart: unless-stopped
     profiles: ["observability"]
+    networks: ["langfuse-internal"]
     environment:
       TZ: UTC
       PGTZ: UTC
@@ -136,6 +142,7 @@ services:
     image: docker.io/clickhouse/clickhouse-server:${LANGFUSE_CLICKHOUSE_VERSION:-25.8.28.1}
     restart: unless-stopped
     profiles: ["observability"]
+    networks: ["langfuse-internal"]
     user: "101:101"
     environment:
       TZ: UTC
@@ -156,6 +163,7 @@ services:
     image: docker.io/redis:${LANGFUSE_REDIS_VERSION:-7.4.9}
     restart: unless-stopped
     profiles: ["observability"]
+    networks: ["langfuse-internal"]
     command: >
       --requirepass ${LANGFUSE_REDIS_AUTH:-change-me-redis-pass}
       --maxmemory-policy noeviction
@@ -171,6 +179,7 @@ services:
     image: docker.io/minio/minio:${LANGFUSE_MINIO_VERSION:-RELEASE.2025-09-07T16-13-09Z}
     restart: unless-stopped
     profiles: ["observability"]
+    networks: ["langfuse-internal"]
     entrypoint: sh
     command: -c 'mkdir -p /data/langfuse && minio server --address ":9000" --console-address ":9001" /data'
     environment:
@@ -184,6 +193,13 @@ services:
       start_period: 1s
     volumes:
       - langfuse_minio_data:/data
+
+networks:
+  # Private to this sub-stack — see the top-of-file comment on why
+  # postgres/clickhouse/redis/minio/langfuse-worker must not also sit on
+  # `default`. Compose names it uniquely per-project; nothing outside this
+  # stack ever needs to reference it by name.
+  langfuse-internal:
 
 volumes:
   langfuse_postgres_data:
