@@ -16,6 +16,7 @@ from fastapi import FastAPI
 from app.core import logging as app_logging
 from app.core import observability as app_observability
 from app.core import system
+from app.core.logging import get_logger
 from app.core.request_logging import RequestLoggingMiddleware
 from app.features.analytics import router as analytics
 from app.features.chat import router as chat
@@ -27,6 +28,8 @@ from app.features.transactions import router as transactions
 
 app_logging.configure()
 app_observability.configure()
+
+logger = get_logger(__name__)
 
 
 def _resolve_version() -> str:
@@ -66,14 +69,15 @@ _DESCRIPTION = (
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
-    try:
-        from app.features.chat.checkpointer import build_checkpointer, setup_checkpointer
+    from app.features.chat.checkpointer import build_checkpointer, setup_checkpointer
 
+    try:
         saver = await build_checkpointer()
         await setup_checkpointer(saver)
-        app.state.checkpointer = saver
     except Exception:
-        app.state.checkpointer = None
+        logger.exception("checkpointer_setup_failed")
+        raise
+    app.state.checkpointer = saver
     yield
     if hasattr(app.state, "checkpointer") and app.state.checkpointer is not None:
         saver = app.state.checkpointer
