@@ -17,7 +17,7 @@ def test_embeddings_200_single_input(client, auth_headers):
     assert datum["object"] == "embedding"
     assert datum["index"] == 0
     assert len(datum["embedding"]) == 768
-    assert body["model"] == settings.embedding_model_name
+    assert body["model"] == settings.embeddings.model_name
     assert body["object"] == "list"
     assert body["usage"]["prompt_tokens"] > 0
     assert body["usage"]["total_tokens"] == body["usage"]["prompt_tokens"]

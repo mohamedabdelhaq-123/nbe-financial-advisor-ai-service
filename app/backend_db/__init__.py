@@ -16,10 +16,13 @@ authorized exceptions, never writes them. Enforcement is layered:
     `monthly_summaries` (full CRUD). Every other feature reading through this
     module stays strictly read-only.
 
-The engine is created lazily: it is built only when the backend DB is
-configured, so unit tests and CI (which fixture/mock backend data) need no live
-backend. Backend tables are represented as generated typed models in
-`app.backend_db.models` — regenerated directly from the live read-only backend by
+The engine is created lazily on first use. `Settings.backend_database_url`
+is non-Optional and guaranteed set at startup by `BackendDbSettings`' own
+validator, so this module never has to branch on a missing URL — unit tests
+and CI fixture/mock backend data bypass this engine entirely via
+`monkeypatch.setattr("app.backend_db.get_backend_session", ...)`. Backend
+tables are represented as generated typed models in `app.backend_db.models`
+— regenerated directly from the live read-only backend by
 `scripts/gen_backend_models.py` (never hand-edited; see Constitution Principle IV)
 — a shared contract used across feature slices.
 """
@@ -46,16 +49,13 @@ _sessionmaker: async_sessionmaker[AsyncSession] | None = None
 
 
 def _ensure_engine() -> async_sessionmaker[AsyncSession]:
-    """Build the read-only engine on first use, or fail loudly if unconfigured."""
+    """Build the read-only engine on first use.
+
+    No missing-config check needed — see module docstring on `backend_database_url`.
+    """
     global _engine, _sessionmaker
     if _sessionmaker is None:
-        url = settings.backend_database_url
-        if url is None:
-            raise RuntimeError(
-                "Backend database is not configured. Set BACKEND_DB_HOST/NAME/USER "
-                "(read-only role) to enable read access to backend-owned tables."
-            )
-        _engine = create_async_engine(url, pool_pre_ping=True)
+        _engine = create_async_engine(settings.backend_database_url, pool_pre_ping=True)
         _sessionmaker = async_sessionmaker(_engine, expire_on_commit=False)
     return _sessionmaker
 

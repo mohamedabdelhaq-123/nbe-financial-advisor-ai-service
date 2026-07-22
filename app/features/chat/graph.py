@@ -34,7 +34,7 @@ async def _general_node(state: ConversationState) -> dict:
     last_msg = state["messages"][-1] if state["messages"] else None
     text = last_msg.content if last_msg and hasattr(last_msg, "content") else ""
 
-    if settings.use_mock_llm:
+    if settings.chat_model.use_mock:
         reply = f"Thank you for your message. You said: '{text[:100]}'. How can I help you further?"
     else:
         from app.core.llm import get_chat_model

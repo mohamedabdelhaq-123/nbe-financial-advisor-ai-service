@@ -45,7 +45,7 @@ async def generate_plan(
     user_context: dict | None,
     answers: dict,
 ) -> list[BudgetAllocation]:
-    if settings.use_mock_llm:
+    if settings.chat_model.use_mock:
         return _mock_plan(answers)
 
     from app.core.llm import get_chat_model

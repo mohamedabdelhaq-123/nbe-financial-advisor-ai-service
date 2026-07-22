@@ -61,19 +61,20 @@ startup immediately rather than silently degrading).
 See `specs/013-langfuse-observability/quickstart.md` for the full validation
 walkthrough.
 
-### Production image smoke test
+### Production deployment
 
-To validate the hardened production image in isolation (fully mocked, no
-external dependencies — a fast pre-deploy sanity check, not the deploy path
-itself):
+`compose/docker-compose.prod.yml` is the real deployment path for this
+service: it builds the hardened `prod` image target and joins `nbe-prod`, the
+external network created by
+`nbe-financial-advisor-backend/deploy/docker-compose.yml` (that file no
+longer builds/runs ai-service itself), so `backend`/`celery-worker` there can
+reach it at `http://ai-service:8001`. All runtime config comes from `.env`,
+same as dev — see that file's header comment for the network prerequisite.
 
 ```bash
-make prod-smoke
+make prod-up    # build + start, detached
+make prod-down  # stop
 ```
-
-The platform is actually deployed via
-`nbe-financial-advisor-backend/deploy/docker-compose.yml`, which builds this repo's
-`prod` image target directly and wires it to the real Postgres/SeaweedFS stack.
 
 ## Backend mirror models
 

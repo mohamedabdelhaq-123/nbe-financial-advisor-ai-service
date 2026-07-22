@@ -166,7 +166,7 @@ async def test_happy_path_persists_markdown_and_content_list_with_tabular_struct
     )
 
     assert result.ocr_engine == "MinerU"
-    assert result.prefix == f"{settings.storage_s3_ocr_bucket}/{STATEMENT_ID}/"
+    assert result.prefix == f"{settings.storage.s3_ocr_bucket}/{STATEMENT_ID}/"
     assert result.confidence_score == 1.0
 
     put_keys = {key for _, key, _ in s3.put_calls}
@@ -347,7 +347,7 @@ async def test_offline_mode_setting_alone_routes_through_mock_mineru(monkeypatch
 
     s3 = _FakeS3()
     _patch_storage(monkeypatch, s3)
-    monkeypatch.setattr(mineru_client_module.settings, "use_mock_mineru", True)
+    monkeypatch.setattr(mineru_client_module.settings.mineru, "use_mock", True)
 
     await process_statement(
         session_gen=session_gen, own_session_gen=own_gen, statement_id=STATEMENT_ID

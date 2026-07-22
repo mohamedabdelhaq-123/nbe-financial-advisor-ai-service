@@ -28,12 +28,12 @@ def get_storage_backend():
     """
     return _session.client(
         "s3",
-        endpoint_url=settings.storage_s3_endpoint_url or None,
-        region_name=settings.storage_s3_region,
-        aws_access_key_id=settings.storage_s3_access_key,
-        aws_secret_access_key=settings.storage_s3_secret_key,
+        endpoint_url=settings.storage.s3_endpoint_url or None,
+        region_name=settings.storage.s3_region,
+        aws_access_key_id=settings.storage.s3_access_key.get_secret_value(),
+        aws_secret_access_key=settings.storage.s3_secret_key.get_secret_value(),
         config=Config(
-            s3={"addressing_style": "path" if settings.storage_s3_use_path_style else "virtual"},
+            s3={"addressing_style": "path" if settings.storage.s3_use_path_style else "virtual"},
             retries={"mode": "standard", "max_attempts": 5},
             connect_timeout=5,
             read_timeout=30,

@@ -31,13 +31,13 @@ def test_alembic_upgrade_head_against_real_postgres():
     with PostgresContainer("pgvector/pgvector:pg16") as pg:
         env = {
             **os.environ,
-            "POSTGRES_HOST": pg.get_container_host_ip(),
-            "POSTGRES_PORT": str(pg.get_exposed_port(5432)),
-            "POSTGRES_DB": pg.dbname,
-            "POSTGRES_USER": pg.username,
-            "POSTGRES_PASSWORD": pg.password,
+            "AI_SERVICE_OWN_DB__POSTGRES_HOST": pg.get_container_host_ip(),
+            "AI_SERVICE_OWN_DB__POSTGRES_PORT": str(pg.get_exposed_port(5432)),
+            "AI_SERVICE_OWN_DB__POSTGRES_DB": pg.dbname,
+            "AI_SERVICE_OWN_DB__POSTGRES_USER": pg.username,
+            "AI_SERVICE_OWN_DB__POSTGRES_PASSWORD": pg.password,
             # config fail-fast guards — irrelevant to migrations
-            "USE_MOCK_LLM": "1",
+            "AI_SERVICE_CHAT_MODEL__USE_MOCK": "1",
             "AI_SERVICE_TOKEN": "test-token-for-ci",
         }
         result = subprocess.run(

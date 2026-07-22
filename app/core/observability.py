@@ -107,6 +107,13 @@ class RedactionSpanProcessor(SpanProcessor):
                 redacted = _redact(value)
                 if redacted != value:
                     attributes._dict[key] = redacted  # noqa
+            elif isinstance(value, (list, tuple)) and all(isinstance(v, str) for v in value):
+                # E.g. OpenInference's `tag.tags` (langchain run tags), set as a
+                # real List[str] attribute rather than flattened indexed keys —
+                # Principle III's redaction is unconditional across all attributes.
+                redacted_seq = tuple(_redact(v) for v in value)
+                if redacted_seq != tuple(value):
+                    attributes._dict[key] = redacted_seq  # noqa
 
         feature = current_feature.get()
         if feature is not None:
@@ -128,10 +135,12 @@ def configure() -> None:
     research.md §4).
     """
     global _tracer_provider
-    if not settings.langfuse_enabled:
+    if _tracer_provider is not None:
+        return
+    if not settings.langfuse.enabled:
         return
     if not (
-        settings.langfuse_host and settings.langfuse_public_key and settings.langfuse_secret_key
+        settings.langfuse.host and settings.langfuse.public_key and settings.langfuse.secret_key
     ):
         logger.warning("observability_enabled_but_missing_connection_settings")
         return
@@ -147,10 +156,10 @@ def configure() -> None:
         # it (verified against the pinned opentelemetry-sdk version).
         # Passing headers as a dict sidesteps that parsing path entirely.
         credentials = base64.b64encode(
-            f"{settings.langfuse_public_key}:{settings.langfuse_secret_key}".encode()
+            f"{settings.langfuse.public_key}:{settings.langfuse.secret_key.get_secret_value()}".encode()
         ).decode()
         exporter = OTLPSpanExporter(
-            endpoint=f"{settings.langfuse_host.rstrip('/')}/api/public/otel/v1/traces",
+            endpoint=f"{settings.langfuse.host.rstrip('/')}/api/public/otel/v1/traces",
             headers={"Authorization": f"Basic {credentials}"},
         )
         provider = TracerProvider()

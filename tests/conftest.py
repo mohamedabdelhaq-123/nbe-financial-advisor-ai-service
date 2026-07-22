@@ -1,7 +1,7 @@
 """
 Shared test setup.
 
-The whole suite runs in mock mode (USE_MOCK_LLM=1) -- no API key, no model or
+The whole suite runs in mock mode (AI_SERVICE_CHAT_MODEL__USE_MOCK=1) -- no API key, no model or
 network calls. Environment must be set before the app is imported so config
 validation and the mock short-circuit see it.
 
@@ -10,21 +10,33 @@ No fixture performs real LLM or embedder calls.
 
 import os
 
-os.environ.setdefault("USE_MOCK_LLM", "1")
-os.environ.setdefault("OPENAI_BASE_URL", "https://api.openai.com/v1")
-os.environ.setdefault("OPENAI_API_KEY", "__mock__")
-os.environ.setdefault("MODEL_NAME", "gpt-4o-mini")
+os.environ.setdefault("AI_SERVICE_CHAT_MODEL__USE_MOCK", "1")
+os.environ.setdefault("AI_SERVICE_CHAT_MODEL__OPENAI_BASE_URL", "https://api.openai.com/v1")
+os.environ.setdefault("AI_SERVICE_CHAT_MODEL__OPENAI_API_KEY", "__mock__")
+os.environ.setdefault("AI_SERVICE_CHAT_MODEL__MODEL_NAME", "gpt-4o-mini")
 os.environ.setdefault("AI_SERVICE_TOKEN", "test-token-for-ci")
 # Dummy placeholders so config's fail-fast check passes offline; real values
 # (if a developer/CI exports them before running pytest) are left untouched
 # by setdefault and picked up by the real_s3_storage_env fixture below.
-os.environ.setdefault("STORAGE_S3_BUCKET", "pfm-statements-ocr")
-os.environ.setdefault("STORAGE_S3_ACCESS_KEY", "dev-seaweed-key")
-os.environ.setdefault("STORAGE_S3_SECRET_KEY", "dev-seaweed-secret")
+os.environ.setdefault("AI_SERVICE_STORAGE__S3_BUCKET", "pfm-statements-ocr")
+os.environ.setdefault("AI_SERVICE_STORAGE__S3_ACCESS_KEY", "dev-seaweed-key")
+os.environ.setdefault("AI_SERVICE_STORAGE__S3_SECRET_KEY", "dev-seaweed-secret")
 # Mock mode by default so config's fail-fast check passes offline; a
-# developer/CI run that exports real MINERU_API_URL/KEY beforehand is left
+# developer/CI run that exports real MINERU__API_URL/KEY beforehand is left
 # untouched by setdefault.
-os.environ.setdefault("USE_MOCK_MINERU", "1")
+os.environ.setdefault("AI_SERVICE_MINERU__USE_MOCK", "1")
+# Own-DB and backend-DB credentials are required at startup (research.md §4,
+# §6 — every real deployment sets them unconditionally). Fabricated
+# placeholders keep the offline test suite green; tests that actually
+# exercise backend code paths bypass `_ensure_engine()` via monkeypatch.setattr
+# on `get_backend_session`, so these placeholders never need to resolve.
+os.environ.setdefault("AI_SERVICE_OWN_DB__POSTGRES_DB", "test-ai-appdb")
+os.environ.setdefault("AI_SERVICE_OWN_DB__POSTGRES_USER", "test-ai-user")
+os.environ.setdefault("AI_SERVICE_OWN_DB__POSTGRES_PASSWORD", "test-ai-pass")
+os.environ.setdefault("AI_SERVICE_BACKEND_DB__HOST", "test-backend-db")
+os.environ.setdefault("AI_SERVICE_BACKEND_DB__NAME", "test-backend-appdb")
+os.environ.setdefault("AI_SERVICE_BACKEND_DB__USER", "test-backend-role")
+os.environ.setdefault("AI_SERVICE_BACKEND_DB__PASSWORD", "test-backend-pass")
 
 from shutil import which
 
@@ -191,23 +203,33 @@ def mock_backend_session(own_pg):
 def real_s3_storage_env(monkeypatch):
     """Point `settings` at a real, already-running S3-compatible instance.
 
-    Skips unless STORAGE_S3_ENDPOINT_URL/BUCKET/ACCESS_KEY/SECRET_KEY are all
-    set in the real environment (not the dummy defaults above), keeping the
-    default test run fully offline per the mock-first constitution principle.
+    Skips unless AI_SERVICE_STORAGE__S3_ENDPOINT_URL/BUCKET/ACCESS_KEY/SECRET_KEY
+    are all set in the real environment (not the dummy defaults above), keeping
+    the default test run fully offline per the mock-first constitution principle.
     """
-    endpoint = os.environ.get("STORAGE_S3_ENDPOINT_URL")
-    bucket = os.environ.get("STORAGE_S3_BUCKET")
-    access_key = os.environ.get("STORAGE_S3_ACCESS_KEY")
-    secret_key = os.environ.get("STORAGE_S3_SECRET_KEY")
+    endpoint = os.environ.get("AI_SERVICE_STORAGE__S3_ENDPOINT_URL") or os.environ.get(
+        "STORAGE_S3_ENDPOINT_URL"
+    )
+    bucket = os.environ.get("AI_SERVICE_STORAGE__S3_BUCKET") or os.environ.get("STORAGE_S3_BUCKET")
+    access_key = os.environ.get("AI_SERVICE_STORAGE__S3_ACCESS_KEY") or os.environ.get(
+        "STORAGE_S3_ACCESS_KEY"
+    )
+    secret_key = os.environ.get("AI_SERVICE_STORAGE__S3_SECRET_KEY") or os.environ.get(
+        "STORAGE_S3_SECRET_KEY"
+    )
     if not (endpoint and bucket and access_key and secret_key):
-        pytest.skip("Real STORAGE_S3_* env vars not configured")
+        pytest.skip("Real AI_SERVICE_STORAGE__S3_* env vars not configured")
 
     from app.core.config import settings
 
-    monkeypatch.setattr(settings, "storage_s3_endpoint_url", endpoint)
-    monkeypatch.setattr(settings, "storage_s3_bucket", bucket)
-    monkeypatch.setattr(settings, "storage_s3_access_key", access_key)
-    monkeypatch.setattr(settings, "storage_s3_secret_key", secret_key)
+    monkeypatch.setattr(settings.storage, "s3_endpoint_url", endpoint)
+    monkeypatch.setattr(settings.storage, "s3_bucket", bucket)
+    monkeypatch.setattr(settings.storage, "s3_access_key", access_key)
+    monkeypatch.setattr(settings.storage, "s3_secret_key", secret_key)
     monkeypatch.setattr(
-        settings, "storage_s3_region", os.environ.get("STORAGE_S3_REGION", "us-east-1")
+        settings.storage,
+        "s3_region",
+        os.environ.get(
+            "AI_SERVICE_STORAGE__S3_REGION", os.environ.get("STORAGE_S3_REGION", "us-east-1")
+        ),
     )

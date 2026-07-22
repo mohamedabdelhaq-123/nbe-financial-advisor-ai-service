@@ -26,9 +26,9 @@ async def create_embeddings(body: EmbeddingRequest):
     except Exception as exc:
         raise HTTPException(502, detail="Embedding provider unavailable") from exc
 
-    n = count_tokens(body.input, settings.embedding_model_name)
+    n = count_tokens(body.input, settings.embeddings.model_name)
     return EmbeddingResponse(
         data=[EmbeddingDatum(embedding=v, index=i) for i, v in enumerate(vectors)],
-        model=settings.embedding_model_name,
+        model=settings.embeddings.model_name,
         usage=EmbeddingUsage(prompt_tokens=n, total_tokens=n),
     )

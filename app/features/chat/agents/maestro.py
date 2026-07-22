@@ -61,7 +61,7 @@ async def maestro_node(state: ConversationState) -> dict:
     if last_msg and hasattr(last_msg, "content") and isinstance(last_msg.content, str):
         text = last_msg.content
 
-    if settings.use_mock_llm:
+    if settings.chat_model.use_mock:
         intent = classify_intent(text)
     else:
         from app.core.llm import get_chat_model

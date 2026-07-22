@@ -3,6 +3,8 @@
 import asyncio
 from collections.abc import AsyncIterator
 
+from langchain_core.messages import HumanMessage
+
 from app.core.logging import get_logger
 from app.features.chat.schemas import (
     ChatTurnRequest,
@@ -43,7 +45,7 @@ async def stream_chat(app, request: ChatTurnRequest) -> AsyncIterator[str]:
 
     checkpointer = getattr(app.state, "checkpointer", None)
 
-    if settings.use_mock_llm:
+    if settings.chat_model.use_mock:
         # FR-011: mock mode adopts the same envelope (one token batch + one done).
         mock_content = f"Mock response to: {request.message[:50]}"
         yield f"data: {TokenEvent(data=mock_content).model_dump_json()}\n\n"
@@ -63,7 +65,7 @@ async def stream_chat(app, request: ChatTurnRequest) -> AsyncIterator[str]:
     snapshot = await graph.aget_state(config)
     prev_values = snapshot.values if snapshot else {}
 
-    initial_messages = [request.message]
+    initial_messages = [HumanMessage(content=request.message)]
     conversation_context = (
         request.initial_context
         if request.initial_context is not None

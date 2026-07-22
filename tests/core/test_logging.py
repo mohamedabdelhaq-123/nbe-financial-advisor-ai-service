@@ -80,7 +80,7 @@ def test_redaction_processor_masks_denylisted_fields():
 
 
 def test_redaction_applies_regardless_of_debug_flag(monkeypatch):
-    monkeypatch.setattr(settings, "log_debug_include_raw_content", True)
+    monkeypatch.setattr(settings.logging, "debug_include_raw_content", True)
     logger = _fresh_logger()
     with _capture_logs() as entries:
         logger.debug("debug_call", api_key="still-secret")
@@ -89,12 +89,12 @@ def test_redaction_applies_regardless_of_debug_flag(monkeypatch):
 
 
 def test_raw_content_fields_empty_by_default():
-    assert settings.log_debug_include_raw_content is False
+    assert settings.logging.debug_include_raw_content is False
     assert raw_content_fields(prompt="hello", completion="world") == {}
 
 
 def test_raw_content_fields_included_when_debug_flag_enabled(monkeypatch):
-    monkeypatch.setattr(settings, "log_debug_include_raw_content", True)
+    monkeypatch.setattr(settings.logging, "debug_include_raw_content", True)
     assert raw_content_fields(prompt="hello") == {"prompt": "hello"}
 
 

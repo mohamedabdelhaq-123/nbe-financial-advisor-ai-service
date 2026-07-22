@@ -100,14 +100,14 @@ def test_get_mineru_client_returns_mock_when_use_mock_mineru(monkeypatch):
     # this module (imported before the reload) no longer shares.
     import app.features.ingestion.mineru_client as mineru_client_module
 
-    monkeypatch.setattr(mineru_client_module.settings, "use_mock_mineru", True)
+    monkeypatch.setattr(mineru_client_module.settings.mineru, "use_mock", True)
     assert isinstance(get_mineru_client(), MockMineruClient)
 
 
 def test_get_mineru_client_returns_http_when_not_mock(monkeypatch):
     import app.features.ingestion.mineru_client as mineru_client_module
 
-    monkeypatch.setattr(mineru_client_module.settings, "use_mock_mineru", False)
+    monkeypatch.setattr(mineru_client_module.settings.mineru, "use_mock", False)
     assert isinstance(get_mineru_client(), HttpMineruClient)
 
 
