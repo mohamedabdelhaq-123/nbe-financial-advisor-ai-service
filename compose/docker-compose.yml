@@ -27,6 +27,21 @@ services:
     env_file:
       - ../.env       # holds AI_SERVICE_CHAT_MODEL__OPENAI_API_KEY etc. — gitignored
 
+  langfuse-web:
+    environment:
+      # Headless initialization (Langfuse's own first-class bootstrap:
+      # https://langfuse.com/self-hosting/administration/headless-initialization)
+      # — auto-creates the org/project/admin user/API-key pair on first boot,
+      LANGFUSE_INIT_ORG_ID: ${LANGFUSE_INIT_ORG_ID:-nbe-ai-service}
+      LANGFUSE_INIT_ORG_NAME: ${LANGFUSE_INIT_ORG_NAME:-NBE AI Service}
+      LANGFUSE_INIT_PROJECT_ID: ${LANGFUSE_INIT_PROJECT_ID:-nbe-ai-service}
+      LANGFUSE_INIT_PROJECT_NAME: ${LANGFUSE_INIT_PROJECT_NAME:-NBE AI Service}
+      LANGFUSE_INIT_USER_EMAIL: ${LANGFUSE_INIT_USER_EMAIL:-admin@localhost.local}
+      LANGFUSE_INIT_USER_NAME: ${LANGFUSE_INIT_USER_NAME:-Admin}
+      LANGFUSE_INIT_USER_PASSWORD: ${LANGFUSE_INIT_USER_PASSWORD:-change-me-langfuse-admin-pass}
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-pk-lf-00000000-0000-0000-0000-000000000000}
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-sk-lf-00000000-0000-0000-0000-000000000000}
+
   mineru-server:
     extends:
       file: mineru/docker-compose.yml
