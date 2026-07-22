@@ -11,7 +11,7 @@ Every variable name is `GROUP__FIELD` (double underscore, matching `pydantic-set
 | Environment | Authoritative source | Mechanism |
 |---|---|---|
 | Local development / `make dev-up*` | This repo's `.env` (gitignored, copied from `.env.example`) | `env_file: ../.env` on the `ai-service` service in `compose/docker-compose.yml` |
-| `make prod-smoke` (local/CI hardened-image gate) | `compose/docker-compose.prod.yml`'s own `environment:` block | Deterministic override (research.md §1) — intentionally bypasses `.env` |
+| `make prod-up` (real production deploy, joins `nbe-prod`) | This repo's `.env` (same as dev) | `env_file: ../.env` inherited from the base file; `compose/docker-compose.prod.yml` pins no `environment:` block of its own |
 | CI (`.github/workflows/ci.yml` + `tests/conftest.py`) | Workflow `env:` block + `conftest.py`'s `os.environ.setdefault(...)` fabricated placeholders | Neither reads `.env` |
 | Real production deployment | `nbe-financial-advisor-backend/deploy/.env` (that repo's own, separate file) | `nbe-financial-advisor-backend/deploy/docker-compose.yml`'s `ai-service` `environment:` block (literal `${VAR:-default}` entries, no `env_file`) |
 

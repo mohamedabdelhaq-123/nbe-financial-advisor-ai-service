@@ -42,10 +42,11 @@ curl -s -H "Authorization: Bearer $AI_SERVICE_TOKEN" http://localhost:8001/some-
 ## 4. Deterministic override still works (validates US2-AS3, FR-008)
 
 ```sh
-make prod-smoke   # or: docker compose -f compose/docker-compose.yml -f compose/docker-compose.prod.yml up --build
+make prod-up   # or: docker compose -f compose/docker-compose.yml -f compose/docker-compose.prod.yml up --build -d
+make prod-down
 ```
 
-**Expected**: boots successfully using `docker-compose.prod.yml`'s pinned dummy values (renamed per contract §1's naming convention) regardless of whatever is in the local `.env` — confirms the merge-precedence behavior from research.md §1 still holds with the base file's `environment:` block removed.
+**Expected**: boots successfully sourced only from `.env` (via the base file's `env_file:`) — `docker-compose.prod.yml` pins no `environment:` block of its own, so the prod overlay adds no second, potentially-conflicting source of configuration. Requires the external `nbe-prod` network to exist first (see `docker-compose.prod.yml`'s header comment).
 
 ## 5. Credentials never render in plaintext (validates US3, FR-006, SC-004)
 

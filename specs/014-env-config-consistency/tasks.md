@@ -40,7 +40,7 @@
 - [X] T009 [P] Update `mineru` group call sites to the new `settings.mineru.*` paths (`use_mock`, `api_url`, `api_key`) in: `app/core/system.py`, `app/features/ingestion/mineru_client.py`
 - [X] T010 [P] Update `langfuse` group call sites to the new `settings.langfuse.*` paths (`enabled`, `host`, `public_key`, `secret_key`) in: `app/core/observability.py`
 - [X] T011 [P] Update `logging` group call sites to the new `settings.logging.*` paths (`level`, `debug_include_raw_content`) in: `app/core/logging.py`
-- [X] T012 Update `.env.example` variable names to the new `GROUP__FIELD` scheme per data-model.md's old→new mapping (rename only — do not yet add the missing `BACKEND_DB__NAME`, that's T042)
+- [X] T012 Update `.env.example` variable names to the new `GROUP__FIELD` scheme per data-model.md's old→new mapping (rename only — do not yet add the missing `BACKEND_DB__NAME`, that's T041)
 - [X] T013 Update `compose/docker-compose.prod.yml`'s pinned `environment:` keys (`POSTGRES_HOST`, `BACKEND_DB_HOST`, `STORAGE_S3_*`, `USE_MOCK_LLM`→`CHAT_MODEL__USE_MOCK`, `USE_MOCK_MINERU`→`MINERU__USE_MOCK`, etc.) to the new `GROUP__FIELD` names, same literal values
 - [X] T014 Update `deploy/docker-compose.yml`'s `ai-service` `environment:` block (lines ~204-241) to the new `GROUP__FIELD` names, same `${VAR:-default}` values/defaults, and `deploy/.env.example` for any of those vars it documents (research.md §7, contracts/env-var-contract.md §4)
 - [X] T015 Update `tests/conftest.py`'s `os.environ.setdefault(...)` calls to the new `GROUP__FIELD` names for the vars it currently fabricates (`USE_MOCK_LLM`→`CHAT_MODEL__USE_MOCK`, `OPENAI_BASE_URL`→`CHAT_MODEL__OPENAI_BASE_URL`, `OPENAI_API_KEY`→`CHAT_MODEL__OPENAI_API_KEY`, `MODEL_NAME`→`CHAT_MODEL__MODEL_NAME`, `STORAGE_S3_BUCKET`→`STORAGE__S3_BUCKET`, `STORAGE_S3_ACCESS_KEY`→`STORAGE__S3_ACCESS_KEY`, `STORAGE_S3_SECRET_KEY`→`STORAGE__S3_SECRET_KEY`, `USE_MOCK_MINERU`→`MINERU__USE_MOCK`), keeping the same fabricated values
@@ -82,13 +82,13 @@
 
 **Goal**: The environment file is the only place that sets `ai-service`'s own configuration for normal operation; compose no longer declares a parallel, potentially-conflicting default; deterministic test-isolation overrides (`docker-compose.prod.yml`) still work.
 
-**Independent Test**: quickstart.md steps 2–4 — set a non-default value in `.env`, confirm it takes effect with no compose-level override in the way; confirm `make prod-smoke` still boots deterministically regardless of `.env`.
+**Independent Test**: quickstart.md steps 2–4 — set a non-default value in `.env`, confirm it takes effect with no compose-level override in the way; confirm `make prod-up` still boots deterministically off `.env` alone, since `docker-compose.prod.yml` pins no `environment:` block of its own.
 
 ### Implementation for User Story 2
 
 - [X] T029 [US2] In `compose/docker-compose.yml`, delete the `ai-service` service's entire `environment:` block (all `OPENAI_BASE_URL`/`MODEL_NAME`/`USE_MOCK_LLM`/`POSTGRES_*`/`BACKEND_DB_*` — already renamed as of T013, but by this point the whole block is removed, not just renamed), leaving only `build: ..` and `env_file: ../.env`
 - [X] T030 [US2] In `compose/docker-compose.yml`, remove the orphaned Langfuse comment block (originally explaining the `LANGFUSE_*` lines removed in an earlier change) that now sits above the `own_db`-equivalent lines with no matching content
-- [X] T031 [US2] Run `docker compose -f compose/docker-compose.yml -f compose/docker-compose.prod.yml up --build` (`make prod-smoke`) and confirm it still boots successfully using only `docker-compose.prod.yml`'s renamed pinned values (T013), regardless of local `.env` contents — confirms the merge-precedence behavior from research.md §1 holds with the base file's `environment:` block gone
+- [X] T031 [US2] Run `make prod-build && make prod-up` (or `docker compose -f compose/docker-compose.yml -f compose/docker-compose.prod.yml up --build -d`, requires the external `nbe-prod` network — see `compose/docker-compose.prod.yml`'s header) and confirm it boots successfully sourced only from `.env` via the base file's `env_file:` — `docker-compose.prod.yml` pins no `environment:` block of its own, so the prod overlay has no second source of configuration either; `make prod-down` to stop
 
 **Checkpoint**: quickstart.md steps 2–4 pass. User Stories 1 AND 2 both work independently.
 
