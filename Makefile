@@ -28,7 +28,7 @@ dev-up-observability: ## Start the dev stack plus local self-hosted Langfuse (co
 # --profile observability here too, so this also tears down the Langfuse
 # containers if dev-up-observability was used — a no-op otherwise.
 dev-down: ## Stop the dev stack (including Langfuse, if it was started)
-	$(COMPOSE) -f compose/docker-compose.dev.yml --profile observability down
+	$(COMPOSE) -f compose/docker-compose.dev.yml --profile observability down -v
 
 prod-build: ## Build the hardened prod image
 	$(COMPOSE) -f compose/docker-compose.prod.yml build
