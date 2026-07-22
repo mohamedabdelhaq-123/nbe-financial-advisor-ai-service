@@ -13,15 +13,15 @@ Usage (the `codegen` dependency group carries the pinned generator + sync driver
     uv run --group codegen python scripts/gen_backend_models.py \
         --tables auth_user accounts_account
 
-Connection is read from the same BACKEND_DB_* settings the app uses — from the
-repo's `.env` and/or the environment (real env vars override `.env`) — but built
-as a SYNC psycopg URL (sqlacodegen reflects synchronously). The app runtime stays
-asyncpg-only; psycopg lives only in the `codegen` group.
+Connection is read from the same AI_SERVICE_BACKEND_DB__* settings the app uses
+— from the repo's `.env` and/or the environment (real env vars override `.env`)
+— but built as a SYNC psycopg URL (sqlacodegen reflects synchronously). The app
+runtime stays asyncpg-only; psycopg lives only in the `codegen` group.
 
 NOTE: the value must be reachable from wherever you run this. Inside the compose
-network BACKEND_DB_HOST is `postgres`; from the host use a reachable host/port
-(the postgres container IP, or a published port) — override on the command line
-or in `.env`.
+network AI_SERVICE_BACKEND_DB__HOST is `postgres`; from the host use a reachable
+host/port (the postgres container IP, or a published port) — override on the
+command line or in `.env`.
 
 When --tables is omitted (mirror the whole schema), Django's own
 framework-internal tables (auth_group, auth_permission, django_migrations,
@@ -45,6 +45,7 @@ from pathlib import Path
 from typing import NoReturn
 from urllib.parse import quote
 
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy import create_engine, inspect
 
@@ -68,22 +69,33 @@ DJANGO_INTERNAL_TABLES = {
 
 
 class _BackendDBEnv(BaseSettings):
-    """The app's BACKEND_DB_* settings, read from `.env` and the environment.
+    """The app's AI_SERVICE_BACKEND_DB__* settings, read from `.env` and the environment.
 
-    Scoped deliberately: importing `app.core.config` would trip its unrelated
-    fail-fast (e.g. AI_SERVICE_TOKEN). This mirrors only the backend-DB fields so
-    regeneration needs nothing but a reachable read-only backend. Real environment
-    variables take precedence over `.env`, so a one-off override still works.
+    Mirrors only the field names/prefix that app.core.config.BackendDbSettings
+    actually uses — not a real import of it. Importing `app.core.config` would
+    trip its unrelated fail-fast (e.g. AI_SERVICE_TOKEN, storage creds): that
+    module eagerly builds the full `Settings()` at import time. This class reads
+    the same env vars a real deployment sets, scoped to just what regeneration
+    needs, so a reachable read-only backend is the only precondition. Real
+    environment variables take precedence over `.env`, so a one-off override
+    still works.
     """
 
-    backend_db_host: str = ""
-    backend_db_port: str = "5432"
-    backend_db_name: str = ""
-    backend_db_user: str = ""
-    backend_db_password: str = ""
-    backend_db_schema: str = ""
+    host: str = ""
+    port: str = "5432"
+    name: str = ""
+    user: str = ""
+    password: SecretStr = SecretStr("")
+    # No equivalent field in app.core.config.BackendDbSettings — schema is a
+    # codegen-only knob, so it deliberately stays outside the AI_SERVICE_
+    # prefix rather than implying config.py recognizes it too.
+    backend_db_schema: str = Field(default="", validation_alias="BACKEND_DB_SCHEMA")
 
-    model_config = SettingsConfigDict(env_file=str(REPO_ROOT / ".env"), extra="ignore")
+    model_config = SettingsConfigDict(
+        env_prefix="AI_SERVICE_BACKEND_DB__",
+        env_file=str(REPO_ROOT / ".env"),
+        extra="ignore",
+    )
 
 
 GENERATED_HEADER = '''"""
@@ -104,23 +116,25 @@ def _fail(msg: str) -> NoReturn:
 
 
 def _sync_backend_url(env: _BackendDBEnv) -> str:
-    """Build a SYNC psycopg URL from the BACKEND_DB_* settings, or fail loudly."""
+    """Build a SYNC psycopg URL from the AI_SERVICE_BACKEND_DB__* settings, or fail loudly."""
     host, name, user = (
-        env.backend_db_host.strip(),
-        env.backend_db_name.strip(),
-        env.backend_db_user.strip(),
+        env.host.strip(),
+        env.name.strip(),
+        env.user.strip(),
     )
     if not (host and name and user):
         _fail(
-            "backend database is not configured. Set BACKEND_DB_HOST, "
-            "BACKEND_DB_NAME and BACKEND_DB_USER (a READ-ONLY role), plus "
-            "BACKEND_DB_PASSWORD/BACKEND_DB_PORT as needed, in .env or the "
-            "environment before regenerating."
+            "backend database is not configured. Set AI_SERVICE_BACKEND_DB__HOST, "
+            "AI_SERVICE_BACKEND_DB__NAME and AI_SERVICE_BACKEND_DB__USER (a "
+            "READ-ONLY role), plus AI_SERVICE_BACKEND_DB__PASSWORD/"
+            "AI_SERVICE_BACKEND_DB__PORT as needed, in .env or the environment "
+            "before regenerating."
         )
-    port = env.backend_db_port.strip() or "5432"
+    port = env.port.strip() or "5432"
     auth = quote(user, safe="")
-    if env.backend_db_password:
-        auth += f":{quote(env.backend_db_password, safe='')}"
+    password = env.password.get_secret_value()
+    if password:
+        auth += f":{quote(password, safe='')}"
     return f"postgresql+psycopg://{auth}@{host}:{port}/{name}"
 
 
