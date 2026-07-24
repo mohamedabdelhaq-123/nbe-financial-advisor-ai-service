@@ -10,6 +10,8 @@ checks spanning two groups live on the root `Settings` model_validator instead,
 since only it has both groups in scope.
 """
 
+from typing import Literal
+
 from pydantic import BaseModel, Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -22,6 +24,15 @@ class ChatModelSettings(BaseModel):
     openai_base_url: str = "https://api.openai.com/v1"
     openai_api_key: SecretStr = SecretStr("__mock__")  # placeholder — unused in mock mode
     model_name: str = "gpt-4o-mini"
+    # Selects the active statement-normalization strategy (`NormalizerClient`
+    # implementation). One member today; the documented swap point for a
+    # future second strategy. A `Literal` so an invalid value is a Pydantic
+    # parse-time failure, not a runtime one (Constitution VII fail-fast).
+    normalizer_strategy: Literal["chunked_langgraph"] = "chunked_langgraph"
+    # Estimated output tokens per extracted transaction row; drives the
+    # row-cap formula in chunking.py (FR-007). `gt=0` so a zero/negative
+    # value can't silently produce a zero-row chunk cap.
+    normalization_est_tokens_per_row: int = Field(default=450, gt=0)
     # How many chunks statement normalization processes concurrently. Keep
     # low for a constrained per-minute token budget; raise once the
     # configured provider/tier can absorb more concurrent throughput.
