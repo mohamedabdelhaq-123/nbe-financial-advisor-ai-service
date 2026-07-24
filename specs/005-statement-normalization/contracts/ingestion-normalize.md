@@ -1,5 +1,12 @@
 # Contract: `POST /internal/ingestion/normalize`
 
+> **SUPERSEDED** — the response (`normalized_json`) shape was revised by
+> `specs/016-normalizer-pipeline-rework` (FR-001/FR-002/FR-003/FR-011): the
+> `account_hint` field is now `account_number` (unmasked), `extra_fields` is a
+> JSON object (not a list of pairs), and transactions carry dedicated
+> `balance`/`merchant_normalized` fields. See the revised contract at
+> `specs/016-normalizer-pipeline-rework/contracts/ingestion-normalize.md`.
+
 Internal endpoint, called only by the Django backend. Requires the same shared-secret Bearer token
 as every other internal route (`require_token`).
 
