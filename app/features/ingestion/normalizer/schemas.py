@@ -23,16 +23,27 @@ class ExtractedTransaction(BaseModel):
     merchant_raw: str
     ai_description: str = Field(
         description=(
-            "A verbose, natural-language description of this transaction — several "
-            "sentences, not a restatement of merchant_raw. Cover what the transaction "
-            "likely was for, the merchant/counterparty, and any other relevant context "
-            "visible in this fragment (e.g. location, reference details, recurring-payment "
-            "signals)."
+            "A concise, natural-language description of this transaction"
         )
     )
     category: str
     amount: float = Field(description="Always a positive magnitude")
     transaction_type: Literal["debit", "credit", "fee", "transfer"]
+    balance: float | None = Field(
+        default=None,
+        description=(
+            "Running balance after this transaction, when the source states one "
+            "for this row. null/omit when not confidently determinable — never guess."
+        ),
+    )
+    merchant_normalized: str | None = Field(
+        default=None,
+        description=(
+            "Canonicalized merchant name, distinct from merchant_raw (e.g. "
+            "'Carrefour' vs. a raw POS reference string). null/omit when not "
+            "determinable — never guess."
+        ),
+    )
     extra_fields: list[ExtraField] = Field(
         default_factory=list,
         description=(
@@ -53,7 +64,13 @@ class ExtractedTransaction(BaseModel):
 
 class ExtractedStatement(BaseModel):
     bank_name: str | None = None
-    account_hint: str | None = None
+    account_number: str | None = Field(
+        default=None,
+        description=(
+            "The account number exactly as printed in the source — never masked, "
+            "truncated, or redacted (FR-002). null when not determinable."
+        ),
+    )
     transactions: list[ExtractedTransaction] = Field(default_factory=list)
     extra_fields: list[ExtraField] = Field(
         default_factory=list,
@@ -67,5 +84,11 @@ class ExtractedStatement(BaseModel):
 
 class NormalizerClient(Protocol):
     async def normalize(
-        self, content_list: list, markdown: str, known_categories: list[str]
-    ) -> tuple[dict, str]: ...
+        self,
+        content_list: list,
+        markdown: str,
+        known_categories: list[str],
+        *,
+        statement_id: str,
+        ocr_result_id: str,
+    ) -> tuple[ExtractedStatement, str]: ...
