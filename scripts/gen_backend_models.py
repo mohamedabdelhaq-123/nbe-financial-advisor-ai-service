@@ -71,14 +71,10 @@ DJANGO_INTERNAL_TABLES = {
 class _BackendDBEnv(BaseSettings):
     """The app's AI_SERVICE_BACKEND_DB__* settings, read from `.env` and the environment.
 
-    Mirrors only the field names/prefix that app.core.config.BackendDbSettings
-    actually uses — not a real import of it. Importing `app.core.config` would
-    trip its unrelated fail-fast (e.g. AI_SERVICE_TOKEN, storage creds): that
-    module eagerly builds the full `Settings()` at import time. This class reads
-    the same env vars a real deployment sets, scoped to just what regeneration
-    needs, so a reachable read-only backend is the only precondition. Real
-    environment variables take precedence over `.env`, so a one-off override
-    still works.
+    Scoped deliberately: importing `app.core.config` would trip its unrelated
+    fail-fast (e.g. AI_SERVICE_TOKEN). This mirrors only the backend-DB fields so
+    regeneration needs nothing but a reachable read-only backend. Real environment
+    variables take precedence over `.env`, so a one-off override still works.
     """
 
     host: str = ""
