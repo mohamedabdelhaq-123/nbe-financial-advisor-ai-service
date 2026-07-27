@@ -761,7 +761,7 @@ class BankAccounts(BackendBase):
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
     bank_name: Mapped[str] = mapped_column(String(255), nullable=False)
-    masked_account_number: Mapped[str] = mapped_column(String(50), nullable=False)
+    account_number: Mapped[str] = mapped_column(String(50), nullable=False)
     currency: Mapped[str] = mapped_column(String(10), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False)
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime(True), nullable=False)
@@ -1238,7 +1238,7 @@ class Transactions(BackendBase):
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime(True), nullable=False)
     account_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
     user_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
-    merchant_raw: Mapped[Optional[str]] = mapped_column(String(500))
+    merchant_raw: Mapped[Optional[str]] = mapped_column(String(1024))
     merchant_normalized: Mapped[Optional[str]] = mapped_column(String(255))
     confidence_score: Mapped[Optional[decimal.Decimal]] = mapped_column(Numeric(4, 3))
     balance: Mapped[Optional[decimal.Decimal]] = mapped_column(Numeric(14, 2))
