@@ -57,6 +57,10 @@ class EmbeddingsSettings(BaseModel):
     # caller needing a different size passes it explicitly rather than
     # changing this.
     dimensions: int = Field(default=768, ge=1)
+    # Character ceiling applied after cleaning; 0 disables it. Truncation is silent
+    # data loss, so it stays opt-in — off, an over-long input keeps surfacing as a
+    # real provider error rather than being quietly shortened.
+    max_input_chars: int = Field(default=0, ge=0)
 
 
 class OwnDbSettings(BaseModel):
