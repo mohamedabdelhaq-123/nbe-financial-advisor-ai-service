@@ -105,7 +105,10 @@ class ExtractChunkNode:
         # occasionally emits a transient glitch the provider's strict-mode
         # validation rejects; retrying the same chunk succeeds.
         structured_llm = (
-            get_chat_model(max_tokens=settings.chat_model.normalization_chunk_max_tokens)
+            get_chat_model(
+                max_tokens=settings.chat_model.normalization_chunk_max_tokens,
+                disable_reasoning=True,
+            )
             .with_structured_output(ExtractedStatement)
             .with_retry(stop_after_attempt=3)
         )

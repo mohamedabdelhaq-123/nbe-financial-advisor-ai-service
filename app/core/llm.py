@@ -15,7 +15,7 @@ from app.core.config import settings
 
 
 @lru_cache(maxsize=None)
-def get_chat_model(max_tokens: int | None = None) -> ChatOpenAI:
+def get_chat_model(max_tokens: int | None = None, disable_reasoning: bool = False) -> ChatOpenAI:
     """Return the configured chat model.
 
     Never called in mock mode — callers short-circuit on
@@ -25,6 +25,10 @@ def get_chat_model(max_tokens: int | None = None) -> ChatOpenAI:
     structured-output schema repeated across several items) — confirmed
     necessary against a real provider, which otherwise cut a multi-transaction
     structured response off mid-JSON.
+    `disable_reasoning` suppresses hidden reasoning tokens on a hybrid
+    reasoning model. Per-caller rather than global: a caller doing extraction
+    against a fixed schema gains nothing from reasoning but pays its latency,
+    while an analysis or planning caller may want it kept.
     """
     return ChatOpenAI(
         base_url=settings.chat_model.openai_base_url,
@@ -32,4 +36,8 @@ def get_chat_model(max_tokens: int | None = None) -> ChatOpenAI:
         api_key=settings.chat_model.openai_api_key,
         max_tokens=max_tokens,  # type: ignore[call-arg]  # real pydantic field; no mypy plugin configured to see it
         request_timeout=600,  # don't hang indefinitely on slow/queued free-tier LLM calls
+        # None leaves the field out of the request entirely, so a provider that
+        # rejects "none" (a model whose reasoning is mandatory) is unaffected
+        # until a caller opts in.
+        reasoning_effort="none" if disable_reasoning else None,
     )
