@@ -107,8 +107,9 @@ class ExtractChunkNode:
         structured_llm = (
             get_chat_model(
                 max_tokens=settings.chat_model.normalization_chunk_max_tokens,
-                disable_reasoning=True,
+                disable_reasoning=False,
             )
+            .bind(updates={"reasoning_effort": "low"})
             .with_structured_output(ExtractedStatement)
             .with_retry(stop_after_attempt=3)
         )
