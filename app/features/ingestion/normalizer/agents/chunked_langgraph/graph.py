@@ -141,9 +141,7 @@ class ExtractChunkNode:
         )
         start = time.monotonic()
         try:
-            result = cast(
-                ExtractedStatement, await structured_llm.ainvoke(prompt, config=config)
-            )
+            result = cast(ExtractedStatement, await structured_llm.ainvoke(prompt, config=config))
         except Exception:
             logger.warning(
                 "normalize_chunk_failed",
@@ -211,9 +209,7 @@ class ChunkedLangGraphNormalizerClient:
             return ExtractedStatement(), settings.chat_model.model_name
 
         max_concurrency = max(1, settings.chat_model.normalization_max_parallel_chunks)
-        logger.info(
-            "normalize_starting", chunk_count=len(chunks), max_concurrency=max_concurrency
-        )
+        logger.info("normalize_starting", chunk_count=len(chunks), max_concurrency=max_concurrency)
         overall_start = time.monotonic()
         final_state = await self._graph.ainvoke(
             {
