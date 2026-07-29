@@ -19,6 +19,7 @@ from saq.types import Context, FunctionsType
 from app.backend_db import get_backend_session
 from app.core.db import get_own_session
 from app.core.logging import get_logger
+from app.core.tasks.heartbeat import run_with_heartbeat
 from app.features.ingestion.service import normalize_statement, process_statement
 
 logger = get_logger(__name__)
@@ -40,10 +41,13 @@ async def process_job(ctx: Context, *, statement_id: str) -> dict:
     # Job payloads carry statement content; only identifiers and outcomes are logged.
     logger.info("ingestion_job_started", step="process", statement_id=statement_id)
     try:
-        result = await process_statement(
-            session_gen=get_backend_session,
-            own_session_gen=get_own_session,
-            statement_id=statement_id,
+        result = await run_with_heartbeat(
+            ctx,
+            process_statement(
+                session_gen=get_backend_session,
+                own_session_gen=get_own_session,
+                statement_id=statement_id,
+            ),
         )
     except HTTPException as exc:
         logger.warning("ingestion_job_failed", step="process", statement_id=statement_id)
@@ -56,10 +60,13 @@ async def normalize_job(ctx: Context, *, ocr_result_id: str) -> dict:
     """Normalize an OCR result — the async form of `POST /internal/ingestion/normalize`."""
     logger.info("ingestion_job_started", step="normalize", ocr_result_id=ocr_result_id)
     try:
-        result = await normalize_statement(
-            session_gen=get_backend_session,
-            own_session_gen=get_own_session,
-            ocr_result_id=ocr_result_id,
+        result = await run_with_heartbeat(
+            ctx,
+            normalize_statement(
+                session_gen=get_backend_session,
+                own_session_gen=get_own_session,
+                ocr_result_id=ocr_result_id,
+            ),
         )
     except HTTPException as exc:
         logger.warning("ingestion_job_failed", step="normalize", ocr_result_id=ocr_result_id)

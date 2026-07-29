@@ -482,3 +482,55 @@ async def test_job_orphaned_by_a_crash_is_swept_to_failed_not_left_running(
     status = await get_task_status(job.key)
     assert status.state == TaskState.FAILED.value, "an orphaned job must not read as running"
     assert status.error == SWEPT_ERROR_MESSAGE
+
+
+async def test_a_job_still_running_past_its_heartbeat_window_is_not_swept(job_queue, monkeypatch):
+    """The bug `run_with_heartbeat` fixes: real work outlasting `heartbeat` must not read
+    as "interrupted" just because the sweep runs concurrently — only a job nobody is
+    touching should ever be reclaimed.
+
+    A one-second `heartbeat` (as above) and a sweep run every 0.2s puts several sweeps
+    inside the job's ~1.2s of simulated work; without `run_with_heartbeat` touching the
+    job in the background, this is exactly the scenario that got swept by mistake.
+    """
+    from app.core.tasks import heartbeat as heartbeat_module
+    from app.features.ingestion import tasks
+
+    monkeypatch.setattr(heartbeat_module, "HEARTBEAT_INTERVAL", 0.2)
+
+    async def _slow_process(session_gen, own_session_gen, statement_id):
+        await asyncio.sleep(1.2)
+
+        class _Result:
+            def model_dump(self, mode=None):
+                return {"prefix": "slow/", "ocr_engine": "MinerU", "confidence_score": 1.0}
+
+        return _Result()
+
+    monkeypatch.setattr(tasks, "process_statement", _slow_process)
+
+    job = await job_queue.enqueue(
+        "ingestion.process", statement_id=STATEMENT_ID, timeout=0, heartbeat=1, ttl=JOB_TTL
+    )
+
+    async def _sweep_repeatedly():
+        while True:
+            await asyncio.sleep(0.2)
+            await job_queue.sweep()
+
+    worker = worker_module.build_worker(job_queue, functions=JOB_FUNCTIONS)
+    worker_task = asyncio.create_task(worker.start())
+    sweep_task = asyncio.create_task(_sweep_repeatedly())
+    try:
+        for _ in range(50):
+            await asyncio.sleep(0.1)
+            status = await get_task_status(job.key)
+            if status.state in _TERMINAL:
+                break
+    finally:
+        worker_task.cancel()
+        sweep_task.cancel()
+        await asyncio.gather(worker_task, sweep_task, return_exceptions=True)
+
+    assert status.state == TaskState.SUCCEEDED.value, "concurrent sweeps must not abort live work"
+    assert status.result["prefix"] == "slow/"
