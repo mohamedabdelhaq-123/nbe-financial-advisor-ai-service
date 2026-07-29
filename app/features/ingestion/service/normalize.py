@@ -4,6 +4,7 @@ import json
 import uuid
 from datetime import date
 from decimal import Decimal, InvalidOperation
+from typing import Any
 
 from fastapi import HTTPException
 from sqlalchemy import select
@@ -134,7 +135,7 @@ async def normalize_statement(
             transactions.append(txn_entry)
         break
 
-    normalized_json = {
+    normalized_json: dict[str, Any] = {
         "bank_name": parsed.bank_name,
         "account_number": parsed.account_number,
         "transactions": transactions,
