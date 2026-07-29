@@ -76,6 +76,25 @@ make prod-up    # build + start, detached
 make prod-down  # stop
 ```
 
+#### Run exactly one instance
+
+**This service must run as a single instance, and uvicorn must run with a single
+worker process.** Asynchronous ingestion jobs are submitted via
+`/internal/ingestion/jobs/*` and read back via the generic `/internal/tasks/{job_id}`;
+both execute inside the API process itself: the SAQ worker starts in the app lifespan,
+so every replica or extra uvicorn worker is another worker competing for the same queue.
+
+The queue claims jobs atomically, so a second instance would not double-execute a job —
+but nothing else about multi-instance operation has been tested here, and the
+concurrency ceiling is per-worker, so N replicas mean N times the configured concurrent
+MinerU/LLM load. Adding replicas is a deliberate change, not a scaling knob: see
+`specs/017-async-ingestion-endpoints/` before making one.
+
+Jobs live in the service's own database (SAQ's `saq_jobs`, created automatically at
+startup — not an Alembic migration) and are retained for 30 days after they finish. A
+job interrupted by a restart is either resumed, if it had not started, or reported as
+failed, if it was mid-execution; the caller resubmits.
+
 ## Backend mirror models
 
 The service reads specific backend (Django-owned) tables through a **read-only**

@@ -22,6 +22,15 @@ services:
     build:
       target: prod
     restart: unless-stopped
+    # DO NOT add `deploy: replicas:` here, and do not add `--workers N` to the
+    # image's uvicorn command, without reading
+    # specs/017-async-ingestion-endpoints/ first.
+    #
+    # The asynchronous ingestion worker runs INSIDE this process (started by the
+    # app lifespan), so each replica or uvicorn worker is another consumer of the
+    # same job queue. Job claiming is atomic, so nothing would be executed twice —
+    # but the concurrency limit is per-worker, so N replicas multiply the
+    # simultaneous MinerU/LLM load by N, and multi-instance operation is untested.
 
 networks:
   default:
