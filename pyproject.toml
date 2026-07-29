@@ -24,6 +24,7 @@ dependencies = [
     "opentelemetry-sdk>=1.44.0",
     "opentelemetry-exporter-otlp-proto-http>=1.44.0",
     "openinference-instrumentation-langchain>=0.1.67",
+    "saq[postgres]>=0.26.4",
 ]
 
 [dependency-groups]

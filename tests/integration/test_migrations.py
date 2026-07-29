@@ -69,3 +69,15 @@ def test_alembic_upgrade_head_against_real_postgres():
             ("ai_recommendation_logs", "user_id"): "uuid",
             ("ai_recommendation_logs", "product_id"): "uuid",
         }
+
+        with psycopg.connect(pg.get_connection_url().replace("+psycopg2", "")) as conn:
+            saq_tables = [row[0] for row in conn.execute("""
+                    SELECT table_name FROM information_schema.tables
+                    WHERE table_name LIKE 'saq_%'
+                    """).fetchall()]
+
+        # The job queue owns its own schema and creates it when it connects. Alembic must
+        # neither create nor know about those tables — asserting their absence here is
+        # what keeps a future autogenerate from adopting (or dropping) them, and what
+        # keeps anyone from re-adding a job table this service would have to maintain.
+        assert saq_tables == []
