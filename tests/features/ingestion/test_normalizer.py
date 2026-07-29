@@ -212,6 +212,9 @@ async def test_chunking_strategy_change_preserves_extracted_transaction_set(monk
             def with_retry(self, **kwargs):
                 return self
 
+        def bind(self, **kwargs):
+            return self
+
         def with_structured_output(self, schema):
             return self._LLM()
 
@@ -267,6 +270,9 @@ class _FakeStructuredLLM:
 class _FakeChatModel:
     def __init__(self, results: list[ExtractedStatement]):
         self._llm = _FakeStructuredLLM(results)
+
+    def bind(self, **kwargs):
+        return self
 
     def with_structured_output(self, schema):
         return self._llm
@@ -428,6 +434,9 @@ async def test_langgraph_client_max_parallel_dispatches_batch_concurrently(monke
     )
 
     class _TrackingChatModel:
+        def bind(self, **kwargs):
+            return self
+
         def with_structured_output(self, schema):
             return tracking_llm
 
@@ -820,6 +829,9 @@ class _DeterministicByChunkChatModel:
         def with_retry(self, **kwargs):
             return self
 
+    def bind(self, **kwargs):
+        return self
+
     def with_structured_output(self, schema):
         return self._LLM()
 
@@ -893,6 +905,9 @@ class _RetryExhaustingChatModel:
 
     def __init__(self, good_result, fail_when_call_gt):
         self._llm = self._LLM(good_result, fail_when_call_gt)
+
+    def bind(self, **kwargs):
+        return self
 
     def with_structured_output(self, schema):
         return self._llm
@@ -1009,6 +1024,9 @@ async def test_extract_call_site_attaches_business_context_config(monkeypatch):
 
         def __init__(self):
             self._llm = self._LLM()
+
+        def bind(self, **kwargs):
+            return self
 
         def with_structured_output(self, schema):
             return self._llm

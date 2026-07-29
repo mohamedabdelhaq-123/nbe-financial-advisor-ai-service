@@ -109,7 +109,7 @@ class ExtractChunkNode:
                 max_tokens=settings.chat_model.normalization_chunk_max_tokens,
                 disable_reasoning=False,
             )
-            .bind(updates={"reasoning_effort": "low"})
+            .bind(reasoning_effort="low")
             .with_structured_output(ExtractedStatement)
             .with_retry(stop_after_attempt=3)
         )
