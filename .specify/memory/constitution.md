@@ -1,6 +1,18 @@
 <!--
 SYNC IMPACT REPORT
 ==================
+Version change: 3.0.0 → 3.0.1
+Rationale: PATCH. Reference-only correction to the 3.0.0 entry below, which
+cited `specs/017-litellm-iti-provider` as its trigger. That spec was
+subsequently withdrawn and no longer exists in the repository, leaving the
+citation pointing at nothing; the trigger is restated as the underlying
+motivation (reaching an internal model gateway that speaks a non-OpenAI
+request shape) rather than a specific spec path. No principle text changes
+and Principle VI's 3.0.0 redefinition remains in force — the motivation
+outlived the individual spec that first surfaced it.
+Templates checked for consistency: none affected (no normative text changed).
+
+Prior change (2.3.0 → 3.0.0):
 Version change: 2.3.0 → 3.0.0
 Rationale: MAJOR. Principle VI redefined: the hard mandate that "LLM access
 MUST go through `langchain-openai` (`ChatOpenAI`)" is removed — naming a
@@ -15,11 +27,11 @@ MAJOR. The "AI stack" line in Technology & Quality Standards is softened to
 match. Everything else in Principle VI (single Maestro orchestrator,
 LangChain/LangGraph, no on-demand dashboard analytics, guarded agent outputs)
 is unchanged.
-Trigger: the ITI custom-provider feature (specs/017-litellm-iti-provider)
-swaps the access layer to reach the organization's internal model gateway,
-which speaks a non-OpenAI request shape; the old library-named mandate made
-that a constitutional violation rather than the config-level provider swap
-the principle always intended to allow.
+Trigger: reaching the organization's internal model gateway, which speaks a
+non-OpenAI request shape, requires swapping the access layer; the old
+library-named mandate made that a constitutional violation rather than the
+config-level provider swap the principle always intended to allow. (Corrected
+in 3.0.1 — this originally cited a since-withdrawn ITI custom-provider spec.)
 
 Prior change (2.2.0 → 2.3.0):
 Version change: 2.2.0 → 2.3.0
@@ -354,4 +366,4 @@ deviations MUST be justified explicitly in the PR. Runtime development guidance
 lives in repository docs and agent guidance files and MUST stay consistent with
 this constitution.
 
-**Version**: 3.0.0 | **Ratified**: 2026-07-09 | **Last Amended**: 2026-07-27
+**Version**: 3.0.1 | **Ratified**: 2026-07-09 | **Last Amended**: 2026-07-28
