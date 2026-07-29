@@ -7,9 +7,7 @@ logger = get_logger(__name__)
 # Entry `type`s rendered as their `text` field verbatim, as a plain paragraph.
 # These carry statement metadata (page footers/headers stating account/period
 # info) worth keeping, not discarding as boilerplate.
-_PLAIN_TEXT_TYPES = frozenset(
-    {"header", "footer", "page_number", "aside_text", "page_footnote"}
-)
+_PLAIN_TEXT_TYPES = frozenset({"header", "footer", "page_number", "aside_text", "page_footnote"})
 
 
 def _join(*parts: str) -> str:

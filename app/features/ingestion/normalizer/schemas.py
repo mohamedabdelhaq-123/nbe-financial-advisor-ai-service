@@ -22,9 +22,7 @@ class ExtractedTransaction(BaseModel):
     transaction_date: str = Field(description="ISO YYYY-MM-DD, converted from any source format")
     merchant_raw: str
     ai_description: str = Field(
-        description=(
-            "A concise, natural-language description of this transaction"
-        )
+        description=("A concise, natural-language description of this transaction")
     )
     category: str
     amount: float = Field(description="Always a positive magnitude")

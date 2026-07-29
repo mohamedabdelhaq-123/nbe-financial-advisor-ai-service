@@ -7,7 +7,7 @@ from app.features.chat.prompts import (
 )
 
 _GOLDEN_SUMMARY = (
-    "Summarise the following conversation turns concisely:\n\n" "human: hello\n" "ai: hi there"
+    "Summarise the following conversation turns concisely:\n\nhuman: hello\nai: hi there"
 )
 
 _GOLDEN_INTENT = (

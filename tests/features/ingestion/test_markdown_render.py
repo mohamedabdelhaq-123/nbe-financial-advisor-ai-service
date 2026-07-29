@@ -72,16 +72,19 @@ def test_chart_entry_treated_like_image_uses_chart_caption_footnote():
 def test_table_entry_keeps_table_body_as_verbatim_html_with_caption_and_footnote():
     html = "<table><tr><td>2026-01-01</td></tr></table>"
     rendered = renderer.render_entry(
-        {"type": "table", "table_caption": "Transactions", "table_body": html,
-         "table_footnote": "balance brought forward"}
+        {
+            "type": "table",
+            "table_caption": "Transactions",
+            "table_body": html,
+            "table_footnote": "balance brought forward",
+        }
     )
     assert rendered == f"Transactions\n{html}\nbalance brought forward"
 
 
 def test_code_entry_renders_fenced_block_tagged_with_subtype_plus_caption():
     rendered = renderer.render_entry(
-        {"type": "code", "sub_type": "python", "code_body": "print(1)",
-         "caption": "snippet"}
+        {"type": "code", "sub_type": "python", "code_body": "print(1)", "caption": "snippet"}
     )
     assert rendered == "snippet\n```python\nprint(1)\n```"
 

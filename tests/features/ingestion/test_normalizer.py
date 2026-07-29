@@ -777,9 +777,7 @@ def test_extracted_transaction_balance_and_merchant_normalized_round_trip_and_de
 
 def test_extracted_statement_account_number_round_trips_raw_digits_and_defaults_none():
     """FR-002 — real, unmasked account number; null when not determinable."""
-    with_number = ExtractedStatement(
-        bank_name="Test Bank", account_number="4213010248203200016"
-    )
+    with_number = ExtractedStatement(bank_name="Test Bank", account_number="4213010248203200016")
     assert with_number.account_number == "4213010248203200016"
     assert not hasattr(with_number, "account_hint"), "old account_hint field is gone"
 
@@ -835,9 +833,7 @@ async def test_send_graph_produces_identical_transactions_across_concurrency_lev
     import app.features.ingestion.normalizer as normalizer_module
 
     # Four entries each > _MAX_CHUNK_CHARS so each is its own chunk.
-    content_list = [
-        {"type": "text", "text": f"chunk-marker-{i}" + "X" * 2000} for i in range(4)
-    ]
+    content_list = [{"type": "text", "text": f"chunk-marker-{i}" + "X" * 2000} for i in range(4)]
 
     async def _run(max_parallel: int) -> list[str]:
         monkeypatch.setattr(
