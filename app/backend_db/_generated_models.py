@@ -1,5 +1,5 @@
 """
-GENERATED FILE — DO NOT EDIT BY HAND
+GENERATED FILE — DO NOT EDIT BY HAND.
 
 Read-only mirror of backend (Django-owned) tables, generated directly from the
 live read-only backend database by scripts/gen_backend_models.py (sqlacodegen).
