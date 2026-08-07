@@ -74,9 +74,7 @@ def _parse_llm_intent(raw: str, message: str) -> str:
             return intent
 
     keyword_intent = classify_intent(message)
-    logger.warning(
-        "intent_classification_unparsed", raw=raw, fallback=keyword_intent
-    )
+    logger.warning("intent_classification_unparsed", raw=raw, fallback=keyword_intent)
     return keyword_intent
 
 

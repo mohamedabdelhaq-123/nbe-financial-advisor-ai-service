@@ -39,7 +39,7 @@ def test_classify_intent(message: str, expected: str):
         "Analysis",
         "Analysis.",
         "'analysis'",
-        "\"analysis\"",
+        '"analysis"',
         "the answer is analysis",
     ],
 )
