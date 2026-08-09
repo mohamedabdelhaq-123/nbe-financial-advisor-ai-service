@@ -10,6 +10,8 @@ checks spanning two groups live on the root `Settings` model_validator instead,
 since only it has both groups in scope.
 """
 
+from typing import Literal
+
 from pydantic import BaseModel, Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -155,6 +157,54 @@ class MinerUSettings(BaseModel):
         return self
 
 
+class ScopeGuardSettings(BaseModel):
+    """Zero-shot topic/scope guardrail (app/features/chat/scope_guard.py) —
+    gates chat messages to the advisor's own domain before they reach any
+    LLM. Two interchangeable backends for the same mDeBERTa-v3-base-mnli-xnli
+    model, switched by `mode`, with no code change either way:
+
+    - "hosted": calls the HF Inference API. No local weights, no torch —
+      good for dev/testing, but sends raw user chat text to Hugging Face.
+    - "local": runs the model in-process. Self-hosted, no third-party data
+      egress — the intended production mode once a bank deployment can
+      afford the image size (see the `local-scope-guard` uv dependency
+      group, installed separately from the default deps for exactly this
+      reason).
+
+    Defaults to disabled — this guardrail is still being validated, so a
+    deployment that sets none of these env vars gets a working service
+    with the check simply turned off, not a crash (contrast MinerUSettings,
+    which requires a real endpoint the moment mocking is off).
+    """
+
+    enabled: bool = False
+    mode: Literal["hosted", "local"] = "hosted"
+    # Below this top-label confidence, the message is treated as in-scope —
+    # an uncertain classifier shouldn't block a legitimate question.
+    threshold: float = Field(default=0.55, ge=0.0, le=1.0)
+    model_name: str = "MoritzLaurer/mDeBERTa-v3-base-mnli-xnli"
+    # Empty by default — HostedScopeClassifier derives the real URL from
+    # `model_name` (below) unless this is explicitly overridden (e.g. to
+    # point at a private, dedicated Inference Endpoint instead of the
+    # shared HF Inference router). Left as its own field rather than only
+    # ever deriving it so that override stays possible; kept unset by
+    # default so it can never silently drift out of sync with model_name.
+    hosted_api_url: str = ""
+    hosted_api_key: SecretStr = SecretStr("")
+
+    @model_validator(mode="after")
+    def _require_hosted_key_when_enabled(self) -> "ScopeGuardSettings":
+        if self.enabled and self.mode == "hosted" and not self.hosted_api_key.get_secret_value():
+            raise ValueError(
+                "AI_SERVICE_SCOPE_GUARD__HOSTED_API_KEY must be set when "
+                "AI_SERVICE_SCOPE_GUARD__MODE is 'hosted' (the default) and the guard is "
+                "enabled. Get a free token from https://huggingface.co/settings/tokens, or "
+                "set AI_SERVICE_SCOPE_GUARD__MODE=local to run the model in-process instead "
+                "(requires `uv sync --group local-scope-guard`)."
+            )
+        return self
+
+
 class LangfuseSettings(BaseModel):
     # Misconfigured tracing fails open (disables itself) rather than
     # blocking startup — see app/core/observability.py. Defaults match the
@@ -224,6 +274,7 @@ class Settings(BaseSettings):
     backend_db: BackendDbSettings
     storage: StorageSettings
     mineru: MinerUSettings = Field(default_factory=MinerUSettings)
+    scope_guard: ScopeGuardSettings = Field(default_factory=ScopeGuardSettings)
     langfuse: LangfuseSettings = Field(default_factory=LangfuseSettings)
     logging: LoggingSettings = Field(default_factory=LoggingSettings)
 
