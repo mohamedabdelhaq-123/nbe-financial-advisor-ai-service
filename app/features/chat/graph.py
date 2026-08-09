@@ -6,6 +6,8 @@ from app.features.chat.agents.analysis import analysis_node
 from app.features.chat.agents.maestro import maestro_node
 from app.features.chat.agents.planner import planner_node
 from app.features.chat.agents.recommendation import recommendation_node
+from app.features.chat.guards import GENERAL_NODE_SYSTEM_PROMPT
+from app.features.chat.scope_guard import check_scope
 from app.features.chat.state import ConversationState
 from app.features.chat.summarize import needs_summary, summarize_node
 
@@ -26,8 +28,43 @@ def _maybe_summarize(state: ConversationState) -> str:
     return "maestro"
 
 
-async def _general_node(state: ConversationState) -> dict:
+async def _scope_guard_node(state: ConversationState) -> dict:
+    # Mid-planning answers ("1200", "rent, groceries") are terse and
+    # wouldn't classify confidently either way on their own — same
+    # reasoning maestro_node already uses to skip its own classification
+    # for these, applied here for the same reason.
+    if state.get("stage") == "planning" and state.get("questions_asked", 0) > 0:
+        return {"in_scope": True}
+
+    last_msg = state["messages"][-1] if state["messages"] else None
+    text = ""
+    if last_msg and hasattr(last_msg, "content") and isinstance(last_msg.content, str):
+        text = last_msg.content
+
+    result = await check_scope(text)
+    return {"in_scope": result.in_scope}
+
+
+def _route_scope(state: ConversationState) -> str:
+    # Defaults open (True) if somehow unset — check_scope() itself already
+    # fails open (disabled guard, or the classifier erroring), so this
+    # default only matters if the node above never ran at all.
+    return "in_scope" if state.get("in_scope", True) else "refused"
+
+
+async def _refused_node(state: ConversationState) -> dict:
     from langchain_core.messages import AIMessage
+
+    reply = (
+        "I'm the NBE Financial Advisor assistant, so I can only help with your "
+        "spending, budgeting, and banking questions. Let me know if there's "
+        "something along those lines I can help with."
+    )
+    return {"messages": [AIMessage(content=reply)]}
+
+
+async def _general_node(state: ConversationState) -> dict:
+    from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
     from app.core.config import settings
 
@@ -39,7 +76,9 @@ async def _general_node(state: ConversationState) -> dict:
     else:
         from app.core.llm import get_chat_model
 
-        result = await get_chat_model().ainvoke(text)
+        result = await get_chat_model().ainvoke(
+            [SystemMessage(content=GENERAL_NODE_SYSTEM_PROMPT), HumanMessage(content=text)]
+        )
         reply = result.content if isinstance(result.content, str) else str(result.content)
 
     return {"messages": [AIMessage(content=reply)]}
@@ -48,6 +87,8 @@ async def _general_node(state: ConversationState) -> dict:
 def build_graph(checkpointer=None):
     graph = StateGraph(ConversationState)
 
+    graph.add_node("scope_guard", _scope_guard_node)
+    graph.add_node("refused", _refused_node)
     graph.add_node("summarize", summarize_node)
     graph.add_node("maestro", maestro_node)
     graph.add_node("analysis", analysis_node)
@@ -55,7 +96,10 @@ def build_graph(checkpointer=None):
     graph.add_node("recommendation", recommendation_node)
     graph.add_node("general", _general_node)
 
-    graph.set_entry_point("summarize")
+    graph.set_entry_point("scope_guard")
+    graph.add_conditional_edges(
+        "scope_guard", _route_scope, {"in_scope": "summarize", "refused": "refused"}
+    )
     edges_map = {"summarize": "summarize", "maestro": "maestro"}
     graph.add_conditional_edges("summarize", _maybe_summarize, edges_map)
     graph.add_conditional_edges(
@@ -72,5 +116,6 @@ def build_graph(checkpointer=None):
     graph.add_edge("planner", END)
     graph.add_edge("recommendation", END)
     graph.add_edge("general", END)
+    graph.add_edge("refused", END)
 
     return graph.compile(checkpointer=checkpointer)
