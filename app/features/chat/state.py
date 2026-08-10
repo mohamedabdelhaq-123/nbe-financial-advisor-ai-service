@@ -16,6 +16,7 @@ class ConversationState(TypedDict):
     user_context: dict | None
     stage: str
     intent: str
+    in_scope: bool
     planner_answers: dict
     questions_asked: int
     message_references: list[Reference]
