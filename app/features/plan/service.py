@@ -48,21 +48,38 @@ async def generate_plan(
     if settings.chat_model.use_mock:
         return _mock_plan(answers)
 
+    from sqlalchemy import select
+
+    from app.backend_db import get_backend_session
+    from app.backend_db.models import Category
     from app.core.llm import get_chat_model
 
-    llm = get_chat_model()
-    prompt = (
-        f"Generate a monthly budget allocation as percentages summing to exactly 100. "
-        f"User context: {user_context}. Answers: {answers}. "
-        f"Return ONLY a JSON object mapping category names to integer percentages. "
-        f'Example: {{"housing": 30, "food": 20, "savings": 20, "transport": 10, '
-        f'"entertainment": 10, "utilities": 5, "other": 5}}'
-    )
-    response = await llm.ainvoke(prompt)
-    raw = str(response.content).strip()
+    async for backend_session in get_backend_session():
+        known_categories = (
+            (
+                await backend_session.execute(
+                    select(Category.name).where(Category.category_type == "expense")
+                )
+            )
+            .scalars()
+            .all()
+        )
 
-    allocations = _parse_and_normalize(raw)
-    return allocations
+        llm = get_chat_model()
+        prompt = (
+            f"Generate a monthly budget allocation as percentages summing to exactly 100. "
+            f"User context: {user_context}. Answers: {answers}. "
+            f"Return ONLY a JSON object mapping category names to integer percentages, "
+            f"using ONLY these category names: {', '.join(known_categories)}. "
+            f"Example: {{{', '.join(f'{c!r}: 10' for c in known_categories)}}}"
+        )
+        response = await llm.ainvoke(prompt)
+        raw = str(response.content).strip()
+
+        return await _parse_and_normalize(raw, backend_session)
+
+    # get_backend_session always yields exactly one session; unreachable.
+    return _mock_plan(answers)
 
 
 def _mock_plan(answers: dict) -> list[BudgetAllocation]:
@@ -78,18 +95,22 @@ def _mock_plan(answers: dict) -> list[BudgetAllocation]:
 
     remaining = 100 - savings_pct - housing
 
+    # "utilities" and "entertainment" aren't real category names in the
+    # backend's `categories` table (only their bucket-mates "housing" and
+    # "lifestyle" are — see core/models/categories/resolution.py's alias map
+    # on the Django side), so those points are folded straight into the
+    # buckets they'd alias to rather than kept as their own line.
     allocations = [
-        BudgetAllocation(category="housing", percentage=Decimal(str(housing))),
+        BudgetAllocation(category="housing", percentage=Decimal(str(housing + 5))),
         BudgetAllocation(category="food", percentage=Decimal("15")),
         BudgetAllocation(category="transport", percentage=Decimal("10")),
         BudgetAllocation(category="savings", percentage=Decimal(str(savings_pct))),
-        BudgetAllocation(category="utilities", percentage=Decimal("5")),
     ]
 
     leftover = remaining - 15 - 10 - 5
     if leftover > 0:
         allocations.append(
-            BudgetAllocation(category="entertainment", percentage=Decimal(str(leftover)))
+            BudgetAllocation(category="lifestyle", percentage=Decimal(str(leftover)))
         )
 
     total = sum(a.percentage for a in allocations)
@@ -105,9 +126,11 @@ def _mock_plan(answers: dict) -> list[BudgetAllocation]:
     return allocations
 
 
-def _parse_and_normalize(raw: str) -> list[BudgetAllocation]:
+async def _parse_and_normalize(raw: str, backend_session) -> list[BudgetAllocation]:
     import json
     import re
+
+    from app.features.ingestion.categories import resolve_category
 
     json_match = re.search(r"\{[^}]+\}", raw)
     if not json_match:
@@ -118,14 +141,27 @@ def _parse_and_normalize(raw: str) -> list[BudgetAllocation]:
     except json.JSONDecodeError:
         return _mock_plan({})
 
-    allocations = []
+    # Snap each LLM-produced name onto the backend's real category vocabulary
+    # (case-insensitive exact match, falling back to the expense "other"
+    # bucket) — the LLM is prompted with the known names but isn't guaranteed
+    # to stick to them, and a name the backend doesn't recognise 400s the
+    # budget PATCH downstream. Two raw names resolving to the same bucket
+    # (e.g. both falling back to "other") are merged rather than kept as
+    # separate lines with the same category.
+    merged: dict[str, Decimal] = {}
+    order: list[str] = []
     for category, pct in data.items():
         try:
-            allocations.append(
-                BudgetAllocation(category=category, percentage=Decimal(str(int(pct))))
-            )
+            percentage = Decimal(str(int(pct)))
         except (ValueError, TypeError):
             return _mock_plan({})
+        resolved = await resolve_category(backend_session, str(category))
+        if resolved not in merged:
+            order.append(resolved)
+            merged[resolved] = Decimal("0")
+        merged[resolved] += percentage
+
+    allocations = [BudgetAllocation(category=name, percentage=merged[name]) for name in order]
 
     total = sum(a.percentage for a in allocations)
     if total != 100:
