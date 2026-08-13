@@ -1,33 +1,190 @@
-"""Budget planning service — question generation and plan creation."""
+"""Budget planning service — question generation, answer validation, and plan creation."""
 
+import re
 from decimal import Decimal
 
 from app.core.config import settings
-from app.features.plan.schemas import BudgetAllocation, PlanQuestion
+from app.core.logging import get_logger
+from app.features.plan.context import PlannerContext
+from app.features.plan.schemas import AnswerValidation, BudgetAllocation, PlanQuestion
+
+logger = get_logger(__name__)
+
+# The confirming Django endpoint (PATCH /budget -> AllocationInputSerializer)
+# validates `category` against real backend Category rows by exact name, not
+# free text (SlugRelatedField, filtered to category_type="expense") -- these
+# are the only six that exist there. A plan category outside this set isn't
+# rejected until the user presses "confirm" on the allocation-slider widget,
+# where it fails with a validation error and no visible explanation why.
+VALID_EXPENSE_CATEGORIES = ("housing", "food", "transport", "savings", "lifestyle", "other")
 
 MAX_QUESTIONS = 7
 
 QUESTIONS = [
-    PlanQuestion(id="income_stability", text="Is your monthly income consistent or variable?"),
+    PlanQuestion(
+        id="income_stability",
+        text="Is your monthly income consistent or variable?",
+        kind="enum",
+        choices=["consistent", "variable"],
+    ),
     PlanQuestion(
         id="fixed_expenses",
         text="What are your fixed monthly obligations (rent, loans, subscriptions)?",
+        kind="free_text",
     ),
-    PlanQuestion(id="savings_goal", text="Do you have a specific savings goal or target amount?"),
-    PlanQuestion(id="dependents", text="How many dependents do you financially support?"),
     PlanQuestion(
-        id="risk_tolerance", text="How comfortable are you with financial risk (low/medium/high)?"
+        id="savings_goal",
+        text="Do you have a specific savings goal or target amount?",
+        kind="free_text",
     ),
-    PlanQuestion(id="debt", text="Do you have any outstanding debts beyond fixed obligations?"),
+    PlanQuestion(
+        id="dependents",
+        text="How many dependents do you financially support?",
+        kind="numeric",
+        min_value=0,
+        max_value=20,
+    ),
+    PlanQuestion(
+        id="risk_tolerance",
+        text="How comfortable are you with financial risk (low/medium/high)?",
+        kind="enum",
+        choices=["low", "medium", "high"],
+    ),
+    PlanQuestion(
+        id="debt",
+        text="Do you have any outstanding debts beyond fixed obligations?",
+        kind="yes_no",
+    ),
     PlanQuestion(
         id="lifestyle",
         text="How would you describe your spending lifestyle (frugal/moderate/generous)?",
+        kind="enum",
+        choices=["frugal", "moderate", "generous"],
     ),
 ]
 
+QUESTIONS_BY_ID: dict[str, PlanQuestion] = {q.id: q for q in QUESTIONS}
+
+# Income coefficient-of-variation thresholds used to (conservatively) infer
+# income_stability from real transaction data instead of asking. Starting
+# points, not calibrated against real usage yet — see plan notes.
+_INCOME_CV_CONSISTENT = 0.10
+_INCOME_CV_VARIABLE = 0.35
+
+_YES_WORDS = {"yes", "y", "yeah", "yep", "sure", "definitely"}
+_NO_WORDS = {"no", "n", "nope", "not really", "none"}
+
+
+def _personalize(question: PlanQuestion, context: PlannerContext) -> PlanQuestion:
+    """Deterministic (no LLM) question-text rewriting from real per-user
+    signal. F-string templates, not an LLM call — the configured free model
+    has already proven unreliable at strict structured output this session,
+    and this is user-facing numeric phrasing, not worth that risk for a
+    cosmetic enhancement."""
+    currency = context.get("currency") or ""
+
+    if question.id == "income_stability" and context.get("avg_monthly_income") is not None:
+        text = (
+            f"I can see your average monthly income is around "
+            f"{context['avg_monthly_income']:.0f} {currency}. Does that feel consistent "
+            f"month to month, or does it vary a lot?"
+        )
+        return question.model_copy(update={"text": text})
+
+    if question.id == "fixed_expenses" and context.get("avg_monthly_recurring_expense"):
+        text = (
+            f"I can see roughly {context['avg_monthly_recurring_expense']:.0f} {currency}/month "
+            f"in recurring charges. What are your fixed monthly obligations (rent, loans, "
+            f"subscriptions)?"
+        )
+        return question.model_copy(update={"text": text})
+
+    if question.id == "dependents" and context.get("dependents_count") is not None:
+        text = (
+            f"I have you down for {context['dependents_count']} dependents from your "
+            f"profile — is that still accurate?"
+        )
+        return question.model_copy(update={"text": text})
+
+    if question.id == "savings_goal" and context.get("savings_goal_name"):
+        goal_desc = _format_goal(context)
+        text = (
+            f"I see you set a goal of saving for '{goal_desc}' — is that still your "
+            f"goal, or has it changed?"
+        )
+        return question.model_copy(update={"text": text})
+
+    return question
+
+
+def _format_goal(context: PlannerContext) -> str | None:
+    name = context.get("savings_goal_name")
+    if not name:
+        return None
+    parts = [name]
+    if context.get("savings_goal_target_amount"):
+        amount = f"{context['savings_goal_target_amount']:.0f}"
+        if context.get("currency"):
+            amount += f" {context['currency']}"
+        parts.append(amount)
+    if context.get("savings_goal_timeline_months"):
+        parts.append(f"within {context['savings_goal_timeline_months']} months")
+    return ", ".join(parts)
+
+
+_CONFIRMABLE_CONTEXT_FIELDS = {
+    "dependents": lambda ctx: (
+        str(ctx["dependents_count"]) if ctx.get("dependents_count") is not None else None
+    ),
+    "savings_goal": _format_goal,
+}
+
+
+def resolve_confirmation(
+    question_id: str, raw: str, context: PlannerContext
+) -> AnswerValidation | None:
+    """If `raw` is a bare confirmation word ('yes') and this question was
+    personalized from a known context value, resolve directly to that
+    value instead of running kind-specific validation. Without this, a bare
+    "yes" confirming a personalized `dependents` question would get
+    rejected outright by the numeric validator (no digits in "yes"), and a
+    "yes" confirming `savings_goal` would store the literal word "yes"
+    instead of the actual goal description.
+
+    A correction ("actually 3 now", "no, saving for a car instead") is not
+    a bare yes-word, so it isn't intercepted here — it falls through to
+    normal kind-specific validation unchanged."""
+    resolver = _CONFIRMABLE_CONTEXT_FIELDS.get(question_id)
+    if resolver is None or raw.strip().lower() not in _YES_WORDS:
+        return None
+    resolved = resolver(context)
+    return AnswerValidation(valid=True, normalized_value=resolved) if resolved is not None else None
+
+
+def infer_answers_from_context(context: PlannerContext) -> dict[str, str]:
+    """Deterministic, rule-based auto-fill for topics confidently answerable
+    from real transaction signals. Only ever returns entries for topics with
+    a *clear* signal — ambiguous cases are omitted so the topic still gets
+    asked normally.
+
+    Only income_stability is ever silently skipped. fixed_expenses gets
+    personalized wording only (see _personalize), never a silent skip — a
+    wrong number silently baked into a budget-plan input is worse than one
+    extra question. This is a deliberate policy difference, not an
+    oversight.
+    """
+    inferred: dict[str, str] = {}
+    cv = context.get("income_variance_ratio")
+    if cv is not None:
+        if cv < _INCOME_CV_CONSISTENT:
+            inferred["income_stability"] = "consistent"
+        elif cv > _INCOME_CV_VARIABLE:
+            inferred["income_stability"] = "variable"
+    return inferred
+
 
 async def next_question(
-    user_context: dict | None,
+    context: PlannerContext,
     answers: dict,
     questions_asked: int,
 ) -> PlanQuestion | None:
@@ -37,12 +194,156 @@ async def next_question(
     answered = set(answers.keys())
     for q in QUESTIONS:
         if q.id not in answered:
-            return q
+            return _personalize(q, context)
     return None
 
 
+def validate_answer_deterministic(question: PlanQuestion, raw: str) -> AnswerValidation | None:
+    """Returns a verdict for every kind except an inconclusive `free_text`
+    answer, where `None` signals the caller to fall back to an LLM check.
+    numeric/enum/yes_no are always fully deterministic — never ambiguous,
+    never need the LLM."""
+    text = raw.strip()
+
+    if question.kind == "yes_no":
+        low = text.lower()
+        if low in _YES_WORDS:
+            return AnswerValidation(valid=True, normalized_value="yes")
+        if low in _NO_WORDS:
+            return AnswerValidation(valid=True, normalized_value="no")
+        return AnswerValidation(valid=False, reason="Please answer yes or no.")
+
+    if question.kind == "enum":
+        low = text.lower()
+        for choice in question.choices or []:
+            if choice in low or low in choice:
+                return AnswerValidation(valid=True, normalized_value=choice)
+        return AnswerValidation(
+            valid=False,
+            reason=f"Please choose one of: {', '.join(question.choices or [])}.",
+        )
+
+    if question.kind == "numeric":
+        match = re.search(r"-?[\d,]+(?:\.\d+)?", text)
+        if not match:
+            return AnswerValidation(valid=False, reason="Please answer with a number.")
+        value = float(match.group().replace(",", ""))
+        if question.min_value is not None and value < question.min_value:
+            return AnswerValidation(
+                valid=False,
+                reason=f"Please enter a number of at least {question.min_value:g}.",
+            )
+        if question.max_value is not None and value > question.max_value:
+            return AnswerValidation(
+                valid=False,
+                reason=f"Please enter a number no more than {question.max_value:g}.",
+            )
+        return AnswerValidation(valid=True, normalized_value=str(value))
+
+    # free_text: only a truly degenerate answer (empty, no real content at
+    # all) is deterministically rejected. Length alone is not a usable proxy
+    # for "is this a real answer" — "what do you mean?" is 19 characters and
+    # full of real words, but it's a question back, not an answer. Every
+    # non-degenerate free_text reply defers to the LLM, which actually
+    # judges intent rather than just checking length.
+    if len(text) < 2 or not any(c.isalnum() for c in text):
+        return AnswerValidation(valid=False, reason="Could you say a bit more?")
+    return None
+
+
+_LLM_VALIDATION_SYSTEM_PROMPT = (
+    "You are checking whether a user's reply is a genuine, on-topic answer to a "
+    "budget-planning question — not whether it's correct or complete, just whether "
+    "it's a real attempt to answer. Reply 'invalid' if the reply is a clarifying "
+    "question asked back instead of an answer, off-topic text, gibberish, or a "
+    "refusal — not just because it's short or imprecise.\n\n"
+    "When invalid, the part after 'invalid:' is shown directly to the user in place "
+    "of a rejection message, so it must actually help them answer — not just name "
+    "the problem. If they asked what the question means, briefly explain it with a "
+    "concrete example. If it's off-topic or gibberish, gently redirect them back to "
+    "the question. One short sentence, plain and conversational — never say the "
+    "word 'invalid' or describe the reply as invalid/gibberish/off-topic in that "
+    "sentence itself.\n\n"
+    "Reply with ONLY 'valid' or 'invalid: <that one helpful sentence>', nothing else."
+)
+
+
+async def validate_answer_llm(question: PlanQuestion, raw: str) -> AnswerValidation:
+    """Only called when validate_answer_deterministic returns None (an
+    ambiguous free_text answer). Parses the small model's reply the same
+    defensive way maestro.py's _parse_llm_intent does — an unparseable
+    reply is treated as valid rather than reprompting forever on a model
+    hiccup."""
+    if settings.chat_model.use_mock:
+        return AnswerValidation(valid=True, normalized_value=raw.strip())
+
+    from langchain_core.messages import HumanMessage, SystemMessage
+
+    from app.core.llm import get_chat_model
+
+    prompt = f"Question: {question.text}\nUser's reply: {raw}"
+    try:
+        result = await get_chat_model().ainvoke(
+            [SystemMessage(content=_LLM_VALIDATION_SYSTEM_PROMPT), HumanMessage(content=prompt)]
+        )
+        content = result.content if isinstance(result.content, str) else str(result.content)
+    except Exception:
+        logger.exception("validate_answer_llm_failed", question_id=question.id)
+        return AnswerValidation(valid=True, normalized_value=raw.strip())
+
+    cleaned = content.strip().strip(".!?\"'").lower()
+    if cleaned.startswith("valid"):
+        return AnswerValidation(valid=True, normalized_value=raw.strip())
+    if cleaned.startswith("invalid"):
+        reason = content.split(":", 1)[1].strip() if ":" in content else "Could you rephrase that?"
+        return AnswerValidation(valid=False, reason=reason)
+
+    logger.warning("validate_answer_llm_unparsed", raw=content, question_id=question.id)
+    return AnswerValidation(valid=True, normalized_value=raw.strip())
+
+
+_GOAL_EXTRACTION_SYSTEM_PROMPT = (
+    "You are checking whether a user's message already states what they want to "
+    "save for — a specific goal, purchase, or target. If it does, reply with ONLY "
+    "a short description of that goal (e.g. 'a bike', 'an emergency fund of "
+    "10000 EGP'). If the message doesn't mention a specific savings goal, reply "
+    "with ONLY the word 'none'."
+)
+
+
+async def extract_stated_goal(message: str) -> str | None:
+    """Checks whether the message that triggered planning already states a
+    savings goal (e.g. "help me plan for a bike"), so planner_ask_node can
+    skip asking savings_goal from scratch — and, just as importantly, skip
+    personalizing it with a stale stored goal that ignores what the user
+    just said this turn. Mock mode never calls the real LLM, matching
+    validate_answer_llm's offline-deterministic behavior — this feature is
+    simply inert (no extraction) in mock mode/tests."""
+    if settings.chat_model.use_mock:
+        return None
+
+    from langchain_core.messages import HumanMessage, SystemMessage
+
+    from app.core.llm import get_chat_model
+
+    try:
+        result = await get_chat_model().ainvoke(
+            [
+                SystemMessage(content=_GOAL_EXTRACTION_SYSTEM_PROMPT),
+                HumanMessage(content=message),
+            ]
+        )
+        content = result.content if isinstance(result.content, str) else str(result.content)
+    except Exception:
+        logger.exception("extract_stated_goal_failed")
+        return None
+
+    cleaned = content.strip().strip(".!?\"'")
+    return None if not cleaned or cleaned.lower() == "none" else cleaned
+
+
 async def generate_plan(
-    user_context: dict | None,
+    context: PlannerContext,
     answers: dict,
 ) -> list[BudgetAllocation]:
     if settings.chat_model.use_mock:
@@ -53,10 +354,21 @@ async def generate_plan(
     llm = get_chat_model()
     prompt = (
         f"Generate a monthly budget allocation as percentages summing to exactly 100. "
-        f"User context: {user_context}. Answers: {answers}. "
+        f"User's average monthly income: {context.get('avg_monthly_income')}. "
+        f"Known recurring expenses: {context.get('avg_monthly_recurring_expense')}. "
+        f"Known savings goal from their profile: {context.get('savings_goal_name')} "
+        f"(target {context.get('savings_goal_target_amount')}, within "
+        f"{context.get('savings_goal_timeline_months')} months). "
+        f"Questionnaire's savings_goal answer: {answers.get('savings_goal')}. "
+        "If these describe the same goal, don't double-count it; if they're "
+        "different, treat both as goals to weigh when allocating savings. "
+        f"Questionnaire answers: {answers}. "
         f"Return ONLY a JSON object mapping category names to integer percentages. "
+        f"Use ONLY these category names, exactly as spelled — the confirming "
+        f"backend rejects any other category name outright: "
+        f"{', '.join(VALID_EXPENSE_CATEGORIES)}. "
         f'Example: {{"housing": 30, "food": 20, "savings": 20, "transport": 10, '
-        f'"entertainment": 10, "utilities": 5, "other": 5}}'
+        f'"lifestyle": 15, "other": 5}}'
     )
     response = await llm.ainvoke(prompt)
     raw = str(response.content).strip()
@@ -83,13 +395,13 @@ def _mock_plan(answers: dict) -> list[BudgetAllocation]:
         BudgetAllocation(category="food", percentage=Decimal("15")),
         BudgetAllocation(category="transport", percentage=Decimal("10")),
         BudgetAllocation(category="savings", percentage=Decimal(str(savings_pct))),
-        BudgetAllocation(category="utilities", percentage=Decimal("5")),
+        BudgetAllocation(category="other", percentage=Decimal("5")),
     ]
 
     leftover = remaining - 15 - 10 - 5
     if leftover > 0:
         allocations.append(
-            BudgetAllocation(category="entertainment", percentage=Decimal(str(leftover)))
+            BudgetAllocation(category="lifestyle", percentage=Decimal(str(leftover)))
         )
 
     total = sum(a.percentage for a in allocations)
@@ -107,7 +419,6 @@ def _mock_plan(answers: dict) -> list[BudgetAllocation]:
 
 def _parse_and_normalize(raw: str) -> list[BudgetAllocation]:
     import json
-    import re
 
     json_match = re.search(r"\{[^}]+\}", raw)
     if not json_match:
