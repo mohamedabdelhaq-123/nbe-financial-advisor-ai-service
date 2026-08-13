@@ -56,3 +56,31 @@ jobs:
           push: false
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  # Deterministic red-team / AI-security suite (redteam/README.md). A
+  # separate, non-blocking job on purpose: some scenarios deliberately assert
+  # the SECURE behavior for a known, already-tracked finding (see
+  # SECURITY_AUDIT_REPORT.md) that hasn't been fixed yet, so they currently
+  # fail — that failure is the framework correctly reporting the finding, not
+  # CI breakage, and must stay visible without blocking unrelated PRs on
+  # pre-existing, tracked issues. Model-dependent scenarios are not run here
+  # at all (see redteam.yml).
+  redteam:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    env:
+      AI_SERVICE_CHAT_MODEL__USE_MOCK: "1"
+      AI_SERVICE_TOKEN: "ci-redteam-token-not-a-real-secret"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Red-team suite (deterministic, offline)
+        run: uv run pytest redteam -v
