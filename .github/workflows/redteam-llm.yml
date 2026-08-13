@@ -1,0 +1,34 @@
+name: Red Team (model-dependent)
+
+# Manual only — these scenarios call a real LLM provider (real API key,
+# real cost, real model-dependent variance) and must never run on every PR
+# per the red-team framework's design (see redteam/README.md). Configure
+# AI_SERVICE_CHAT_MODEL__OPENAI_API_KEY (and any other AI_SERVICE_CHAT_MODEL__*
+# provider settings this deployment needs) as repository/environment secrets
+# before running.
+on:
+  workflow_dispatch: {}
+
+jobs:
+  redteam-llm:
+    runs-on: ubuntu-latest
+    env:
+      AI_SERVICE_TOKEN: "ci-redteam-llm-token-not-a-real-secret"
+      AI_SERVICE_REDTEAM_ENABLE_LLM: "1"
+      AI_SERVICE_CHAT_MODEL__USE_MOCK: "0"
+      AI_SERVICE_CHAT_MODEL__OPENAI_BASE_URL: ${{ vars.AI_SERVICE_CHAT_MODEL__OPENAI_BASE_URL }}
+      AI_SERVICE_CHAT_MODEL__MODEL_NAME: ${{ vars.AI_SERVICE_CHAT_MODEL__MODEL_NAME }}
+      AI_SERVICE_CHAT_MODEL__OPENAI_API_KEY: ${{ secrets.AI_SERVICE_CHAT_MODEL__OPENAI_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Red-team suite — full (deterministic + model-dependent)
+        run: uv run pytest redteam -v
