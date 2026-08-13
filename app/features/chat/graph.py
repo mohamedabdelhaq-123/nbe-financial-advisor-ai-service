@@ -4,7 +4,7 @@ from langgraph.graph import END, StateGraph
 
 from app.features.chat.agents.analysis import analysis_node
 from app.features.chat.agents.maestro import maestro_node
-from app.features.chat.agents.planner import planner_node
+from app.features.chat.agents.planner import planner_ask_node, validate_answer_node
 from app.features.chat.agents.recommendation import recommendation_node
 from app.features.chat.guards import GENERAL_NODE_SYSTEM_PROMPT
 from app.features.chat.scope_guard import check_scope
@@ -16,10 +16,17 @@ def _route_intent(state: ConversationState) -> str:
     intent = state.get("intent", "general")
     routing = {
         "analysis": "analysis",
-        "planning": "planner",
+        "planning": "planner_ask",
         "recommendation": "recommendation",
     }
     return routing.get(intent, "general")
+
+
+def _route_planner_ask(state: ConversationState) -> str:
+    # planner_ask either paused on interrupt() to ask a question (in which
+    # case the resumed answer needs validating) or ran generate_plan to
+    # completion with no question left to ask.
+    return "done" if state.get("stage") == "plan_complete" else "validate"
 
 
 def _maybe_summarize(state: ConversationState) -> str:
@@ -76,7 +83,10 @@ async def _general_node(state: ConversationState) -> dict:
     else:
         from app.core.llm import get_chat_model
 
-        result = await get_chat_model().ainvoke(
+        # streaming=True: this node's output goes straight to the user, and
+        # `general` is in service.py's _LEAF_NODES, so its tokens are forwarded
+        # as they're produced instead of arriving as one chunk at the end.
+        result = await get_chat_model(streaming=True).ainvoke(
             [SystemMessage(content=GENERAL_NODE_SYSTEM_PROMPT), HumanMessage(content=text)]
         )
         reply = result.content if isinstance(result.content, str) else str(result.content)
@@ -92,7 +102,8 @@ def build_graph(checkpointer=None):
     graph.add_node("summarize", summarize_node)
     graph.add_node("maestro", maestro_node)
     graph.add_node("analysis", analysis_node)
-    graph.add_node("planner", planner_node)
+    graph.add_node("planner_ask", planner_ask_node)
+    graph.add_node("validate_answer", validate_answer_node)
     graph.add_node("recommendation", recommendation_node)
     graph.add_node("general", _general_node)
 
@@ -107,13 +118,16 @@ def build_graph(checkpointer=None):
         _route_intent,
         {
             "analysis": "analysis",
-            "planner": "planner",
+            "planner_ask": "planner_ask",
             "recommendation": "recommendation",
             "general": "general",
         },
     )
+    graph.add_conditional_edges(
+        "planner_ask", _route_planner_ask, {"validate": "validate_answer", "done": END}
+    )
+    graph.add_edge("validate_answer", "planner_ask")
     graph.add_edge("analysis", END)
-    graph.add_edge("planner", END)
     graph.add_edge("recommendation", END)
     graph.add_edge("general", END)
     graph.add_edge("refused", END)

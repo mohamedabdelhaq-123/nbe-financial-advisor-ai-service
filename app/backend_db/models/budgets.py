@@ -3,9 +3,11 @@
 from app.backend_db._generated_models import BudgetAllocations as BudgetAllocation
 from app.backend_db._generated_models import BudgetHistory as BudgetHistory
 from app.backend_db._generated_models import Budgets as Budget
+from app.backend_db._generated_models import Goals as Goal
 
 __all__ = [
     "Budget",
     "BudgetAllocation",
     "BudgetHistory",
+    "Goal",
 ]
