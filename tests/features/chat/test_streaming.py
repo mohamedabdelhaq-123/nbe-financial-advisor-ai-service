@@ -11,7 +11,7 @@ import json
 from types import SimpleNamespace
 
 import pytest
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 
 from app.features.chat.schemas import (
     AllocationSliderWidget,
@@ -23,9 +23,9 @@ from app.features.chat.service import stream_chat
 _LEAF_NODES = ("analysis", "planner_ask", "validate_answer", "recommendation", "general")
 
 
-class _FakeChunk:
+class _FakeChunk(AIMessage):
     def __init__(self, content):
-        self.content = content
+        super().__init__(content=content)
 
 
 class _FakeSnapshot:
@@ -45,7 +45,8 @@ class _FakeGraph:
 
     async def astream(self, state, config=None, stream_mode="messages", **kwargs):
         for content, node in self._chunks:
-            yield (_FakeChunk(content), {"langgraph_node": node})
+            message = content if isinstance(content, BaseMessage) else _FakeChunk(content)
+            yield (message, {"langgraph_node": node})
         if self._raise_in_stream is not None:
             raise self._raise_in_stream("forced failure")
 
@@ -137,6 +138,25 @@ async def test_non_leaf_node_tokens_are_not_forwarded(real_mode, monkeypatch):
     events = _parse(await _collect(real_mode, _request()))
     tokens = [e["data"] for e in events if e["event"] == "token"]
     assert tokens == ["leaf-reply"]
+
+
+@pytest.mark.asyncio
+async def test_resumed_human_message_is_not_echoed_as_token(real_mode, monkeypatch):
+    """Regression: planner_ask_node re-appends the user's own answer to history
+    on interrupt() resume — that HumanMessage must never be forwarded as a
+    token even though "planner_ask" is a leaf node."""
+    graph = _FakeGraph(
+        chunks=[
+            (HumanMessage(content="wtf"), "planner_ask"),  # user's own resumed answer
+            ("real reply", "planner_ask"),  # actual assistant output
+        ],
+        state_values={"messages": []},
+    )
+    _install_fake_graph(monkeypatch, graph)
+
+    events = _parse(await _collect(real_mode, _request()))
+    tokens = [e["data"] for e in events if e["event"] == "token"]
+    assert tokens == ["real reply"]
 
 
 # --- T014a: streaming edge cases ---------------------------------------------

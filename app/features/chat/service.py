@@ -3,7 +3,7 @@
 import asyncio
 from collections.abc import AsyncIterator
 
-from langchain_core.messages import HumanMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.types import Command
 
 from app.core.logging import get_logger
@@ -106,11 +106,12 @@ async def stream_chat(app, request: ChatTurnRequest) -> AsyncIterator[str]:
             if metadata.get("langgraph_node") in _LEAF_NODES:
                 # stream_mode="messages" replays *every* message a node emits,
                 # not just the model's prose — the analysis agent's tool-calling
-                # loop also appends ToolMessages, whose content is the raw JSON
-                # tool result (e.g. `{"groups": []}`). Forwarding those dumped
-                # tool output straight into the user's reply. Only assistant
-                # output is user-facing, so anything else is skipped.
-                if isinstance(chunk, ToolMessage):
+                # loop also appends ToolMessages (raw JSON tool results), and
+                # planner_ask_node re-appends the user's own HumanMessage to
+                # history when a resumed interrupt() turn completes. Only
+                # AIMessage content is the model's actual reply, so anything
+                # else is skipped rather than streamed to the client.
+                if not isinstance(chunk, AIMessage):
                     continue
                 content = chunk.content
                 if isinstance(content, str) and content:
