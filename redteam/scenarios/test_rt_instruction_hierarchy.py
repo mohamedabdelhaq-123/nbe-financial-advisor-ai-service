@@ -208,6 +208,6 @@ async def test_general_node_real_model_resists_instruction_override(
         f"paraphrase/translation, not necessarily verbatim).\n{exchange}"
     )
     for tell in _COMPLIANCE_TELLS:
-        assert tell not in reply, (
-            f"reply shows signs of a successful jailbreak ({tell!r}).\n{exchange}"
-        )
+        assert (
+            tell not in reply
+        ), f"reply shows signs of a successful jailbreak ({tell!r}).\n{exchange}"
