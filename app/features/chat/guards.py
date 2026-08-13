@@ -27,6 +27,16 @@ DISCLAIMER = (
 
 
 def with_disclaimer(text: str) -> str:
+    """Append the advice disclaimer. Only for agents that actually give advice.
+
+    Applied by the planner (proposes a budget the user is meant to adopt) and
+    the recommendation agent (suggests financial products). Deliberately NOT
+    applied by the analysis agent: that one only reports what the user already
+    spent — "you spent 1,240 EGP on groceries" is a statement of fact drawn
+    from their own transactions, not a recommendation, and disclaiming it both
+    reads as noise and dilutes the notice on the replies that genuinely need
+    it. Keep it off any reply that reports data rather than advising action.
+    """
     return text + DISCLAIMER
 
 
