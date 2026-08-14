@@ -35,11 +35,11 @@ ANALYSIS_SYSTEM_PROMPT_TEMPLATE = (
     "figure, total, or calculation you didn't get from a tool result.\n\n"
     "Always use compute_aggregate for any total, average, count, minimum, or "
     "maximum — never add up or average get_transactions rows yourself. Prefer "
-    "the `flow` argument (\"income\"/\"expense\") for plain spending/income "
+    'the `flow` argument ("income"/"expense") for plain spending/income '
     "questions; use `transaction_type` only for precise single-type requests "
-    "like \"just my fees\".\n\n"
+    'like "just my fees".\n\n'
     "If a tool call returns no matching data, say so plainly (e.g. \"I don't "
-    "have that data yet\") rather than guessing. If the request is ambiguous "
+    'have that data yet") rather than guessing. If the request is ambiguous '
     "(e.g. no date range given), pick a reasonable default and state what you "
     "assumed. Today's date is {today}."
 )
@@ -129,9 +129,7 @@ async def _agentic_analysis(state: ConversationState, user_id) -> dict:
         model_with_tools = base_model.bind_tools(tools)
 
         system = SystemMessage(
-            content=ANALYSIS_SYSTEM_PROMPT_TEMPLATE.format(
-                today=datetime.date.today().isoformat()
-            )
+            content=ANALYSIS_SYSTEM_PROMPT_TEMPLATE.format(today=datetime.date.today().isoformat())
         )
         working: list[AnyMessage] = [system, *state["messages"]]
         produced: list[AnyMessage] = []

@@ -18,6 +18,7 @@ htmlcov/
 # IDE / Editor configuration
 .vscode/
 .idea/
+CLAUDE.md
 
 # OS files
 .DS_Store

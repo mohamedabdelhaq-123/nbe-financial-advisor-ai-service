@@ -218,9 +218,7 @@ async def test_opening_message_stated_goal_skips_savings_goal_question(monkeypat
     async def _fake_extract_stated_goal(message: str) -> str:
         return "a bike"
 
-    monkeypatch.setattr(
-        "app.features.plan.service.extract_stated_goal", _fake_extract_stated_goal
-    )
+    monkeypatch.setattr("app.features.plan.service.extract_stated_goal", _fake_extract_stated_goal)
 
     graph, config = await _fresh_graph_and_config()
     await graph.ainvoke(_initial_state("help me plan for a bike"), config)

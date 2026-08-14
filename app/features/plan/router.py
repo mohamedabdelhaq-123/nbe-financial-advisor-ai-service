@@ -34,9 +34,7 @@ router = APIRouter(
 )
 async def plan_question(body: NextQuestionRequest):
     """Return the next budget-questionnaire question, or null once it's complete."""
-    context: PlannerContext = (
-        await derive_planner_context(body.user_id) if body.user_id else {}
-    )
+    context: PlannerContext = await derive_planner_context(body.user_id) if body.user_id else {}
     # Same merge planner_ask_node does — explicit answers win over inferred
     # ones, and next_question itself doesn't do this merge internally.
     answers = {**infer_answers_from_context(context), **body.answers}
@@ -57,9 +55,7 @@ async def plan_question(body: NextQuestionRequest):
 )
 async def plan_generate(body: GeneratePlanRequest):
     """Generate a full budget allocation (categories summing to 100%) from questionnaire answers."""
-    context: PlannerContext = (
-        await derive_planner_context(body.user_id) if body.user_id else {}
-    )
+    context: PlannerContext = await derive_planner_context(body.user_id) if body.user_id else {}
     allocations = await generate_plan(
         context=context,
         answers=body.answers,
