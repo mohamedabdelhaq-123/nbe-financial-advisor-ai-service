@@ -3,11 +3,13 @@
 Two nodes form a cycle: planner_ask asks the next question (skipping/
 personalizing from planner_context, assembled once by maestro_node) and
 pauses on interrupt() until the user answers; validate_answer checks that
-answer (deterministic first, LLM fallback only for ambiguous free text) and
-loops back to planner_ask either way — advancing on a valid answer, or
-reprompting the same question with a reason on an invalid one, up to
-MAX_VALIDATION_ATTEMPTS before falling back to accepting it as-is so a user
-can never get stuck. See app/features/chat/agents/maestro.py's
+answer (deterministic for constrained kinds — enum/numeric/yes_no — with an
+LLM only ever improving the rejection wording, never overriding validity;
+deterministic-then-LLM for ambiguous free text) and loops back to
+planner_ask either way — advancing on a valid answer, or reprompting the
+same question with a reason on an invalid one, up to MAX_VALIDATION_ATTEMPTS
+before falling back to a per-question default (raw text for free_text) so a
+user can never get stuck. See app/features/chat/agents/maestro.py's
 _planner_context_update for why context derivation lives there, not here:
 interrupt() re-executes this node's own code from the top on every resume,
 so anything before the interrupt() call here would otherwise re-run (and
@@ -24,6 +26,7 @@ from app.features.chat.schemas import (
     AllocationSliderWidget,
 )
 from app.features.chat.state import ConversationState
+from app.features.plan.schemas import PlanQuestion
 
 MAX_VALIDATION_ATTEMPTS = 3
 
@@ -99,14 +102,22 @@ async def planner_ask_node(state: ConversationState) -> dict:
         }
 
 
+def _hardcoded_fallback(question: PlanQuestion) -> str:
+    """Safety net only — QUESTIONS below sets `default` on every constrained
+    question today, so this only matters if a future question is added
+    without one."""
+    if question.kind == "enum":
+        return (question.choices or ["unknown"])[0]
+    if question.kind == "yes_no":
+        return "no"
+    if question.kind == "numeric":
+        return str(question.min_value if question.min_value is not None else 0)
+    return ""
+
+
 async def validate_answer_node(state: ConversationState) -> dict:
     from app.features.plan.context import PlannerContext
-    from app.features.plan.service import (
-        QUESTIONS_BY_ID,
-        resolve_confirmation,
-        validate_answer_deterministic,
-        validate_answer_llm,
-    )
+    from app.features.plan.service import QUESTIONS_BY_ID, validate_answer
 
     last_question_id = state["last_question_id"]
     assert last_question_id is not None, "validate_answer_node reached with no pending question"
@@ -116,11 +127,7 @@ async def validate_answer_node(state: ConversationState) -> dict:
     attempts = state.get("planner_validation_attempts", 0)
     context: PlannerContext = state.get("planner_context") or {}  # type: ignore[assignment]
 
-    result = resolve_confirmation(last_question_id, raw, context)
-    if result is None:
-        result = validate_answer_deterministic(question, raw)
-        if result is None:
-            result = await validate_answer_llm(question, raw)
+    result = await validate_answer(question, raw, context)
 
     if result.valid:
         answers[question.id] = result.normalized_value
@@ -138,8 +145,27 @@ async def validate_answer_node(state: ConversationState) -> dict:
     attempts += 1
     if attempts >= MAX_VALIDATION_ATTEMPTS:
         # Safe fallback — never trap the user in an infinite reprompt loop.
-        answers[question.id] = raw
+        # free_text has no fixed shape, so the raw text itself is a
+        # legitimate answer, not garbage needing correction. Constrained
+        # kinds (enum/numeric/yes_no) get a neutral default instead of the
+        # rejected raw text, since that text failed validation for THIS
+        # question's shape and would otherwise flow ungrounded into
+        # generate_plan's prompt — with an acknowledgment so the user knows.
+        if question.kind == "free_text":
+            answers[question.id] = raw
+            return {
+                "planner_answers": answers,
+                "planner_validation_attempts": 0,
+                "pending_validation_reason": None,
+            }
+        fallback_value = question.default or _hardcoded_fallback(question)
+        answers[question.id] = fallback_value
+        ack = AIMessage(
+            content=f'No worries — I\'ll assume "{fallback_value}" for now; '
+            "you can adjust the plan later."
+        )
         return {
+            "messages": [ack],
             "planner_answers": answers,
             "planner_validation_attempts": 0,
             "pending_validation_reason": None,

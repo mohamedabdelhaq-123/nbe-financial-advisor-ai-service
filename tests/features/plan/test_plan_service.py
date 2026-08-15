@@ -2,7 +2,9 @@
 
 import pytest
 
-from app.features.plan.schemas import PlanQuestion
+from app.core.config import settings
+from app.features.plan import service as plan_service
+from app.features.plan.schemas import AnswerValidation, PlanQuestion
 from app.features.plan.service import (
     MAX_QUESTIONS,
     QUESTIONS_BY_ID,
@@ -11,6 +13,7 @@ from app.features.plan.service import (
     infer_answers_from_context,
     next_question,
     resolve_confirmation,
+    validate_answer,
     validate_answer_deterministic,
     validate_answer_llm,
 )
@@ -143,6 +146,86 @@ async def test_validate_answer_llm_mock_mode_accepts_any_nonempty_text():
     result = await validate_answer_llm(q, "rent")
     assert result.valid is True
     assert result.normalized_value == "rent"
+
+
+# --- validate_answer: composition, reason-enrichment for constrained kinds -
+
+
+@pytest.mark.asyncio
+async def test_validate_answer_valid_constrained_never_calls_llm(monkeypatch):
+    def _fail_if_called(question, raw):
+        raise AssertionError("validate_answer_llm must not run for an accepted answer")
+
+    monkeypatch.setattr(plan_service, "validate_answer_llm", _fail_if_called)
+
+    q = QUESTIONS_BY_ID["risk_tolerance"]
+    result = await validate_answer(q, "medium", context={})
+    assert result.valid is True
+    assert result.normalized_value == "medium"
+
+
+@pytest.mark.asyncio
+async def test_validate_answer_mock_mode_keeps_canned_reason(monkeypatch):
+    def _fail_if_called(question, raw):
+        raise AssertionError("validate_answer_llm must not run in mock mode")
+
+    monkeypatch.setattr(plan_service, "validate_answer_llm", _fail_if_called)
+    monkeypatch.setattr(settings.chat_model, "use_mock", True)
+
+    q = QUESTIONS_BY_ID["risk_tolerance"]
+    result = await validate_answer(q, "what do you mean ?", context={})
+    assert result.valid is False
+    assert "low" in result.reason  # the canned "Please choose one of: ..." text
+
+
+@pytest.mark.asyncio
+async def test_validate_answer_real_mode_uses_llm_reason_on_rejection(monkeypatch):
+    monkeypatch.setattr(settings.chat_model, "use_mock", False)
+
+    async def _fake_llm(question, raw):
+        return AnswerValidation(
+            valid=False, reason="Risk tolerance means how much you're comfortable losing."
+        )
+
+    monkeypatch.setattr(plan_service, "validate_answer_llm", _fake_llm)
+
+    q = QUESTIONS_BY_ID["risk_tolerance"]
+    result = await validate_answer(q, "what do you mean ?", context={})
+    assert result.valid is False
+    assert result.reason == "Risk tolerance means how much you're comfortable losing."
+
+
+@pytest.mark.asyncio
+async def test_validate_answer_real_mode_never_lets_llm_override_validity(monkeypatch):
+    # The core safety invariant: even if the enrichment call disagrees and
+    # says "valid", a constrained-kind answer that failed deterministic
+    # matching must stay rejected.
+    monkeypatch.setattr(settings.chat_model, "use_mock", False)
+
+    async def _fake_llm(question, raw):
+        return AnswerValidation(valid=True, normalized_value=raw.strip())
+
+    monkeypatch.setattr(plan_service, "validate_answer_llm", _fake_llm)
+
+    q = QUESTIONS_BY_ID["risk_tolerance"]
+    result = await validate_answer(q, "fsdaf", context={})
+    assert result.valid is False
+    assert "low" in result.reason  # original deterministic reason preserved
+
+
+@pytest.mark.asyncio
+async def test_validate_answer_real_mode_llm_failure_keeps_deterministic_result(monkeypatch):
+    monkeypatch.setattr(settings.chat_model, "use_mock", False)
+
+    async def _raising_llm(question, raw):
+        raise RuntimeError("simulated provider outage")
+
+    monkeypatch.setattr(plan_service, "validate_answer_llm", _raising_llm)
+
+    q = QUESTIONS_BY_ID["risk_tolerance"]
+    result = await validate_answer(q, "fsdaf", context={})
+    assert result.valid is False
+    assert "low" in result.reason
 
 
 # --- infer_answers_from_context -------------------------------------------

@@ -3,7 +3,10 @@
 import uuid
 
 import pytest
+from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.tools import tool
 
+from app.core.config import settings
 from app.features.chat.agents.analysis import analysis_node
 from app.features.chat.schemas import Reference
 
@@ -169,3 +172,134 @@ async def test_analysis_node_no_data(monkeypatch):
         for m in result["messages"]
     )
     assert no_data_found
+
+
+# ── _agentic_analysis: the real (non-mock) tool-calling loop ────────────────
+# Unlike everything above (which exercises _mock_analysis, the only branch
+# the rest of the suite runs under AI_SERVICE_CHAT_MODEL__USE_MOCK=1), these
+# force settings.chat_model.use_mock=False for the duration of each test to
+# reach _agentic_analysis directly, with a fake chat model at the
+# get_chat_model() seam — same technique as test_graph.py's
+# test_general_node_sends_a_system_prompt_when_not_mocked.
+
+
+class _FakeToolModel:
+    """A minimal stand-in for a tool-calling chat model: `.bind_tools()`
+    returns itself (so the real `model_with_tools = base_model.bind_tools(
+    tools)` call in _agentic_analysis is a no-op), and `.ainvoke()` replays
+    pre-scripted responses in order — one per loop iteration."""
+
+    def __init__(self, responses):
+        self._responses = iter(responses)
+
+    def bind_tools(self, tools):
+        return self
+
+    async def ainvoke(self, messages):
+        return next(self._responses)
+
+
+@pytest.mark.asyncio
+async def test_agentic_analysis_happy_path_tool_call_round_trip(monkeypatch):
+    monkeypatch.setattr(settings.chat_model, "use_mock", False)
+
+    tool_call_msg = AIMessage(
+        content="", tool_calls=[{"name": "get_transactions", "args": {}, "id": "call_1"}]
+    )
+    final_msg = AIMessage(content="You spent 400 EGP on lifestyle this month.")
+    monkeypatch.setattr(
+        "app.core.llm.get_chat_model", lambda **kwargs: _FakeToolModel([tool_call_msg, final_msg])
+    )
+
+    @tool
+    async def get_transactions(**kwargs) -> dict:
+        """Fake get_transactions returning one canned row."""
+        return {
+            "count": 1,
+            "transactions": [{"id": "t1", "amount": 400.0, "category": "lifestyle"}],
+        }
+
+    monkeypatch.setattr(
+        "app.tools.transactions.make_transaction_tools", lambda user_id: [get_transactions]
+    )
+
+    state = {
+        "messages": [HumanMessage(content="what did I spend the most on this month?")],
+        "user_id": uuid.uuid4(),
+        "user_context": None,
+        "intent": "analysis",
+    }
+    result = await analysis_node(state)
+
+    assert result["messages"][-1].content == "You spent 400 EGP on lifestyle this month."
+    assert len(result["message_references"]) == 1
+    assert result["message_references"][0].target_id == "t1"
+
+
+@pytest.mark.asyncio
+async def test_agentic_analysis_llm_failure_gets_honest_fallback_message(monkeypatch):
+    # Regression guard for the actual bug: the outer except used to claim
+    # "Backend is unavailable" for ANY failure in this loop, even though the
+    # tools themselves never raise up to here — in practice this catch is
+    # almost always an LLM-call failure, not a DB outage.
+    monkeypatch.setattr(settings.chat_model, "use_mock", False)
+
+    class _RaisingModel:
+        def bind_tools(self, tools):
+            return self
+
+        async def ainvoke(self, messages):
+            raise RuntimeError("simulated OpenRouter timeout")
+
+    monkeypatch.setattr("app.core.llm.get_chat_model", lambda **kwargs: _RaisingModel())
+
+    state = {
+        "messages": [HumanMessage(content="what did i spend on the most last month?")],
+        "user_id": uuid.uuid4(),
+        "user_context": None,
+        "intent": "analysis",
+    }
+    result = await analysis_node(state)
+
+    content = result["messages"][0].content
+    assert content == "Sorry, I couldn't finish analyzing that just now — please try again."
+    assert "Backend is unavailable" not in content
+
+
+@pytest.mark.asyncio
+async def test_agentic_analysis_zero_rows_gets_plain_reply_not_generic_fallback(monkeypatch):
+    # The exact scenario from the reported bug: a date range with no
+    # matching transactions must not be misrouted into the except block —
+    # the tools return an empty-but-successful result, and the model is
+    # expected to say so plainly (per the system prompt's own instruction).
+    monkeypatch.setattr(settings.chat_model, "use_mock", False)
+
+    tool_call_msg = AIMessage(
+        content="", tool_calls=[{"name": "get_transactions", "args": {}, "id": "call_1"}]
+    )
+    final_msg = AIMessage(content="You had no transactions last month.")
+    monkeypatch.setattr(
+        "app.core.llm.get_chat_model", lambda **kwargs: _FakeToolModel([tool_call_msg, final_msg])
+    )
+
+    @tool
+    async def get_transactions(**kwargs) -> dict:
+        """Fake get_transactions returning zero rows."""
+        return {"count": 0, "transactions": []}
+
+    monkeypatch.setattr(
+        "app.tools.transactions.make_transaction_tools", lambda user_id: [get_transactions]
+    )
+
+    state = {
+        "messages": [HumanMessage(content="what did i spend on the most last month?")],
+        "user_id": uuid.uuid4(),
+        "user_context": None,
+        "intent": "analysis",
+    }
+    result = await analysis_node(state)
+
+    content = result["messages"][-1].content
+    assert content == "You had no transactions last month."
+    assert "Backend is unavailable" not in content
+    assert result["message_references"] == []

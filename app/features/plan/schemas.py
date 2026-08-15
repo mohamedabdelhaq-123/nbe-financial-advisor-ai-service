@@ -28,6 +28,13 @@ class PlanQuestion(BaseModel):
     max_value: float | None = Field(
         default=None, description="Inclusive upper bound when kind == 'numeric'."
     )
+    default: str | None = Field(
+        default=None,
+        description=(
+            "Fallback value used if MAX_VALIDATION_ATTEMPTS is exhausted for a "
+            "constrained (non-free_text) question."
+        ),
+    )
 
 
 class AnswerValidation(BaseModel):

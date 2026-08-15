@@ -7,10 +7,22 @@ _GOLDEN_SUMMARY = (
 )
 
 _GOLDEN_INTENT = (
-    "Classify the intent of this user message into one of: "
-    "analysis, planning, recommendation, general.\n"
-    "Message: How much did I spend?\n"
-    "Respond with ONLY the intent word."
+    "Classify the intent of the LATEST user message into one of: analysis, planning, "
+    "recommendation, general. Use the recent conversation for context if the latest "
+    "message alone is ambiguous.\n"
+    "Latest user message: How much did I spend?\n"
+    "Respond with ONLY the intent word for the latest message.\n"
+)
+
+_GOLDEN_INTENT_WITH_HISTORY = (
+    "Classify the intent of the LATEST user message into one of: analysis, planning, "
+    "recommendation, general. Use the recent conversation for context if the latest "
+    "message alone is ambiguous.\n"
+    "Recent conversation:\n"
+    "human: what did i spend on the most last month?\n"
+    "\n"
+    "Latest user message: what about this month ?\n"
+    "Respond with ONLY the intent word for the latest message.\n"
 )
 
 
@@ -22,7 +34,17 @@ def test_summary_prompt_matches_hardcoded_output():
 
 def test_intent_classification_prompt_matches_hardcoded_output():
     """US2 acceptance #2 — classification template matches and still names the fixed labels."""
-    rendered = get_intent_classification_prompt().render(message="How much did I spend?")
+    rendered = get_intent_classification_prompt().render(
+        message="How much did I spend?", history=None
+    )
     assert rendered == _GOLDEN_INTENT
     # The fixed intent-label set must remain present verbatim in the rendered text.
     assert "analysis, planning, recommendation, general" in rendered
+
+
+def test_intent_classification_prompt_includes_history_when_present():
+    rendered = get_intent_classification_prompt().render(
+        message="what about this month ?",
+        history="human: what did i spend on the most last month?",
+    )
+    assert rendered == _GOLDEN_INTENT_WITH_HISTORY

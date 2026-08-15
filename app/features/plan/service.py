@@ -18,6 +18,7 @@ QUESTIONS = [
         text="Is your monthly income consistent or variable?",
         kind="enum",
         choices=["consistent", "variable"],
+        default="variable",
     ),
     PlanQuestion(
         id="fixed_expenses",
@@ -35,23 +36,27 @@ QUESTIONS = [
         kind="numeric",
         min_value=0,
         max_value=20,
+        default="0",
     ),
     PlanQuestion(
         id="risk_tolerance",
         text="How comfortable are you with financial risk (low/medium/high)?",
         kind="enum",
         choices=["low", "medium", "high"],
+        default="medium",
     ),
     PlanQuestion(
         id="debt",
         text="Do you have any outstanding debts beyond fixed obligations?",
         kind="yes_no",
+        default="no",
     ),
     PlanQuestion(
         id="lifestyle",
         text="How would you describe your spending lifestyle (frugal/moderate/generous)?",
         kind="enum",
         choices=["frugal", "moderate", "generous"],
+        default="moderate",
     ),
 ]
 
@@ -280,6 +285,40 @@ async def validate_answer_llm(question: PlanQuestion, raw: str) -> AnswerValidat
 
     logger.warning("validate_answer_llm_unparsed", raw=content, question_id=question.id)
     return AnswerValidation(valid=True, normalized_value=raw.strip())
+
+
+async def validate_answer(
+    question: PlanQuestion, raw: str, context: PlannerContext
+) -> AnswerValidation:
+    """Combines resolve_confirmation + validate_answer_deterministic +, for a
+    rejected constrained (non-free_text) answer in real (non-mock) mode, an
+    LLM call purely to improve the rejection wording — never to override
+    validity. Constrained kinds (enum/numeric/yes_no) remain fully
+    deterministic for accept/reject (e.g. "kinda risky I guess" for
+    risk_tolerance is always rejected, never LLM-coerced onto a choice);
+    only the user-facing reason text for a rejection can come from the LLM,
+    which already knows how to tell a clarifying question ("what do you
+    mean?") apart from plain gibberish (see validate_answer_system.jinja2)
+    but was previously only ever invoked for free_text answers."""
+    result = resolve_confirmation(question.id, raw, context)
+    if result is not None:
+        return result
+
+    result = validate_answer_deterministic(question, raw)
+    if result is None:
+        return await validate_answer_llm(question, raw)  # free_text ambiguous case, unchanged
+
+    if result.valid or settings.chat_model.use_mock:
+        return result
+
+    try:
+        llm_opinion = await validate_answer_llm(question, raw)
+    except Exception:
+        logger.exception("validate_answer_reason_enrichment_failed", question_id=question.id)
+        return result
+    if not llm_opinion.valid and llm_opinion.reason:
+        return AnswerValidation(valid=False, reason=llm_opinion.reason)
+    return result  # LLM disagreed, errored, or gave no reason — keep deterministic verdict
 
 
 async def extract_stated_goal(message: str) -> str | None:

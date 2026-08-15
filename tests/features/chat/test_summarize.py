@@ -3,7 +3,7 @@
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
-from app.features.chat.summarize import needs_summary, summarize_node, trim_for_llm
+from app.features.chat.summarize import format_turns, needs_summary, summarize_node, trim_for_llm
 
 
 def _make_messages(n: int) -> list:
@@ -47,3 +47,29 @@ def test_trim_for_llm_keeps_latest():
     messages = _make_messages(50)
     trimmed = trim_for_llm(messages)
     assert trimmed[-1].content == "reply 49"
+
+
+def test_format_turns_empty_history():
+    assert format_turns([]) == ""
+
+
+def test_format_turns_includes_role_and_content():
+    messages = _make_messages(2)
+    digest = format_turns(messages, limit=4)
+    assert "human: message 0" in digest
+    assert "ai: reply 1" in digest
+
+
+def test_format_turns_respects_limit():
+    messages = _make_messages(10)
+    digest = format_turns(messages, limit=2)
+    lines = digest.split("\n")
+    assert len(lines) == 2
+    assert "reply 9" in lines[-1]
+    assert "message 8" in lines[0]
+
+
+def test_format_turns_truncates_long_content():
+    messages = [HumanMessage(content="x" * 500)]
+    digest = format_turns(messages, limit=4)
+    assert len(digest) <= len("human: ") + 200

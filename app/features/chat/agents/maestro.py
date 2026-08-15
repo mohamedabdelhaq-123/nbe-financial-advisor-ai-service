@@ -45,12 +45,22 @@ _INTENT_KEYWORDS: dict[str, list[str]] = {
 }
 
 
-def classify_intent(message: str) -> str:
+def classify_intent(message: str, history: str = "") -> str:
     lower = message.lower()
     for intent, keywords in _INTENT_KEYWORDS.items():
         for kw in keywords:
             if kw in lower:
                 return intent
+    # The bare message alone carries no keyword signal (a short, elliptical
+    # follow-up like "what about this month?") — fall back to scanning
+    # recent history so mock mode/tests can exercise the same
+    # context-disambiguation the real LLM prompt does with `history` below.
+    if history:
+        lower_history = history.lower()
+        for intent, keywords in _INTENT_KEYWORDS.items():
+            for kw in keywords:
+                if kw in lower_history:
+                    return intent
     return "general"
 
 
@@ -108,13 +118,17 @@ async def maestro_node(state: ConversationState) -> dict:
     if last_msg and hasattr(last_msg, "content") and isinstance(last_msg.content, str):
         text = last_msg.content
 
+    from app.features.chat.summarize import format_turns
+
+    history = format_turns(state["messages"][:-1], limit=4)
+
     if settings.chat_model.use_mock:
-        intent = classify_intent(text)
+        intent = classify_intent(text, history=history)
     else:
         from app.core.llm import get_chat_model
         from app.features.chat.prompts import get_intent_classification_prompt
 
-        prompt = get_intent_classification_prompt().render(message=text)
+        prompt = get_intent_classification_prompt().render(message=text, history=history or None)
         result = await get_chat_model().ainvoke(prompt)
         raw = result.content if isinstance(result.content, str) else str(result.content)
         intent = _parse_llm_intent(raw, text)

@@ -198,10 +198,18 @@ async def _agentic_analysis(state: ConversationState, user_id) -> dict:
         ]
         return {"messages": produced, "message_references": references}
     except Exception:
-        logger.exception("analysis_node_agentic_failed", user_id=str(user_id))
+        # Reached almost exclusively on an LLM-call failure (timeout/provider
+        # hiccup) — the tools themselves never raise up to here, they catch
+        # their own DB failures and return {"error": ...} observations for
+        # the model to react to (see the per-call try/except above). So the
+        # message here must not claim a backend/DB outage it doesn't know
+        # happened.
+        logger.exception("analysis_llm_call_failed", user_id=str(user_id))
         return {
             "messages": [
-                AIMessage(content="I don't have that data yet. Backend is unavailable."),
+                AIMessage(
+                    content="Sorry, I couldn't finish analyzing that just now — please try again."
+                ),
             ],
             "message_references": [],
         }
