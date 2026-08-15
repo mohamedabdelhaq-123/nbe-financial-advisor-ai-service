@@ -135,3 +135,39 @@ async def test_mock_mineru_client_table_body_is_parseable_by_real_chunking():
 
     assert chunks
     assert all(chunk for chunk in chunks)
+
+
+# ---------------------------------------------------------------------------
+# SEC-005 — oversized document rejected before forwarding to MinerU
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_http_client_rejects_oversized_document_without_calling_mineru(monkeypatch):
+    import app.features.ingestion.mineru_client as mineru_client_module
+    from app.features.ingestion.mineru_client import DocumentTooLargeError
+
+    monkeypatch.setattr(mineru_client_module, "MAX_DOCUMENT_BYTES", 10)
+
+    called = False
+
+    class _ExplodingAsyncClient:
+        def __init__(self, *a, **kw):
+            nonlocal called
+            called = True
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def post(self, *a, **kw):
+            raise AssertionError("must not be called for an oversized document")
+
+    monkeypatch.setattr(mineru_client_module.httpx, "AsyncClient", _ExplodingAsyncClient)
+
+    with pytest.raises(DocumentTooLargeError):
+        await HttpMineruClient().parse_document(b"this is more than ten bytes", "statement.pdf")
+
+    assert called is False
