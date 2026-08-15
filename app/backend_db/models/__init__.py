@@ -25,7 +25,7 @@ from app.backend_db.models.aggregations import (
     RecurringCharge,
     SpendingPatternInsight,
 )
-from app.backend_db.models.budgets import Budget, BudgetAllocation, BudgetHistory
+from app.backend_db.models.budgets import Budget, BudgetAllocation, BudgetHistory, Goal
 from app.backend_db.models.categories import Category
 from app.backend_db.models.conversations import Conversation, Message, MessageReference
 from app.backend_db.models.feedback import Reaction, ReportedIssue
@@ -67,6 +67,7 @@ __all__ = [
     "Budget",
     "BudgetAllocation",
     "BudgetHistory",
+    "Goal",
     # categories
     "Category",
     # conversations

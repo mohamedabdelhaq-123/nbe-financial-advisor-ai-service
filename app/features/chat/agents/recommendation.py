@@ -2,6 +2,7 @@
 
 from langchain_core.messages import AIMessage
 
+from app.features.chat.guards import with_disclaimer
 from app.features.chat.schemas import (
     ProductCardPayload,
     ProductCardWidget,
@@ -53,8 +54,11 @@ async def recommendation_node(state: ConversationState) -> dict:
                 ]
             )
         )
+        # Disclaimed: suggesting financial products IS advice. The two early
+        # returns above ("no matches", "being set up") deliberately aren't —
+        # they recommend nothing, so there is nothing to disclaim.
         return {
-            "messages": [AIMessage(content=reply)],
+            "messages": [AIMessage(content=with_disclaimer(reply))],
             "message_references": [],
             "widget": widget,
         }

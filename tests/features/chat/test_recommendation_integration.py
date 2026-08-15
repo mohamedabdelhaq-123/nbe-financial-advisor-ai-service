@@ -44,6 +44,12 @@ async def test_recommendation_node_returns_products(monkeypatch):
     assert isinstance(msg, AIMessage)
     assert "product" in msg.content.lower() or "savings" in msg.content.lower()
 
+    # Suggesting financial products is advice, so this reply carries the
+    # disclaimer — unlike the analysis agent, which only reports spending.
+    from app.features.chat.guards import DISCLAIMER
+
+    assert DISCLAIMER in msg.content
+
     # FR-005: products live in the product_card widget payload, not in references.
     widget = result.get("widget")
     assert isinstance(widget, ProductCardWidget)

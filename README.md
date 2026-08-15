@@ -4,17 +4,12 @@ Internal FastAPI AI service for the NBE AI-PFM platform.
 
 ## Running locally
 
-This repo's Postgres/S3 dependencies are **not** self-contained in dev — they're
-provided by the sibling `nbe-financial-advisor-backend` repo's own dev stack, which
-also provisions the `ai_appdb`/`ai_user`/`ai_readonly` roles this service needs
-(via `deploy/initdb/10-ai-roles.sh`). Start that first:
-
-```bash
-cd ../nbe-financial-advisor-backend
-docker compose up -d postgres seaweedfs   # publishes the shared "nbe-dev" network
-```
-
-Then in this repo:
+This service has no compose files of its own anymore — the sibling
+`nbe-financial-advisor-backend` repo's `deploy/` directory holds the single
+consolidated stack (Postgres, Redis, SeaweedFS, backend, celery-worker,
+mock-bank-oauth/sync, this service, and the frontend), which also provisions
+the `ai_appdb`/`ai_user`/`ai_readonly` roles this service needs (via
+`deploy/initdb/10-ai-roles.sh`).
 
 ```bash
 cp .env.example .env
@@ -23,12 +18,14 @@ cp .env.example .env
 # .env (AI_DB_PASSWORD, AI_READONLY_PASSWORD, SEAWEED_ACCESS_KEY, SEAWEED_SECRET_KEY).
 # These aren't synced automatically across repos.
 
-make dev-up   # builds the `dev` image target, runs alembic, serves with --reload on :8001
+make dev-up   # alias for `docker compose -f ../nbe-financial-advisor-backend/deploy/docker-compose.dev.yml up --build`
 ```
 
-`compose/docker-compose.yml` is the shared base service definition;
-`compose/docker-compose.dev.yml` layers on hot reload, a published port, and
-attaches to the backend's `nbe-dev` network.
+`nbe-financial-advisor-backend/deploy/docker-compose.dev.yml` is the single
+source of truth for the dev stack; `docker-compose.prod.yml` next to it is
+the production equivalent. Both build this service directly (`target: dev` /
+`target: prod`) as part of the one stack, rather than this repo running its
+own separate compose project.
 
 ### LLM observability (Langfuse)
 
@@ -36,40 +33,31 @@ Every LLM call the service makes (chat, statement normalization, plan
 generation, embeddings) is auto-instrumented and traced to Langfuse — no
 per-call-site changes. `LANGFUSE_ENABLED=true` and a matching
 `LANGFUSE_HOST`/`LANGFUSE_PUBLIC_KEY`/`LANGFUSE_SECRET_KEY` are already
-`.env.example`'s defaults, pointed at a local self-hosted Langfuse v3 stack
-(its own Postgres, ClickHouse, Redis, and MinIO — see
-`compose/langfuse/docker-compose.yml`) that starts with no signup step:
-`langfuse-web` seeds its own admin account/project/API-key pair on first boot
-via Langfuse's headless initialization, using those same `LANGFUSE_*` values.
+`.env.example`'s defaults, intended to point at a local self-hosted Langfuse
+v3 stack (its own Postgres, ClickHouse, Redis, and MinIO — see
+`compose/langfuse/docker-compose.yml`, vendored from upstream). **Not
+currently wired into `make dev-up`** — the consolidated dev stack in
+`nbe-financial-advisor-backend/deploy/` doesn't start it (it would collide on
+service names — that file already has its own `postgres`/`redis`), and
+there's no separate invocation set up yet either. Until that's built, either
+point at a cloud-hosted Langfuse instance (set the three `LANGFUSE_*` vars to
+its real values) or set `LANGFUSE_ENABLED=false` to disable tracing outright
+— the only state where the three connection settings aren't required
+(leaving them unset while `LANGFUSE_ENABLED=true` fails startup immediately
+rather than silently degrading).
 
-That stack is opt-in — `make dev-up` alone does **not** start it, to keep the
-base stack free of six extra containers for anyone not using local tracing:
-
-```bash
-make dev-up-observability   # dev-up + the local Langfuse stack
-```
-
-Without it, `ai-service` still starts fine (`LANGFUSE_ENABLED` defaults to
-`true`) — it just fails open silently, since nothing is listening at
-`LANGFUSE_HOST` yet; no effect on requests either way. To point at a
-cloud-hosted Langfuse instead, set the three `LANGFUSE_*` vars to its real
-values and skip `dev-up-observability`. To disable tracing outright, set
-`LANGFUSE_ENABLED=false` (the only state where the three connection settings
-aren't required — leaving them unset while `LANGFUSE_ENABLED=true` fails
-startup immediately rather than silently degrading).
-
-See `specs/013-langfuse-observability/quickstart.md` for the full validation
-walkthrough.
+See `specs/013-langfuse-observability/quickstart.md` for the original
+validation walkthrough — written against the pre-consolidation compose setup,
+so its exact commands are stale, but the Langfuse config/behavior it
+describes still holds.
 
 ### Production deployment
 
-`compose/docker-compose.prod.yml` is the real deployment path for this
-service: it builds the hardened `prod` image target and joins `nbe-prod`, the
-external network created by
-`nbe-financial-advisor-backend/deploy/docker-compose.yml` (that file no
-longer builds/runs ai-service itself), so `backend`/`celery-worker` there can
-reach it at `http://ai-service:8001`. All runtime config comes from `.env`,
-same as dev — see that file's header comment for the network prerequisite.
+`nbe-financial-advisor-backend/deploy/docker-compose.prod.yml` is the real
+deployment path: one stack, fronted by nginx on the `nbe-prod` network, that
+builds this service directly (`target: prod`) alongside everything else —
+`backend`/`celery-worker` reach it at `http://ai-service:8001` inside that
+same stack. All runtime config comes from `.env`, same as dev.
 
 ```bash
 make prod-up    # build + start, detached

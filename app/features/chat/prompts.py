@@ -16,7 +16,6 @@ from app.core.jinja import build_prompts_env
 _env = build_prompts_env(Path(__file__).parent / "prompt_templates")
 _summary_prompt = _env.get_template("summarize.jinja2")
 _intent_classification_prompt = _env.get_template("intent_classification.jinja2")
-_grounded_analysis_prompt = _env.get_template("grounded_analysis.jinja2")
 
 
 def get_summary_prompt() -> Template:
@@ -35,13 +34,3 @@ def get_intent_classification_prompt() -> Template:
     analysis, planning, recommendation, general.
     """
     return _intent_classification_prompt
-
-
-def get_grounded_analysis_prompt() -> Template:
-    """Return the grounded spending-analysis prompt template.
-
-    Caller renders it: get_grounded_analysis_prompt().render(data_context=<str>)
-    Rendered text still instructs citing only supplied figures and stating
-    "I don't have that data yet" for anything not covered.
-    """
-    return _grounded_analysis_prompt

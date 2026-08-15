@@ -16,7 +16,14 @@ class ConversationState(TypedDict):
     user_context: dict | None
     stage: str
     intent: str
+    in_scope: bool
     planner_answers: dict
     questions_asked: int
+    last_question_id: str | None
+    planner_validation_attempts: int
+    planner_context: dict | None
+    stated_savings_goal: str | None
+    pending_answer: str | None
+    pending_validation_reason: str | None
     message_references: list[Reference]
     widget: Widget | None
