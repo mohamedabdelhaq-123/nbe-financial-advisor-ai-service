@@ -9,7 +9,11 @@ _GOLDEN_SUMMARY = (
 _GOLDEN_INTENT = (
     "Classify the intent of the LATEST user message into one of: analysis, planning, "
     "recommendation, general. Use the recent conversation for context if the latest "
-    "message alone is ambiguous.\n"
+    "message alone is ambiguous.\n\n"
+    "If the message describes, asks for help with, or seeks a method for an illegal "
+    "or harmful act (e.g. theft, fraud, money laundering, violence, evading law "
+    'enforcement) — even if it uses financial vocabulary like "bank" or "money" — '
+    "classify it as general, never as planning, analysis, or recommendation.\n"
     "Latest user message: How much did I spend?\n"
     "Respond with ONLY the intent word for the latest message.\n"
 )
@@ -17,7 +21,11 @@ _GOLDEN_INTENT = (
 _GOLDEN_INTENT_WITH_HISTORY = (
     "Classify the intent of the LATEST user message into one of: analysis, planning, "
     "recommendation, general. Use the recent conversation for context if the latest "
-    "message alone is ambiguous.\n"
+    "message alone is ambiguous.\n\n"
+    "If the message describes, asks for help with, or seeks a method for an illegal "
+    "or harmful act (e.g. theft, fraud, money laundering, violence, evading law "
+    'enforcement) — even if it uses financial vocabulary like "bank" or "money" — '
+    "classify it as general, never as planning, analysis, or recommendation.\n"
     "Recent conversation:\n"
     "human: what did i spend on the most last month?\n"
     "\n"
@@ -40,6 +48,9 @@ def test_intent_classification_prompt_matches_hardcoded_output():
     assert rendered == _GOLDEN_INTENT
     # The fixed intent-label set must remain present verbatim in the rendered text.
     assert "analysis, planning, recommendation, general" in rendered
+    # The illegal/harmful-act routing guard must survive future wording edits to
+    # this template — a bank-robbery request must never classify as "planning".
+    assert "illegal or harmful act" in rendered
 
 
 def test_intent_classification_prompt_includes_history_when_present():

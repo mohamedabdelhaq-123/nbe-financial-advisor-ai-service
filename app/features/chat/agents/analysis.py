@@ -38,6 +38,9 @@ ANALYSIS_SYSTEM_PROMPT_TEMPLATE = (
     'the `flow` argument ("income"/"expense") for plain spending/income '
     "questions; use `transaction_type` only for precise single-type requests "
     'like "just my fees".\n\n'
+    "If the request describes, seeks help with, or asks for a method for an "
+    "illegal or harmful act, decline plainly instead of answering, even if "
+    "it references your own transaction data.\n\n"
     "If a tool call returns no matching data, say so plainly (e.g. \"I don't "
     'have that data yet") rather than guessing. If the request is ambiguous '
     "(e.g. no date range given), pick a reasonable default and state what you "
