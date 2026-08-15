@@ -17,6 +17,7 @@ _env = build_prompts_env(Path(__file__).parent / "prompt_templates")
 _budget_allocation_prompt = _env.get_template("budget_allocation.jinja2")
 _validate_answer_system_prompt = _env.get_template("validate_answer_system.jinja2")
 _validate_answer_human_prompt = _env.get_template("validate_answer_human.jinja2")
+_goal_extraction_system_prompt = _env.get_template("goal_extraction_system.jinja2")
 
 
 def get_budget_allocation_prompt() -> Template:
@@ -52,3 +53,14 @@ def get_answer_validation_prompt() -> Template:
     )
     """
     return _validate_answer_human_prompt
+
+
+def get_goal_extraction_system_prompt() -> Template:
+    """Return the savings-goal-extraction SystemMessage prompt template.
+
+    Static — takes no render variables. Caller renders it with no arguments:
+    get_goal_extraction_system_prompt().render()
+    The triggering user message is sent as-is as the HumanMessage content —
+    it isn't a template, so there's nothing to render for it.
+    """
+    return _goal_extraction_system_prompt

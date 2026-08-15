@@ -4,6 +4,7 @@ from app.features.plan.prompts import (
     get_answer_validation_prompt,
     get_answer_validation_system_prompt,
     get_budget_allocation_prompt,
+    get_goal_extraction_system_prompt,
 )
 
 _GOLDEN_BUDGET = (
@@ -72,3 +73,18 @@ def test_answer_validation_prompt_matches_hardcoded_output():
     assert rendered == (
         "Question: Do you have a specific savings goal?\nUser's reply: what do you mean?"
     )
+
+
+_GOLDEN_GOAL_EXTRACTION_SYSTEM = (
+    "You are checking whether a user's message already states what they want to "
+    "save for — a specific goal, purchase, or target. If it does, reply with ONLY "
+    "a short description of that goal (e.g. 'a bike', 'an emergency fund of "
+    "10000 EGP'). If the message doesn't mention a specific savings goal, reply "
+    "with ONLY the word 'none'."
+)
+
+
+def test_goal_extraction_system_prompt_matches_hardcoded_output():
+    """Template output matches extract_stated_goal()'s old inline system prompt exactly."""
+    rendered = get_goal_extraction_system_prompt().render()
+    assert rendered == _GOLDEN_GOAL_EXTRACTION_SYSTEM

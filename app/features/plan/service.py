@@ -282,15 +282,6 @@ async def validate_answer_llm(question: PlanQuestion, raw: str) -> AnswerValidat
     return AnswerValidation(valid=True, normalized_value=raw.strip())
 
 
-_GOAL_EXTRACTION_SYSTEM_PROMPT = (
-    "You are checking whether a user's message already states what they want to "
-    "save for — a specific goal, purchase, or target. If it does, reply with ONLY "
-    "a short description of that goal (e.g. 'a bike', 'an emergency fund of "
-    "10000 EGP'). If the message doesn't mention a specific savings goal, reply "
-    "with ONLY the word 'none'."
-)
-
-
 async def extract_stated_goal(message: str) -> str | None:
     """Checks whether the message that triggered planning already states a
     savings goal (e.g. "help me plan for a bike"), so planner_ask_node can
@@ -305,11 +296,13 @@ async def extract_stated_goal(message: str) -> str | None:
     from langchain_core.messages import HumanMessage, SystemMessage
 
     from app.core.llm import get_chat_model
+    from app.features.plan.prompts import get_goal_extraction_system_prompt
 
+    system_prompt = get_goal_extraction_system_prompt().render()
     try:
         result = await get_chat_model().ainvoke(
             [
-                SystemMessage(content=_GOAL_EXTRACTION_SYSTEM_PROMPT),
+                SystemMessage(content=system_prompt),
                 HumanMessage(content=message),
             ]
         )
