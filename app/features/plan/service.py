@@ -243,23 +243,6 @@ def validate_answer_deterministic(question: PlanQuestion, raw: str) -> AnswerVal
     return None
 
 
-_LLM_VALIDATION_SYSTEM_PROMPT = (
-    "You are checking whether a user's reply is a genuine, on-topic answer to a "
-    "budget-planning question — not whether it's correct or complete, just whether "
-    "it's a real attempt to answer. Reply 'invalid' if the reply is a clarifying "
-    "question asked back instead of an answer, off-topic text, gibberish, or a "
-    "refusal — not just because it's short or imprecise.\n\n"
-    "When invalid, the part after 'invalid:' is shown directly to the user in place "
-    "of a rejection message, so it must actually help them answer — not just name "
-    "the problem. If they asked what the question means, briefly explain it with a "
-    "concrete example. If it's off-topic or gibberish, gently redirect them back to "
-    "the question. One short sentence, plain and conversational — never say the "
-    "word 'invalid' or describe the reply as invalid/gibberish/off-topic in that "
-    "sentence itself.\n\n"
-    "Reply with ONLY 'valid' or 'invalid: <that one helpful sentence>', nothing else."
-)
-
-
 async def validate_answer_llm(question: PlanQuestion, raw: str) -> AnswerValidation:
     """Only called when validate_answer_deterministic returns None (an
     ambiguous free_text answer). Parses the small model's reply the same
@@ -272,11 +255,16 @@ async def validate_answer_llm(question: PlanQuestion, raw: str) -> AnswerValidat
     from langchain_core.messages import HumanMessage, SystemMessage
 
     from app.core.llm import get_chat_model
+    from app.features.plan.prompts import (
+        get_answer_validation_prompt,
+        get_answer_validation_system_prompt,
+    )
 
-    prompt = f"Question: {question.text}\nUser's reply: {raw}"
+    system_prompt = get_answer_validation_system_prompt().render()
+    prompt = get_answer_validation_prompt().render(question_text=question.text, raw=raw)
     try:
         result = await get_chat_model().ainvoke(
-            [SystemMessage(content=_LLM_VALIDATION_SYSTEM_PROMPT), HumanMessage(content=prompt)]
+            [SystemMessage(content=system_prompt), HumanMessage(content=prompt)]
         )
         content = result.content if isinstance(result.content, str) else str(result.content)
     except Exception:

@@ -15,6 +15,8 @@ from app.core.jinja import build_prompts_env
 
 _env = build_prompts_env(Path(__file__).parent / "prompt_templates")
 _budget_allocation_prompt = _env.get_template("budget_allocation.jinja2")
+_validate_answer_system_prompt = _env.get_template("validate_answer_system.jinja2")
+_validate_answer_human_prompt = _env.get_template("validate_answer_human.jinja2")
 
 
 def get_budget_allocation_prompt() -> Template:
@@ -31,3 +33,22 @@ def get_budget_allocation_prompt() -> Template:
     `', '.join(f'{c!r}: 10' for c in known_categories)`.
     """
     return _budget_allocation_prompt
+
+
+def get_answer_validation_system_prompt() -> Template:
+    """Return the answer-validation SystemMessage prompt template.
+
+    Static — takes no render variables. Caller renders it with no arguments:
+    get_answer_validation_system_prompt().render()
+    """
+    return _validate_answer_system_prompt
+
+
+def get_answer_validation_prompt() -> Template:
+    """Return the answer-validation HumanMessage prompt template.
+
+    Caller renders it: get_answer_validation_prompt().render(
+        question_text=<str>, raw=<str>
+    )
+    """
+    return _validate_answer_human_prompt

@@ -1,6 +1,10 @@
-"""Golden-string test: plan prompt template preserves generate_plan()'s wording."""
+"""Golden-string tests: plan prompt templates preserve service.py's original wording."""
 
-from app.features.plan.prompts import get_budget_allocation_prompt
+from app.features.plan.prompts import (
+    get_answer_validation_prompt,
+    get_answer_validation_system_prompt,
+    get_budget_allocation_prompt,
+)
 
 _GOLDEN_BUDGET = (
     "Generate a monthly budget allocation as percentages summing to exactly 100. "
@@ -35,3 +39,36 @@ def test_budget_allocation_prompt_matches_generate_plan_output():
     assert rendered == _GOLDEN_BUDGET
     # The live-category constraint must remain present verbatim in the rendered text.
     assert "using ONLY these category names: housing, food, savings" in rendered
+
+
+_GOLDEN_VALIDATION_SYSTEM = (
+    "You are checking whether a user's reply is a genuine, on-topic answer to a "
+    "budget-planning question — not whether it's correct or complete, just whether "
+    "it's a real attempt to answer. Reply 'invalid' if the reply is a clarifying "
+    "question asked back instead of an answer, off-topic text, gibberish, or a "
+    "refusal — not just because it's short or imprecise.\n\n"
+    "When invalid, the part after 'invalid:' is shown directly to the user in place "
+    "of a rejection message, so it must actually help them answer — not just name "
+    "the problem. If they asked what the question means, briefly explain it with a "
+    "concrete example. If it's off-topic or gibberish, gently redirect them back to "
+    "the question. One short sentence, plain and conversational — never say the "
+    "word 'invalid' or describe the reply as invalid/gibberish/off-topic in that "
+    "sentence itself.\n\n"
+    "Reply with ONLY 'valid' or 'invalid: <that one helpful sentence>', nothing else."
+)
+
+
+def test_answer_validation_system_prompt_matches_hardcoded_output():
+    """Template output matches validate_answer_llm()'s old inline system prompt exactly."""
+    rendered = get_answer_validation_system_prompt().render()
+    assert rendered == _GOLDEN_VALIDATION_SYSTEM
+
+
+def test_answer_validation_prompt_matches_hardcoded_output():
+    """Template output matches validate_answer_llm()'s old inline human prompt exactly."""
+    rendered = get_answer_validation_prompt().render(
+        question_text="Do you have a specific savings goal?", raw="what do you mean?"
+    )
+    assert rendered == (
+        "Question: Do you have a specific savings goal?\nUser's reply: what do you mean?"
+    )
