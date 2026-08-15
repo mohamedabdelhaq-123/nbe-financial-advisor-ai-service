@@ -35,8 +35,7 @@ async def process_statement(
         raise HTTPException(
             status_code=502,
             detail=(
-                "failed to retrieve source document: malformed seaweed_file_id "
-                f"{seaweed_file_id!r}"
+                f"failed to retrieve source document: malformed seaweed_file_id {seaweed_file_id!r}"
             ),
         )
     source_bucket, source_key = seaweed_file_id.split("/", 1)

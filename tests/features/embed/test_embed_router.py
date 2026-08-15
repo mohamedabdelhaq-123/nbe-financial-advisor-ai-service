@@ -19,8 +19,7 @@ def test_embeddings_200_single_input(client, auth_headers):
     assert len(datum["embedding"]) == 768
     assert body["model"] == settings.embeddings.model_name
     assert body["object"] == "list"
-    assert body["usage"]["prompt_tokens"] > 0
-    assert body["usage"]["total_tokens"] == body["usage"]["prompt_tokens"]
+    assert "usage" not in body
 
 
 def test_embeddings_200_batch_input_preserves_order(client, auth_headers):
@@ -63,6 +62,28 @@ def test_embeddings_502_on_provider_failure(client, auth_headers, monkeypatch):
 
     resp = client.post("/internal/embeddings", json={"input": "hello"}, headers=auth_headers)
     assert resp.status_code == 502
+
+
+def test_embeddings_cleans_input_by_default(client, auth_headers):
+    resp = client.post(
+        "/internal/embeddings",
+        json={"input": ["كارفور‏  الـــقاهرة  ٢٥٠", "كارفور القاهرة 250"]},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    assert data[0]["embedding"] == data[1]["embedding"]
+
+
+def test_embeddings_clean_false_embeds_verbatim(client, auth_headers):
+    resp = client.post(
+        "/internal/embeddings",
+        json={"input": ["كارفور‏  الـــقاهرة  ٢٥٠", "كارفور القاهرة 250"], "clean": False},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    assert data[0]["embedding"] != data[1]["embedding"]
 
 
 def test_embeddings_deterministic_across_requests(client, auth_headers):

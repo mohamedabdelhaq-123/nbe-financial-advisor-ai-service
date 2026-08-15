@@ -17,6 +17,13 @@ class EmbeddingRequest(BaseModel):
         gt=0,
         description="Output vector size. Omit for the configured default.",
     )
+    clean: bool = Field(
+        default=True,
+        description=(
+            "Apply Unicode/OCR-noise cleaning before embedding. Disable only to embed "
+            "text verbatim — vectors produced with and without cleaning are not comparable."
+        ),
+    )
 
     @field_validator("input", mode="before")
     @classmethod
@@ -34,13 +41,7 @@ class EmbeddingDatum(BaseModel):
     index: int
 
 
-class EmbeddingUsage(BaseModel):
-    prompt_tokens: int
-    total_tokens: int
-
-
 class EmbeddingResponse(BaseModel):
     object: Literal["list"] = "list"
     data: list[EmbeddingDatum]
     model: str
-    usage: EmbeddingUsage

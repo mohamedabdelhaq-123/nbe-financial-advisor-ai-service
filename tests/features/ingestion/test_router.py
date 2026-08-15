@@ -57,7 +57,7 @@ def test_normalize_200_with_token(client, auth_headers, monkeypatch):
 
     async def _mock_normalize_statement(session_gen, own_session_gen, ocr_result_id):
         return NormalizeStatementResult(
-            normalized_json={"bank_name": None, "account_hint": None, "transactions": []},
+            normalized_json={"bank_name": None, "account_number": None, "transactions": []},
             model_used="gpt-4o-mini",
         )
 

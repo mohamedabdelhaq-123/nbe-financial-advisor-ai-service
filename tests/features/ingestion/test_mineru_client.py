@@ -12,7 +12,9 @@ from app.features.ingestion.mineru_client import (
     _extract_artifacts_from_zip,
     get_mineru_client,
 )
-from app.features.ingestion.normalizer.chunking import _split_into_chunks
+from app.features.ingestion.normalizer.agents.chunked_langgraph.chunking import (
+    _split_into_chunks,
+)
 
 
 def _make_zip(files: dict[str, bytes]) -> bytes:

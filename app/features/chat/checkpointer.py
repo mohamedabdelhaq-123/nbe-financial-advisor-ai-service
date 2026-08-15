@@ -5,19 +5,7 @@ Checkpointer tables live in the OWN DB and are set up at startup via
 `checkpoint_writes` tables.
 """
 
-from urllib.parse import quote
-
-from app.core.config import settings
-
-
-def _psycopg_conn_string() -> str:
-    user = quote(str(settings.own_db.postgres_user), safe="")
-    password = quote(settings.own_db.postgres_password.get_secret_value(), safe="")
-    return (
-        f"postgresql://{user}:{password}"
-        f"@{settings.own_db.postgres_host}:{settings.own_db.postgres_port}"
-        f"/{settings.own_db.postgres_db}"
-    )
+from app.core.db import psycopg_conn_string
 
 
 async def build_checkpointer():
@@ -25,7 +13,7 @@ async def build_checkpointer():
     from psycopg_pool import AsyncConnectionPool
 
     pool = AsyncConnectionPool(
-        conninfo=_psycopg_conn_string(),
+        conninfo=psycopg_conn_string(),
         min_size=2,
         max_size=5,
         kwargs={"autocommit": True},
