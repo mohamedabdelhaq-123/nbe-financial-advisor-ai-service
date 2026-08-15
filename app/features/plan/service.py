@@ -195,6 +195,40 @@ async def next_question(
     return None
 
 
+# A closed set of question-starter markers — same style as scope_guard.py's
+# _CAPABILITY_PHRASES: small, curated, deterministic, not an attempt to
+# detect every possible question.
+_QUESTION_MARKERS = (
+    "what",
+    "why",
+    "how",
+    "who",
+    "which",
+    "when",
+    "where",
+    "do you",
+    "does it",
+    "is it",
+    "are you",
+    "can you",
+    "could you",
+    "would you",
+)
+
+
+def _looks_like_a_question(text: str) -> bool:
+    """A reply containing a choice word is still not an answer if it's
+    asking about that word rather than selecting it — "what does frugal
+    even mean" contains "frugal" as an ordinary substring/word, which the
+    enum matcher below would otherwise happily accept as a selection of
+    "frugal". Regression coverage for a real bug: this exact reply silently
+    completed the questionnaire with a lifestyle the user never chose."""
+    stripped = text.strip().lower()
+    if stripped.endswith("?"):
+        return True
+    return any(stripped.startswith(marker) for marker in _QUESTION_MARKERS)
+
+
 def validate_answer_deterministic(question: PlanQuestion, raw: str) -> AnswerValidation | None:
     """Returns a verdict for every kind except an inconclusive `free_text`
     answer, where `None` signals the caller to fall back to an LLM check.
@@ -212,9 +246,10 @@ def validate_answer_deterministic(question: PlanQuestion, raw: str) -> AnswerVal
 
     if question.kind == "enum":
         low = text.lower()
-        for choice in question.choices or []:
-            if choice in low or low in choice:
-                return AnswerValidation(valid=True, normalized_value=choice)
+        if not _looks_like_a_question(text):
+            for choice in question.choices or []:
+                if choice in low or low in choice:
+                    return AnswerValidation(valid=True, normalized_value=choice)
         return AnswerValidation(
             valid=False,
             reason=f"Please choose one of: {', '.join(question.choices or [])}.",

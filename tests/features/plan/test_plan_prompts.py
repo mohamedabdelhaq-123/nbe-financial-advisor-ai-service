@@ -54,7 +54,11 @@ _GOLDEN_VALIDATION_SYSTEM = (
     "concrete example. If it's off-topic or gibberish, gently redirect them back to "
     "the question. One short sentence, plain and conversational — never say the "
     "word 'invalid' or describe the reply as invalid/gibberish/off-topic in that "
-    "sentence itself.\n\n"
+    "sentence itself. Speak directly, as yourself, the one asking — never refer to "
+    'the question in the third person ("it wants...", "it\'s asking...", "it '
+    'means..."); explain what you\'re asking for directly instead (e.g. "Pick low, '
+    'medium, or high — low means...", not "It wants you to pick low, medium or '
+    'high").\n\n'
     "Reply with ONLY 'valid' or 'invalid: <that one helpful sentence>', nothing else."
 )
 

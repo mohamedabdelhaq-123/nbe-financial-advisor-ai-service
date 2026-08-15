@@ -98,6 +98,24 @@ def test_validate_answer_enum_rejects_unknown_choice():
     assert "low" in result.reason
 
 
+@pytest.mark.parametrize(
+    "reply",
+    [
+        "what does frugal even mean",
+        "what does frugal even mean?",
+        "why would I say frugal",
+        "how is frugal different from moderate",
+    ],
+)
+def test_validate_answer_enum_rejects_a_question_containing_a_choice_word(reply: str):
+    # Regression test: "frugal" is a real substring/word of these replies,
+    # but the user is asking about the word, not selecting it — a plain
+    # substring match previously silently accepted this as a valid choice.
+    q = QUESTIONS_BY_ID["lifestyle"]
+    result = validate_answer_deterministic(q, reply)
+    assert result.valid is False
+
+
 def test_validate_answer_numeric_extracts_and_bounds_checks():
     q = QUESTIONS_BY_ID["dependents"]
     ok = validate_answer_deterministic(q, "I support 3 people")
