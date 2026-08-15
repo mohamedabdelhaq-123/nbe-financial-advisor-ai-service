@@ -346,6 +346,7 @@ async def generate_plan(
     from app.backend_db import get_backend_session
     from app.backend_db.models import Category
     from app.core.llm import get_chat_model
+    from app.features.plan.prompts import get_budget_allocation_prompt
 
     # The confirming Django endpoint (PATCH /budget -> AllocationInputSerializer)
     # validates `category` against real backend Category rows by exact name, not
@@ -364,20 +365,16 @@ async def generate_plan(
         )
 
         llm = get_chat_model()
-        prompt = (
-            f"Generate a monthly budget allocation as percentages summing to exactly 100. "
-            f"User's average monthly income: {context.get('avg_monthly_income')}. "
-            f"Known recurring expenses: {context.get('avg_monthly_recurring_expense')}. "
-            f"Known savings goal from their profile: {context.get('savings_goal_name')} "
-            f"(target {context.get('savings_goal_target_amount')}, within "
-            f"{context.get('savings_goal_timeline_months')} months). "
-            f"Questionnaire's savings_goal answer: {answers.get('savings_goal')}. "
-            "If these describe the same goal, don't double-count it; if they're "
-            "different, treat both as goals to weigh when allocating savings. "
-            f"Questionnaire answers: {answers}. "
-            f"Return ONLY a JSON object mapping category names to integer percentages, "
-            f"using ONLY these category names: {', '.join(known_categories)}. "
-            f"Example: {{{', '.join(f'{c!r}: 10' for c in known_categories)}}}"
+        prompt = get_budget_allocation_prompt().render(
+            avg_monthly_income=context.get("avg_monthly_income"),
+            avg_monthly_recurring_expense=context.get("avg_monthly_recurring_expense"),
+            savings_goal_name=context.get("savings_goal_name"),
+            savings_goal_target_amount=context.get("savings_goal_target_amount"),
+            savings_goal_timeline_months=context.get("savings_goal_timeline_months"),
+            savings_goal_answer=answers.get("savings_goal"),
+            answers=answers,
+            known_categories=known_categories,
+            example_categories=", ".join(f"{c!r}: 10" for c in known_categories),
         )
         response = await llm.ainvoke(prompt)
         raw = str(response.content).strip()
