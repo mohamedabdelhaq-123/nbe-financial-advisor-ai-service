@@ -88,3 +88,8 @@ exclude = ["migrations/"]
 [tool.pytest.ini_options]
 pythonpath = ["."]
 asyncio_mode = "auto"
+# A bare `pytest` (no path argument) only collects the production test
+# suite — the red-team suite (redteam/) is never collected implicitly.
+# `pytest redteam` / `make redteam` still work by passing an explicit path,
+# which overrides testpaths. See redteam/README.md.
+testpaths = ["tests"]

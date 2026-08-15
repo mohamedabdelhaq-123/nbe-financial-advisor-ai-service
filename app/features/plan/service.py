@@ -10,14 +10,6 @@ from app.features.plan.schemas import AnswerValidation, BudgetAllocation, PlanQu
 
 logger = get_logger(__name__)
 
-# The confirming Django endpoint (PATCH /budget -> AllocationInputSerializer)
-# validates `category` against real backend Category rows by exact name, not
-# free text (SlugRelatedField, filtered to category_type="expense") -- these
-# are the only six that exist there. A plan category outside this set isn't
-# rejected until the user presses "confirm" on the allocation-slider widget,
-# where it fails with a validation error and no visible explanation why.
-VALID_EXPENSE_CATEGORIES = ("housing", "food", "transport", "savings", "lifestyle", "other")
-
 MAX_QUESTIONS = 7
 
 QUESTIONS = [
@@ -349,32 +341,51 @@ async def generate_plan(
     if settings.chat_model.use_mock:
         return _mock_plan(answers)
 
+    from sqlalchemy import select
+
+    from app.backend_db import get_backend_session
+    from app.backend_db.models import Category
     from app.core.llm import get_chat_model
 
-    llm = get_chat_model()
-    prompt = (
-        f"Generate a monthly budget allocation as percentages summing to exactly 100. "
-        f"User's average monthly income: {context.get('avg_monthly_income')}. "
-        f"Known recurring expenses: {context.get('avg_monthly_recurring_expense')}. "
-        f"Known savings goal from their profile: {context.get('savings_goal_name')} "
-        f"(target {context.get('savings_goal_target_amount')}, within "
-        f"{context.get('savings_goal_timeline_months')} months). "
-        f"Questionnaire's savings_goal answer: {answers.get('savings_goal')}. "
-        "If these describe the same goal, don't double-count it; if they're "
-        "different, treat both as goals to weigh when allocating savings. "
-        f"Questionnaire answers: {answers}. "
-        f"Return ONLY a JSON object mapping category names to integer percentages. "
-        f"Use ONLY these category names, exactly as spelled — the confirming "
-        f"backend rejects any other category name outright: "
-        f"{', '.join(VALID_EXPENSE_CATEGORIES)}. "
-        f'Example: {{"housing": 30, "food": 20, "savings": 20, "transport": 10, '
-        f'"lifestyle": 15, "other": 5}}'
-    )
-    response = await llm.ainvoke(prompt)
-    raw = str(response.content).strip()
+    # The confirming Django endpoint (PATCH /budget -> AllocationInputSerializer)
+    # validates `category` against real backend Category rows by exact name, not
+    # free text (SlugRelatedField, filtered to category_type="expense") — so the
+    # prompt is built from the live table instead of a hardcoded list that could
+    # drift from it, and _parse_and_normalize snaps the LLM's output onto it too.
+    async for backend_session in get_backend_session():
+        known_categories = (
+            (
+                await backend_session.execute(
+                    select(Category.name).where(Category.category_type == "expense")
+                )
+            )
+            .scalars()
+            .all()
+        )
 
-    allocations = _parse_and_normalize(raw)
-    return allocations
+        llm = get_chat_model()
+        prompt = (
+            f"Generate a monthly budget allocation as percentages summing to exactly 100. "
+            f"User's average monthly income: {context.get('avg_monthly_income')}. "
+            f"Known recurring expenses: {context.get('avg_monthly_recurring_expense')}. "
+            f"Known savings goal from their profile: {context.get('savings_goal_name')} "
+            f"(target {context.get('savings_goal_target_amount')}, within "
+            f"{context.get('savings_goal_timeline_months')} months). "
+            f"Questionnaire's savings_goal answer: {answers.get('savings_goal')}. "
+            "If these describe the same goal, don't double-count it; if they're "
+            "different, treat both as goals to weigh when allocating savings. "
+            f"Questionnaire answers: {answers}. "
+            f"Return ONLY a JSON object mapping category names to integer percentages, "
+            f"using ONLY these category names: {', '.join(known_categories)}. "
+            f"Example: {{{', '.join(f'{c!r}: 10' for c in known_categories)}}}"
+        )
+        response = await llm.ainvoke(prompt)
+        raw = str(response.content).strip()
+
+        return await _parse_and_normalize(raw, backend_session)
+
+    # get_backend_session always yields exactly one session; unreachable.
+    return _mock_plan(answers)
 
 
 def _mock_plan(answers: dict) -> list[BudgetAllocation]:
@@ -417,8 +428,10 @@ def _mock_plan(answers: dict) -> list[BudgetAllocation]:
     return allocations
 
 
-def _parse_and_normalize(raw: str) -> list[BudgetAllocation]:
+async def _parse_and_normalize(raw: str, backend_session) -> list[BudgetAllocation]:
     import json
+
+    from app.features.ingestion.categories import resolve_category
 
     json_match = re.search(r"\{[^}]+\}", raw)
     if not json_match:
@@ -429,14 +442,27 @@ def _parse_and_normalize(raw: str) -> list[BudgetAllocation]:
     except json.JSONDecodeError:
         return _mock_plan({})
 
-    allocations = []
+    # Snap each LLM-produced name onto the backend's real category vocabulary
+    # (case-insensitive exact match, falling back to the expense "other"
+    # bucket) — the LLM is prompted with the known names but isn't guaranteed
+    # to stick to them, and a name the backend doesn't recognise 400s the
+    # budget PATCH downstream. Two raw names resolving to the same bucket
+    # (e.g. both falling back to "other") are merged rather than kept as
+    # separate lines with the same category.
+    merged: dict[str, Decimal] = {}
+    order: list[str] = []
     for category, pct in data.items():
         try:
-            allocations.append(
-                BudgetAllocation(category=category, percentage=Decimal(str(int(pct))))
-            )
+            percentage = Decimal(str(int(pct)))
         except (ValueError, TypeError):
             return _mock_plan({})
+        resolved = await resolve_category(backend_session, str(category))
+        if resolved not in merged:
+            order.append(resolved)
+            merged[resolved] = Decimal("0")
+        merged[resolved] += percentage
+
+    allocations = [BudgetAllocation(category=name, percentage=merged[name]) for name in order]
 
     total = sum(a.percentage for a in allocations)
     if total != 100:
