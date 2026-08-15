@@ -13,6 +13,7 @@ _GOLDEN_INTENT = (
     "Respond with ONLY the intent word."
 )
 
+
 def test_summary_prompt_matches_hardcoded_output():
     """US2 acceptance #1 — summarization template is byte-for-byte the old inline prompt."""
     rendered = get_summary_prompt().render(turns=["human: hello", "ai: hi there"])
