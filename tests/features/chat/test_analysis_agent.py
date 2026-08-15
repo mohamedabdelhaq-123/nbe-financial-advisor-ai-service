@@ -130,6 +130,14 @@ async def test_analysis_node_reads_lazy_attributes_before_session_closes(monkeyp
     assert "Backend is unavailable" not in result["messages"][0].content
     assert len(result["message_references"]) == len(transactions)
 
+    # The analysis agent reports what the user already spent — a statement of
+    # fact, not advice — so it must NOT carry the advice disclaimer. That is
+    # reserved for the planner and the recommendation agent (guards.py's
+    # with_disclaimer docstring).
+    from app.features.chat.guards import DISCLAIMER
+
+    assert DISCLAIMER not in result["messages"][0].content
+
 
 @pytest.mark.asyncio
 async def test_analysis_node_no_data(monkeypatch):

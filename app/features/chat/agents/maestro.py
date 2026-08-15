@@ -78,12 +78,30 @@ def _parse_llm_intent(raw: str, message: str) -> str:
     return keyword_intent
 
 
+async def _planner_context_update(state: ConversationState) -> dict:
+    """Assembles planner_context once per session (Pipeline.md §3: Maestro
+    assembles user context before delegating to a sub-agent) and caches it
+    in state — never re-derives once set. Deriving it here rather than in
+    planner_ask_node also sidesteps a real LangGraph interrupt() gotcha: a
+    node that calls interrupt() re-executes from its own start on every
+    resume, so anything before the interrupt() call would otherwise re-run
+    (and re-hit the DB) on every single answer, not just once per session.
+    Maestro doesn't run again during the interrupt loop at all, so this is
+    the one place a single derivation actually sticks."""
+    if state.get("planner_context") is not None:
+        return {}
+    from app.features.plan.context import derive_planner_context
+
+    context = await derive_planner_context(state["user_id"])
+    return {"planner_context": context}
+
+
 async def maestro_node(state: ConversationState) -> dict:
     # If we are already mid-planning (questions asked but plan not yet complete),
     # preserve the routing — the new message is an answer to the questionnaire,
     # not a fresh intent signal.
     if state.get("stage") == "planning" and state.get("questions_asked", 0) > 0:
-        return {"intent": "planning"}
+        return {"intent": "planning", **await _planner_context_update(state)}
 
     last_msg = state["messages"][-1] if state["messages"] else None
     text = ""
@@ -104,4 +122,14 @@ async def maestro_node(state: ConversationState) -> dict:
         raw = result.content if isinstance(result.content, str) else str(result.content)
         intent = _parse_llm_intent(raw, text)
 
+    if intent == "planning":
+        was_first_turn = state.get("planner_context") is None
+        extra = await _planner_context_update(state)
+        if was_first_turn:
+            from app.features.plan.service import extract_stated_goal
+
+            stated_goal = await extract_stated_goal(text)
+            if stated_goal:
+                extra["stated_savings_goal"] = stated_goal
+        return {"intent": intent, **extra}
     return {"intent": intent}

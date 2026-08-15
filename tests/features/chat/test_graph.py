@@ -126,7 +126,11 @@ async def test_general_node_sends_a_system_prompt_when_not_mocked(monkeypatch):
             captured["messages"] = messages
             return SimpleNamespace(content="a grounded, on-topic reply")
 
-    monkeypatch.setattr("app.core.llm.get_chat_model", lambda: _FakeChatModel())
+    # **kwargs, not a bare lambda: _general_node asks for get_chat_model(
+    # streaming=True) so its tokens reach the user as they're generated, and
+    # other call sites pass max_tokens. Matching the real signature loosely
+    # keeps this stub from breaking every time one of those is tuned.
+    monkeypatch.setattr("app.core.llm.get_chat_model", lambda **kwargs: _FakeChatModel())
 
     state = _state(messages=[_HumanLike("what can you help me with?")])
     result = await _general_node(state)
