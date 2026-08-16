@@ -1,8 +1,9 @@
 """US1 Unit test: Maestro intent classification (mock mode)."""
 
 import pytest
+from langchain_core.messages import AIMessage, HumanMessage
 
-from app.features.chat.agents.maestro import _parse_llm_intent, classify_intent
+from app.features.chat.agents.maestro import _parse_llm_intent, classify_intent, maestro_node
 
 
 @pytest.mark.parametrize(
@@ -58,3 +59,41 @@ def test_parse_llm_intent_falls_back_to_keywords_when_unparsable():
 def test_parse_llm_intent_falls_back_to_general_when_truly_unclassifiable():
     result = _parse_llm_intent("sure, I can help with that", "hello there")
     assert result == "general"
+
+
+# ── classify_intent: history fallback for elliptical follow-ups ─────────────
+
+
+def test_classify_intent_falls_back_to_history_when_message_has_no_keywords():
+    # "what about this month ?" alone carries no _INTENT_KEYWORDS match.
+    result = classify_intent(
+        "what about this month ?", history="human: what did i spend on the most last month?"
+    )
+    assert result == "analysis"
+
+
+def test_classify_intent_prefers_message_keywords_over_history():
+    result = classify_intent(
+        "which credit card should I get", history="human: what did i spend on the most last month?"
+    )
+    assert result == "recommendation"
+
+
+def test_classify_intent_general_when_neither_message_nor_history_match():
+    result = classify_intent("hello there", history="human: hi\nai: hello, how can I help?")
+    assert result == "general"
+
+
+@pytest.mark.asyncio
+async def test_maestro_node_uses_history_for_elliptical_followup_in_mock_mode():
+    state = {
+        "messages": [
+            HumanMessage(content="what did i spend on the most last month?"),
+            AIMessage(content="I don't have that data yet. Backend is unavailable."),
+            HumanMessage(content="what about this month ?"),
+        ],
+        "stage": "",
+        "questions_asked": 0,
+    }
+    result = await maestro_node(state)
+    assert result["intent"] == "analysis"

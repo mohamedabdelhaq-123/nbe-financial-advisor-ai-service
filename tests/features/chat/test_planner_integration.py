@@ -141,9 +141,11 @@ async def test_three_invalid_answers_fall_back_to_accept_as_is():
     await graph.ainvoke(Command(resume="still not a number"), config)
     snap = await graph.aget_state(config)
 
-    # Retry cap hit — accepted as-is rather than trapping the user forever.
+    # Retry cap hit — falls back to the question's neutral default (not the
+    # raw rejected text, which would otherwise flow ungrounded into
+    # generate_plan's prompt) for a constrained (numeric) question.
     assert snap.values.get("planner_validation_attempts") == 0
-    assert snap.values.get("planner_answers", {}).get("dependents") == "still not a number"
+    assert snap.values.get("planner_answers", {}).get("dependents") == "0"
     # last_question_id names the question just force-accepted (dependents);
     # the live interrupt shows the questionnaire actually moved on.
     assert snap.values.get("last_question_id") == "dependents"
@@ -153,6 +155,34 @@ async def test_three_invalid_answers_fall_back_to_accept_as_is():
     # retries must not leak into this unrelated question's prompt.
     reprompt_text = snap.interrupts[0].value["text"]
     assert "number" not in reprompt_text.lower()
+    # The user is told a default was used, not left to silently discover it.
+    messages = snap.values.get("messages") or []
+    ack_messages = [m for m in messages if "assume" in m.content.lower()]
+    assert ack_messages, "expected an acknowledgment message for the fallback default"
+    assert '"0"' in ack_messages[-1].content
+
+
+@pytest.mark.asyncio
+async def test_three_invalid_enum_answers_fall_back_to_default_with_acknowledgment():
+    graph, config = await _fresh_graph_and_config()
+
+    await graph.ainvoke(_initial_state("help me budget"), config)
+    for answer in _VALID_ANSWERS_IN_ORDER[:4]:  # reach risk_tolerance (enum)
+        await graph.ainvoke(Command(resume=answer), config)
+    snap = await graph.aget_state(config)
+    assert snap.interrupts[0].value["question_id"] == "risk_tolerance"
+
+    await graph.ainvoke(Command(resume="what do you mean ?"), config)
+    await graph.ainvoke(Command(resume="fsdaf"), config)
+    await graph.ainvoke(Command(resume="what do you mean ?"), config)
+    snap = await graph.aget_state(config)
+
+    assert snap.values.get("planner_validation_attempts") == 0
+    assert snap.values.get("planner_answers", {}).get("risk_tolerance") == "medium"
+    messages = snap.values.get("messages") or []
+    ack_messages = [m for m in messages if "assume" in m.content.lower()]
+    assert ack_messages, "expected an acknowledgment message for the fallback default"
+    assert '"medium"' in ack_messages[-1].content
 
 
 @pytest.mark.asyncio

@@ -18,6 +18,7 @@ QUESTIONS = [
         text="Is your monthly income consistent or variable?",
         kind="enum",
         choices=["consistent", "variable"],
+        default="variable",
     ),
     PlanQuestion(
         id="fixed_expenses",
@@ -35,23 +36,27 @@ QUESTIONS = [
         kind="numeric",
         min_value=0,
         max_value=20,
+        default="0",
     ),
     PlanQuestion(
         id="risk_tolerance",
         text="How comfortable are you with financial risk (low/medium/high)?",
         kind="enum",
         choices=["low", "medium", "high"],
+        default="medium",
     ),
     PlanQuestion(
         id="debt",
         text="Do you have any outstanding debts beyond fixed obligations?",
         kind="yes_no",
+        default="no",
     ),
     PlanQuestion(
         id="lifestyle",
         text="How would you describe your spending lifestyle (frugal/moderate/generous)?",
         kind="enum",
         choices=["frugal", "moderate", "generous"],
+        default="moderate",
     ),
 ]
 
@@ -190,6 +195,40 @@ async def next_question(
     return None
 
 
+# A closed set of question-starter markers — same style as scope_guard.py's
+# _CAPABILITY_PHRASES: small, curated, deterministic, not an attempt to
+# detect every possible question.
+_QUESTION_MARKERS = (
+    "what",
+    "why",
+    "how",
+    "who",
+    "which",
+    "when",
+    "where",
+    "do you",
+    "does it",
+    "is it",
+    "are you",
+    "can you",
+    "could you",
+    "would you",
+)
+
+
+def _looks_like_a_question(text: str) -> bool:
+    """A reply containing a choice word is still not an answer if it's
+    asking about that word rather than selecting it — "what does frugal
+    even mean" contains "frugal" as an ordinary substring/word, which the
+    enum matcher below would otherwise happily accept as a selection of
+    "frugal". Regression coverage for a real bug: this exact reply silently
+    completed the questionnaire with a lifestyle the user never chose."""
+    stripped = text.strip().lower()
+    if stripped.endswith("?"):
+        return True
+    return any(stripped.startswith(marker) for marker in _QUESTION_MARKERS)
+
+
 def validate_answer_deterministic(question: PlanQuestion, raw: str) -> AnswerValidation | None:
     """Returns a verdict for every kind except an inconclusive `free_text`
     answer, where `None` signals the caller to fall back to an LLM check.
@@ -207,9 +246,10 @@ def validate_answer_deterministic(question: PlanQuestion, raw: str) -> AnswerVal
 
     if question.kind == "enum":
         low = text.lower()
-        for choice in question.choices or []:
-            if choice in low or low in choice:
-                return AnswerValidation(valid=True, normalized_value=choice)
+        if not _looks_like_a_question(text):
+            for choice in question.choices or []:
+                if choice in low or low in choice:
+                    return AnswerValidation(valid=True, normalized_value=choice)
         return AnswerValidation(
             valid=False,
             reason=f"Please choose one of: {', '.join(question.choices or [])}.",
@@ -280,6 +320,40 @@ async def validate_answer_llm(question: PlanQuestion, raw: str) -> AnswerValidat
 
     logger.warning("validate_answer_llm_unparsed", raw=content, question_id=question.id)
     return AnswerValidation(valid=True, normalized_value=raw.strip())
+
+
+async def validate_answer(
+    question: PlanQuestion, raw: str, context: PlannerContext
+) -> AnswerValidation:
+    """Combines resolve_confirmation + validate_answer_deterministic +, for a
+    rejected constrained (non-free_text) answer in real (non-mock) mode, an
+    LLM call purely to improve the rejection wording — never to override
+    validity. Constrained kinds (enum/numeric/yes_no) remain fully
+    deterministic for accept/reject (e.g. "kinda risky I guess" for
+    risk_tolerance is always rejected, never LLM-coerced onto a choice);
+    only the user-facing reason text for a rejection can come from the LLM,
+    which already knows how to tell a clarifying question ("what do you
+    mean?") apart from plain gibberish (see validate_answer_system.jinja2)
+    but was previously only ever invoked for free_text answers."""
+    result = resolve_confirmation(question.id, raw, context)
+    if result is not None:
+        return result
+
+    result = validate_answer_deterministic(question, raw)
+    if result is None:
+        return await validate_answer_llm(question, raw)  # free_text ambiguous case, unchanged
+
+    if result.valid or settings.chat_model.use_mock:
+        return result
+
+    try:
+        llm_opinion = await validate_answer_llm(question, raw)
+    except Exception:
+        logger.exception("validate_answer_reason_enrichment_failed", question_id=question.id)
+        return result
+    if not llm_opinion.valid and llm_opinion.reason:
+        return AnswerValidation(valid=False, reason=llm_opinion.reason)
+    return result  # LLM disagreed, errored, or gave no reason — keep deterministic verdict
 
 
 async def extract_stated_goal(message: str) -> str | None:

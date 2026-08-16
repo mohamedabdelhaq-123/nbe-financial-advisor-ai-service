@@ -7,7 +7,7 @@ from app.features.chat.agents.maestro import maestro_node
 from app.features.chat.agents.planner import planner_ask_node, validate_answer_node
 from app.features.chat.agents.recommendation import recommendation_node
 from app.features.chat.guards import GENERAL_NODE_SYSTEM_PROMPT
-from app.features.chat.scope_guard import check_scope
+from app.features.chat.scope_guard import build_scope_check_text, check_scope
 from app.features.chat.state import ConversationState
 from app.features.chat.summarize import needs_summary, summarize_node
 
@@ -43,10 +43,7 @@ async def _scope_guard_node(state: ConversationState) -> dict:
     if state.get("stage") == "planning" and state.get("questions_asked", 0) > 0:
         return {"in_scope": True}
 
-    last_msg = state["messages"][-1] if state["messages"] else None
-    text = ""
-    if last_msg and hasattr(last_msg, "content") and isinstance(last_msg.content, str):
-        text = last_msg.content
+    text = build_scope_check_text(state["messages"])
 
     result = await check_scope(text)
     return {"in_scope": result.in_scope}

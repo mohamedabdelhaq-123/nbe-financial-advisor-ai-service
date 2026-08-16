@@ -9,10 +9,12 @@ a mocked HTTP response, never a real network call.
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from langchain_core.messages import AIMessage, HumanMessage
 from structlog.testing import capture_logs
 
 from app.features.chat import scope_guard as scope_guard_module
 from app.features.chat.scope_guard import (
+    CONTEXT_SNIPPET_CHARS,
     GREETING_LABEL,
     IN_SCOPE_LABEL,
     OUT_OF_SCOPE_LABEL,
@@ -20,6 +22,7 @@ from app.features.chat.scope_guard import (
     ScopeResult,
     _is_known_in_scope_phrase,
     _result_from_scores,
+    build_scope_check_text,
     check_scope,
 )
 
@@ -85,6 +88,62 @@ async def test_check_scope_bypasses_classifier_for_capability_phrase(monkeypatch
 
     result = await check_scope("what can you help me with?")
     assert result.in_scope is True
+
+
+# ── build_scope_check_text: NLI classifier input shaping ────────────────────
+
+
+def test_build_scope_check_text_empty_messages():
+    assert build_scope_check_text([]) == ""
+
+
+def test_build_scope_check_text_single_message_returns_it_unmodified():
+    messages = [HumanMessage(content="what were my recent transactions?")]
+    assert build_scope_check_text(messages) == "what were my recent transactions?"
+
+
+def test_build_scope_check_text_prepends_short_prior_snippet():
+    messages = [
+        AIMessage(
+            content="The category you spent the most on this month is lifestyle, "
+            "with a total expense of 400 EGP."
+        ),
+        HumanMessage(content="what was the description of this transaction?"),
+    ]
+    text = build_scope_check_text(messages)
+    assert text.startswith("The category you spent the most on this month is lifestyle")
+    assert text.endswith("what was the description of this transaction?")
+
+
+def test_build_scope_check_text_truncates_long_prior_message():
+    long_prior = "x" * 500
+    messages = [AIMessage(content=long_prior), HumanMessage(content="what about this month?")]
+    text = build_scope_check_text(messages)
+    prefix, _, current = text.rpartition(" what about this month?")
+    assert current == ""  # rpartition found the current message at the end
+    assert len(prefix) <= CONTEXT_SNIPPET_CHARS
+
+
+def test_build_scope_check_text_current_message_last_and_untruncated():
+    # A genuine topic switch must still dominate the premise — its full text
+    # is preserved even though the prior context is capped short.
+    messages = [
+        AIMessage(content="You spent 1,240 EGP on groceries last month."),
+        HumanMessage(content="ok now give me the recipe for shakshoka please, step by step"),
+    ]
+    text = build_scope_check_text(messages)
+    assert text.endswith("ok now give me the recipe for shakshoka please, step by step")
+
+
+def test_build_scope_check_text_skips_empty_prior_content():
+    messages = [AIMessage(content=""), HumanMessage(content="what about this month?")]
+    assert build_scope_check_text(messages) == "what about this month?"
+
+
+def test_build_scope_check_text_non_string_current_content_stringified():
+    messages = [HumanMessage(content=[{"type": "text", "text": "hi"}])]
+    # Just must not raise — non-string content is stringified, not indexed.
+    assert isinstance(build_scope_check_text(messages), str)
 
 
 # ── check_scope: disabled / fail-open / no-PII-in-logs ───────────────────────

@@ -29,8 +29,10 @@ def get_summary_prompt() -> Template:
 def get_intent_classification_prompt() -> Template:
     """Return the intent-classification prompt template.
 
-    Caller renders it: get_intent_classification_prompt().render(message=<str>)
-    Rendered text still constrains the model to exactly:
+    Caller renders it: get_intent_classification_prompt().render(message=<str>, history=<str|None>)
+    `history` is an optional digest of recent prior turns, used to
+    disambiguate an elliptical latest message; omit/None when there's no
+    prior context. Rendered text still constrains the model to exactly:
     analysis, planning, recommendation, general.
     """
     return _intent_classification_prompt
