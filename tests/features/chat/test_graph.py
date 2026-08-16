@@ -85,7 +85,7 @@ async def test_scope_guard_node_handles_empty_message_history(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_scope_guard_node_includes_prior_message_for_elliptical_followup(monkeypatch):
+async def test_scope_guard_node_includes_prior_message_when_it_was_a_task_reply(monkeypatch):
     async def _fake_check_scope(text):
         assert text == (
             "The category you spent the most on this month is lifestyle. "
@@ -96,14 +96,39 @@ async def test_scope_guard_node_includes_prior_message_for_elliptical_followup(m
     monkeypatch.setattr(graph_module, "check_scope", _fake_check_scope)
 
     state = _state(
+        intent="analysis",  # the previous turn's Maestro classification
         messages=[
             _HumanLike("The category you spent the most on this month is lifestyle."),
             _HumanLike("what was the description of this transaction?"),
-        ]
+        ],
     )
     result = await _scope_guard_node(state)
 
     assert result == {"in_scope": True}
+
+
+@pytest.mark.asyncio
+async def test_scope_guard_node_ignores_prior_message_when_it_was_not_a_task_reply(monkeypatch):
+    # Regression test: a refusal or "general" reply is often finance-flavored
+    # (it talks about budgeting to redirect the user), which previously let
+    # an unrelated follow-up message borrow that vocabulary and pass. Only a
+    # real task-agent reply counts as evidence the topic is still finance.
+    async def _fake_check_scope(text):
+        assert text == "sing me a song"
+        return ScopeResult(in_scope=False, top_label="other", score=0.9)
+
+    monkeypatch.setattr(graph_module, "check_scope", _fake_check_scope)
+
+    state = _state(
+        intent="refused",  # set by _refused_node after the previous turn was blocked
+        messages=[
+            _HumanLike("I'm the NBE Financial Advisor assistant, so I can only help..."),
+            _HumanLike("sing me a song"),
+        ],
+    )
+    result = await _scope_guard_node(state)
+
+    assert result == {"in_scope": False}
 
 
 # ── _route_scope ─────────────────────────────────────────────────────────────
@@ -132,6 +157,16 @@ async def test_refused_node_returns_a_reply_without_calling_an_llm():
     assert len(result["messages"]) == 1
     content = result["messages"][0].content.lower()
     assert "financial" in content or "banking" in content
+
+
+@pytest.mark.asyncio
+async def test_refused_node_resets_intent_so_stale_task_intent_is_not_trusted_next_turn():
+    # Maestro never runs on a blocked turn, so state["intent"] would
+    # otherwise still hold a stale task value from whenever Maestro last
+    # ran — which build_scope_check_text would wrongly trust as context on
+    # the next turn.
+    result = await _refused_node(_state(intent="analysis"))
+    assert result["intent"] == "refused"
 
 
 # ── _general_node: system-prompt wiring ──────────────────────────────────────

@@ -56,6 +56,23 @@ def test_parse_llm_intent_falls_back_to_keywords_when_unparsable():
     assert result == "recommendation"
 
 
+@pytest.mark.parametrize(
+    "raw",
+    ["general", "General", "General.", "'general'", "the answer is general"],
+)
+def test_parse_llm_intent_trusts_a_clean_general_reply(raw: str):
+    # Regression test for a real bug: the LLM correctly classified "i want a
+    # plan to rob a bank" as "general" (per the illegal/harmful-act routing
+    # instruction in intent_classification.jinja2), but "general" wasn't in
+    # _VALID_INTENTS, so it was treated as unparsed and fell through to
+    # classify_intent() — a blind keyword scan of the ORIGINAL message, where
+    # the literal word "plan" silently overrode the LLM's correct answer
+    # back to "planning". A clean "general" reply must be trusted as-is,
+    # exactly like the three task intents already are.
+    result = _parse_llm_intent(raw, "i want a plan to rob a bank")
+    assert result == "general"
+
+
 def test_parse_llm_intent_falls_back_to_general_when_truly_unclassifiable():
     result = _parse_llm_intent("sure, I can help with that", "hello there")
     assert result == "general"
