@@ -114,3 +114,32 @@ async def test_maestro_node_uses_history_for_elliptical_followup_in_mock_mode():
     }
     result = await maestro_node(state)
     assert result["intent"] == "analysis"
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "how much should i save each month?",
+        "how much can i save?",
+        "what if i save per month more than usual",
+        "show me a savings projection",
+    ],
+)
+def test_savings_projection_questions_route_to_analysis(message):
+    """These are answerable from the user's own data, so they belong to the
+    analysis agent — not to planning, which would start the questionnaire."""
+    assert classify_intent(message) == "analysis"
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "which savings account is best?",
+        "recommend a savings account",
+    ],
+)
+def test_savings_account_questions_still_route_to_recommendation(message):
+    """Regression guard for the keyword-ordering hazard: _INTENT_KEYWORDS is
+    scanned in insertion order and returns on the first hit, so a bare "saving"
+    added to the analysis list would hijack these away from recommendation."""
+    assert classify_intent(message) == "recommendation"

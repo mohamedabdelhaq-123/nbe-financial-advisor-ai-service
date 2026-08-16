@@ -4,7 +4,8 @@ A discriminated union keyed on the ``type`` literal so the wire shape is
 enforced by the schema, not by convention (per data-model.md §Widget).
 """
 
-from typing import Literal
+import datetime
+from typing import Annotated, Literal
 
 from pydantic import UUID4, BaseModel, ConfigDict, Field
 
@@ -97,6 +98,141 @@ class ProductCardPayload(BaseModel):
     products: list[ProductMatchPayloadItem] = Field(description="Matched products (up to top_k=3).")
 
 
+class CategorySpend(BaseModel):
+    """One category slice of a spending breakdown."""
+
+    model_config = ConfigDict(
+        json_schema_extra={"examples": [{"name": "groceries", "amount": 1240.5, "pct": 31.2}]}
+    )
+
+    name: str = Field(
+        description="Backend category name, as returned by the backend's category list."
+    )
+    amount: float = Field(ge=0, description="Total spent in this category, in `currency`.")
+    pct: float = Field(
+        ge=0,
+        le=100,
+        description="Share of the period's total spend, as a percentage (0–100).",
+    )
+
+
+class SpendingBreakdownPayload(BaseModel):
+    """Payload of a `spending_breakdown` widget."""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "currency": "EGP",
+                    "month": "July 2026",
+                    "total": 3975.0,
+                    "categories": [
+                        {"name": "groceries", "amount": 1240.5, "pct": 31.2},
+                        {"name": "housing", "amount": 2000.0, "pct": 50.3},
+                        {"name": "transport", "amount": 734.5, "pct": 18.5},
+                    ],
+                }
+            ]
+        }
+    )
+
+    currency: str = Field(description="ISO currency code every amount is denominated in.")
+    month: str = Field(description='Display label for the period, e.g. "July 2026".')
+    total: float = Field(ge=0, description="Total spend across all categories, in `currency`.")
+    categories: list[CategorySpend] = Field(
+        description="Per-category spend, highest first; percentages SHOULD sum to ~100."
+    )
+
+
+class TransactionListItem(BaseModel):
+    """One row of a `transactions_list` widget."""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "id": "b3f1c2d4-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+                    "title": "Carrefour",
+                    "category": "groceries",
+                    "type": "expense",
+                    "amount": 340.25,
+                    "date": "2026-07-14",
+                }
+            ]
+        }
+    )
+
+    id: UUID4 = Field(description="Backend transaction identifier.")
+    title: str = Field(description="Display title — the normalized or raw merchant name.")
+    category: str = Field(description="Backend category name, or `uncategorized`.")
+    type: Literal["income", "expense"] = Field(
+        description=(
+            "Direction as the app presents it: `income` for credit rows, `expense` for "
+            "debit, fee, and transfer rows."
+        )
+    )
+    amount: float = Field(ge=0, description="Unsigned magnitude; direction comes from `type`.")
+    date: datetime.date = Field(
+        description=(
+            "Transaction date (ISO `YYYY-MM-DD`). The backend stores a date only — there "
+            "is no time-of-day for a transaction."
+        )
+    )
+
+
+class TransactionsListPayload(BaseModel):
+    """Payload of a `transactions_list` widget."""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "currency": "EGP",
+                    "transactions": [
+                        {
+                            "id": "b3f1c2d4-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+                            "title": "Carrefour",
+                            "category": "groceries",
+                            "type": "expense",
+                            "amount": 340.25,
+                            "date": "2026-07-14",
+                        }
+                    ],
+                }
+            ]
+        }
+    )
+
+    currency: str = Field(description="ISO currency code every amount is denominated in.")
+    transactions: list[TransactionListItem] = Field(description="Matching rows, newest first.")
+
+
+class SavingsSliderPayload(BaseModel):
+    """Payload of a `savings_slider` widget."""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "currency": "EGP",
+                    "current_balance": 48200.0,
+                    "default_monthly_savings": 3500.0,
+                }
+            ]
+        }
+    )
+
+    currency: str = Field(description="ISO currency code both amounts are denominated in.")
+    current_balance: float = Field(
+        description="The user's most recently known balance, in `currency`."
+    )
+    default_monthly_savings: float = Field(
+        ge=0,
+        description="Starting position for the slider — observed monthly income minus "
+        "recurring expense.",
+    )
+
+
 class AllocationSliderWidget(BaseModel):
     """Widget rendering an adjustable per-category budget allocation."""
 
@@ -153,4 +289,110 @@ class ProductCardWidget(BaseModel):
     payload: ProductCardPayload = Field(description="The matched products.")
 
 
-Widget = AllocationSliderWidget | ProductCardWidget
+class SpendingBreakdownWidget(BaseModel):
+    """Widget rendering per-category spend for one period."""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "type": "spending_breakdown",
+                    "payload": {
+                        "currency": "EGP",
+                        "month": "July 2026",
+                        "total": 3975.0,
+                        "categories": [
+                            {"name": "groceries", "amount": 1240.5, "pct": 31.2},
+                            {"name": "housing", "amount": 2000.0, "pct": 50.3},
+                            {"name": "transport", "amount": 734.5, "pct": 18.5},
+                        ],
+                    },
+                }
+            ]
+        }
+    )
+
+    type: Literal["spending_breakdown"] = Field(
+        default="spending_breakdown",
+        description="Discriminator; always `spending_breakdown`.",
+    )
+    payload: SpendingBreakdownPayload = Field(description="The per-category spend breakdown.")
+
+
+class TransactionsListWidget(BaseModel):
+    """Widget rendering a scrollable list of the user's transactions."""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "type": "transactions_list",
+                    "payload": {
+                        "currency": "EGP",
+                        "transactions": [
+                            {
+                                "id": "b3f1c2d4-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+                                "title": "Carrefour",
+                                "category": "groceries",
+                                "type": "expense",
+                                "amount": 340.25,
+                                "date": "2026-07-14",
+                            }
+                        ],
+                    },
+                }
+            ]
+        }
+    )
+
+    type: Literal["transactions_list"] = Field(
+        default="transactions_list",
+        description="Discriminator; always `transactions_list`.",
+    )
+    payload: TransactionsListPayload = Field(description="The listed transactions.")
+
+
+class SavingsSliderWidget(BaseModel):
+    """Widget letting the user explore a savings projection. Read-only — unlike
+    `allocation_slider`, adjusting it writes nothing back."""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "type": "savings_slider",
+                    "payload": {
+                        "currency": "EGP",
+                        "current_balance": 48200.0,
+                        "default_monthly_savings": 3500.0,
+                    },
+                }
+            ]
+        }
+    )
+
+    type: Literal["savings_slider"] = Field(
+        default="savings_slider",
+        description="Discriminator; always `savings_slider`.",
+    )
+    payload: SavingsSliderPayload = Field(description="The projection's starting figures.")
+
+
+# Genuinely tagged on `type` rather than a bare union: SpendingBreakdownPayload and
+# TransactionsListPayload both lead with `currency` plus a list, so left-to-right
+# union validation could plausibly mis-assign one to the other. Tagging makes the
+# `type` field decide the branch outright, and turns a bad payload into one
+# `union_tag_invalid` error instead of a confusing per-branch error list.
+#
+# Note this buys nothing in the OpenAPI schema: /internal/chat streams via
+# StreamingResponse with no response_model, so Widget never reaches
+# components.schemas at all — the SSE shape is documented by the hand-written
+# frame examples in router.py. The win here is runtime validation correctness.
+Widget = Annotated[
+    AllocationSliderWidget
+    | ProductCardWidget
+    | SpendingBreakdownWidget
+    | TransactionsListWidget
+    | SavingsSliderWidget,
+    Field(discriminator="type"),
+]

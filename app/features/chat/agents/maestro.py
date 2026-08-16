@@ -36,6 +36,15 @@ _INTENT_KEYWORDS: dict[str, list[str]] = {
         "salary",
         "balance",
         "statement",
+        # Savings-projection phrasings. Deliberately multi-word: this dict is
+        # scanned in insertion order and returns on the first hit, so a bare
+        # "saving" here would swallow "which savings account is best" before
+        # the recommendation list below ever gets a look.
+        "how much should i save",
+        "how much can i save",
+        "save per month",
+        "saving per month",
+        "savings projection",
     ],
     "recommendation": [
         "recommend",

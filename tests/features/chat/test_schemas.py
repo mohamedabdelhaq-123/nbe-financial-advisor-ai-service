@@ -156,3 +156,95 @@ def test_chat_turn_request_accepts_uuid_user_id():
         message="hi",
     )
     assert str(request.user_id) == "7a1b2c3d-4e5f-4a7b-8c9d-0e1f2a3b4c5d"
+
+
+def test_widget_union_resolves_all_five_types():
+    """Every member of the union round-trips to its own class. Worth asserting
+    per-type now the union has five members: spending_breakdown and
+    transactions_list both lead with `currency` plus a list, so an untagged
+    union could plausibly resolve one into the other."""
+    cases = {
+        "spending_breakdown": {
+            "currency": "EGP",
+            "month": "July 2026",
+            "total": 100.0,
+            "categories": [{"name": "groceries", "amount": 100.0, "pct": 100.0}],
+        },
+        "transactions_list": {
+            "currency": "EGP",
+            "transactions": [
+                {
+                    "id": "b3f1c2d4-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+                    "title": "Carrefour",
+                    "category": "groceries",
+                    "type": "expense",
+                    "amount": 340.25,
+                    "date": "2026-07-14",
+                }
+            ],
+        },
+        "savings_slider": {
+            "currency": "EGP",
+            "current_balance": 48200.0,
+            "default_monthly_savings": 3500.0,
+        },
+    }
+    for widget_type, payload in cases.items():
+        widget = _widget_adapter.validate_python({"type": widget_type, "payload": payload})
+        assert widget.type == widget_type
+
+
+def test_widget_union_is_tagged_on_type():
+    """A tagged union reports the discriminator, not one error per branch."""
+    with pytest.raises(ValidationError) as exc:
+        _widget_adapter.validate_python({"type": "mystery_widget", "payload": {}})
+    assert exc.value.errors()[0]["type"] == "union_tag_invalid"
+
+
+def test_transactions_list_rejects_wrong_payload_shape():
+    """The tag decides the branch, so a spending payload under the
+    transactions_list tag must fail rather than silently matching a sibling."""
+    with pytest.raises(ValidationError):
+        _widget_adapter.validate_python(
+            {
+                "type": "transactions_list",
+                "payload": {"currency": "EGP", "month": "July 2026", "total": 1.0},
+            }
+        )
+
+
+def test_spending_breakdown_pct_bounds_enforced():
+    with pytest.raises(ValidationError):
+        _widget_adapter.validate_python(
+            {
+                "type": "spending_breakdown",
+                "payload": {
+                    "currency": "EGP",
+                    "month": "July 2026",
+                    "total": 100.0,
+                    "categories": [{"name": "groceries", "amount": 100.0, "pct": 150.0}],
+                },
+            }
+        )
+
+
+def test_transaction_item_rejects_unknown_flow_type():
+    with pytest.raises(ValidationError):
+        _widget_adapter.validate_python(
+            {
+                "type": "transactions_list",
+                "payload": {
+                    "currency": "EGP",
+                    "transactions": [
+                        {
+                            "id": "b3f1c2d4-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+                            "title": "Carrefour",
+                            "category": "groceries",
+                            "type": "refund",
+                            "amount": 1.0,
+                            "date": "2026-07-14",
+                        }
+                    ],
+                },
+            }
+        )

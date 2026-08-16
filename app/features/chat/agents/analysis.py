@@ -15,14 +15,21 @@ Two entirely separate paths, matching every other node's use_mock branch:
 
 import datetime
 import json
+import uuid
 from typing import Any
 
 from langchain_core.messages import AIMessage, AnyMessage, SystemMessage, ToolMessage
 
 from app.core.config import settings
 from app.core.logging import get_logger
-from app.features.chat.schemas import Reference
+from app.features.chat.schemas import (
+    Reference,
+    TransactionListItem,
+    TransactionsListPayload,
+    TransactionsListWidget,
+)
 from app.features.chat.state import ConversationState
+from app.tools.transactions import flow_for_type
 
 logger = get_logger(__name__)
 
@@ -38,6 +45,15 @@ ANALYSIS_SYSTEM_PROMPT_TEMPLATE = (
     'the `flow` argument ("income"/"expense") for plain spending/income '
     "questions; use `transaction_type` only for precise single-type requests "
     'like "just my fees".\n\n'
+    "You also have three display tools — show_spending_breakdown, "
+    "show_transactions, and show_savings_projection — that render a chart, a "
+    "list, or an interactive projection alongside your reply. Call the "
+    "matching one IN ADDITION to answering when the user asks where their "
+    "money went, to see their transactions, or about saving per month. Your "
+    "written answer must still stand on its own: state the figures in prose "
+    "too, never reply with only a display tool call or point at the widget "
+    "instead of answering. If a display tool reports shown=false, explain its "
+    "reason plainly rather than estimating the missing figure yourself.\n\n"
     "If the request describes, seeks help with, or asks for a method for an "
     "illegal or harmful act, decline plainly instead of answering, even if "
     "it references your own transaction data.\n\n"
@@ -61,6 +77,59 @@ async def analysis_node(state: ConversationState) -> dict:
     return await _agentic_analysis(state, user_id)
 
 
+def _mock_widget(transactions) -> TransactionsListWidget | None:
+    """Builds a transactions_list widget from the rows the mock path already
+    read, so a frontend running against AI_SERVICE_CHAT_MODEL__USE_MOCK=1 has a
+    widget to render without a model or a real backend.
+
+    Deliberately per-row tolerant: mock mode is also what the unit tests drive,
+    and their fixtures are minimal stand-ins that carry only the fields the
+    assertion under test needs. A row missing a real UUID, a currency, or a
+    date is skipped rather than raising — an incomplete test fixture must not
+    turn into a failed chat turn.
+    """
+    rows: list[tuple[str, TransactionListItem]] = []
+    currencies: dict[str, int] = {}
+    for txn in transactions:
+        raw_id = getattr(txn, "id", None)
+        currency = getattr(txn, "currency", None)
+        date = getattr(txn, "transaction_date", None)
+        if not isinstance(currency, str) or not isinstance(date, datetime.date):
+            continue
+        try:
+            txn_id = uuid.UUID(str(raw_id))
+            amount = float(getattr(txn, "amount", 0) or 0)
+        except (TypeError, ValueError):
+            continue
+        rows.append(
+            (
+                currency,
+                TransactionListItem(
+                    id=txn_id,
+                    title=getattr(txn, "merchant_normalized", None)
+                    or getattr(txn, "merchant_raw", None)
+                    or "Unknown",
+                    category=(
+                        txn.category.name if getattr(txn, "category", None) else "uncategorized"
+                    ),
+                    type=flow_for_type(getattr(txn, "transaction_type", None)),
+                    amount=amount,
+                    date=date,
+                ),
+            )
+        )
+        currencies[currency] = currencies.get(currency, 0) + 1
+
+    if not rows:
+        return None
+    # One currency per payload, same rule the real display tools follow.
+    chosen = sorted(currencies.items(), key=lambda kv: (-kv[1], kv[0]))[0][0]
+    kept = [item for currency, item in rows if currency == chosen]
+    return TransactionsListWidget(
+        payload=TransactionsListPayload(currency=chosen, transactions=kept)
+    )
+
+
 async def _mock_analysis(user_id) -> dict:
     try:
         from sqlalchemy import select
@@ -76,6 +145,7 @@ async def _mock_analysis(user_id) -> dict:
         # (selectinload), not touched lazily later regardless of session state.
         references: list[Reference] = []
         lines: list[str] = []
+        widget: TransactionsListWidget | None = None
         async for session in get_backend_session():
             result = await session.execute(
                 select(Transaction)
@@ -84,6 +154,7 @@ async def _mock_analysis(user_id) -> dict:
                 .limit(10)
             )
             transactions = result.scalars().all()
+            widget = _mock_widget(transactions)
 
             for txn in transactions:
                 references.append(Reference(target_type="transaction", target_id=str(txn.id)))
@@ -104,6 +175,7 @@ async def _mock_analysis(user_id) -> dict:
         return {
             "messages": [AIMessage(content=reply)],
             "message_references": references,
+            "widget": widget,
         }
     except Exception:
         logger.exception("analysis_node_mock_failed", user_id=str(user_id))
@@ -119,8 +191,16 @@ async def _agentic_analysis(state: ConversationState, user_id) -> dict:
     try:
         from app.core.llm import get_chat_model
         from app.tools.transactions import make_transaction_tools
+        from app.tools.widgets import make_widget_tools
 
-        tools = make_transaction_tools(user_id)
+        # Two tool families, one flat list for bind_tools: the transaction tools
+        # answer the question, the widget tools additionally render it. The
+        # widget sink is per-turn state the display tools append to — see
+        # app/tools/widgets.py for why the payload is built there rather than
+        # being asked of the model.
+        transaction_tools = make_transaction_tools(user_id)
+        widget_tools, widget_sink = make_widget_tools(user_id, transaction_tools)
+        tools = [*transaction_tools, *widget_tools]
         tools_by_name = {t.name: t for t in tools}
         # streaming=True so the grounded answer reaches the user token by token
         # (`analysis` is one of service.py's _LEAF_NODES). bind_tools() carries
@@ -199,7 +279,14 @@ async def _agentic_analysis(state: ConversationState, user_id) -> dict:
         references = [
             Reference(target_type="transaction", target_id=tid) for tid in seen_transaction_ids
         ]
-        return {"messages": produced, "message_references": references}
+        # Last display tool called wins. Unlike planner/recommendation, this node
+        # sets BOTH a widget and references: the references are the citation
+        # trail for the prose answer and stay useful even when a widget renders.
+        return {
+            "messages": produced,
+            "message_references": references,
+            "widget": widget_sink[-1] if widget_sink else None,
+        }
     except Exception:
         # Reached almost exclusively on an LLM-call failure (timeout/provider
         # hiccup) — the tools themselves never raise up to here, they catch

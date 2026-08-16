@@ -10,6 +10,11 @@ _GOLDEN_INTENT = (
     "Classify the intent of the LATEST user message into one of: analysis, planning, "
     "recommendation, general. Use the recent conversation for context if the latest "
     "message alone is ambiguous.\n\n"
+    "Use analysis for questions answered from data the user already has — what they "
+    "spent, a breakdown of where their money went, listing their transactions, or how "
+    "much they could save per month based on their own income. Use planning only when "
+    "the user wants to build a new budget or spending plan, which starts a "
+    "questionnaire.\n\n"
     "If the message describes, asks for help with, or seeks a method for an illegal "
     "or harmful act (e.g. theft, fraud, money laundering, violence, evading law "
     'enforcement) — even if it uses financial vocabulary like "bank" or "money" — '
@@ -22,6 +27,11 @@ _GOLDEN_INTENT_WITH_HISTORY = (
     "Classify the intent of the LATEST user message into one of: analysis, planning, "
     "recommendation, general. Use the recent conversation for context if the latest "
     "message alone is ambiguous.\n\n"
+    "Use analysis for questions answered from data the user already has — what they "
+    "spent, a breakdown of where their money went, listing their transactions, or how "
+    "much they could save per month based on their own income. Use planning only when "
+    "the user wants to build a new budget or spending plan, which starts a "
+    "questionnaire.\n\n"
     "If the message describes, asks for help with, or seeks a method for an illegal "
     "or harmful act (e.g. theft, fraud, money laundering, violence, evading law "
     'enforcement) — even if it uses financial vocabulary like "bank" or "money" — '

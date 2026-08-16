@@ -424,3 +424,92 @@ async def test_multi_turn_typed_state_survives_real_postgres(own_db_url):
             monkeypatch.undo()
     finally:
         await pool.close()
+
+
+@pytest.mark.asyncio
+async def test_spending_breakdown_widget_serializes_into_done(real_mode, monkeypatch):
+    """The analysis widgets ride the same generic slot as the two original
+    ones — nothing in the SSE layer knows their type."""
+    from app.features.chat.schemas import SpendingBreakdownWidget
+
+    widget = SpendingBreakdownWidget.model_validate(
+        {
+            "type": "spending_breakdown",
+            "payload": {
+                "currency": "EGP",
+                "month": "July 2026",
+                "total": 1000.0,
+                "categories": [
+                    {"name": "housing", "amount": 750.0, "pct": 75.0},
+                    {"name": "groceries", "amount": 250.0, "pct": 25.0},
+                ],
+            },
+        }
+    )
+    graph = _FakeGraph(
+        chunks=[("Housing was your biggest expense.", "analysis")],
+        state_values={
+            "messages": [type("M", (), {"content": "Housing was your biggest expense."})()],
+            "widget": widget,
+            "message_references": [],
+        },
+    )
+    _install_fake_graph(monkeypatch, graph)
+
+    events = _parse(await _collect(real_mode, _request(message="where did my money go?")))
+    dones = [e for e in events if e["event"] == "done"]
+
+    assert len(dones) == 1
+    data = dones[0]["data"]
+    assert data["widget"]["type"] == "spending_breakdown"
+    payload = data["widget"]["payload"]
+    assert payload["currency"] == "EGP"
+    assert payload["month"] == "July 2026"
+    assert [c["name"] for c in payload["categories"]] == ["housing", "groceries"]
+    assert sum(c["pct"] for c in payload["categories"]) == pytest.approx(100.0)
+    # Analysis is the first node to emit a widget AND references together.
+    assert data["references"] == []
+    assert "id" not in data
+
+
+@pytest.mark.asyncio
+async def test_transactions_list_widget_serializes_dates_as_iso(real_mode, monkeypatch):
+    """`date` must reach the wire as a plain ISO date string — the frontend
+    parses it, and there is no time component to invent."""
+    from app.features.chat.schemas import TransactionsListWidget
+
+    widget = TransactionsListWidget.model_validate(
+        {
+            "type": "transactions_list",
+            "payload": {
+                "currency": "EGP",
+                "transactions": [
+                    {
+                        "id": "b3f1c2d4-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+                        "title": "Carrefour",
+                        "category": "groceries",
+                        "type": "expense",
+                        "amount": 340.25,
+                        "date": "2026-07-14",
+                    }
+                ],
+            },
+        }
+    )
+    graph = _FakeGraph(
+        chunks=[("Here are your recent transactions.", "analysis")],
+        state_values={
+            "messages": [type("M", (), {"content": "Here are your recent transactions."})()],
+            "widget": widget,
+            "message_references": [],
+        },
+    )
+    _install_fake_graph(monkeypatch, graph)
+
+    events = _parse(await _collect(real_mode, _request(message="show my transactions")))
+    data = [e for e in events if e["event"] == "done"][0]["data"]
+
+    row = data["widget"]["payload"]["transactions"][0]
+    assert row["date"] == "2026-07-14"
+    assert row["type"] == "expense"
+    assert row["id"] == "b3f1c2d4-5e6f-4a7b-8c9d-0e1f2a3b4c5d"

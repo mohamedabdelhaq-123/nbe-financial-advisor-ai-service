@@ -303,3 +303,163 @@ async def test_agentic_analysis_zero_rows_gets_plain_reply_not_generic_fallback(
     assert content == "You had no transactions last month."
     assert "Backend is unavailable" not in content
     assert result["message_references"] == []
+
+
+@pytest.mark.asyncio
+async def test_agentic_analysis_attaches_widget_from_display_tool(monkeypatch):
+    """The model chooses to call a display tool; the widget it produces reaches
+    the node's return value alongside the prose reply."""
+    monkeypatch.setattr(settings.chat_model, "use_mock", False)
+
+    tool_call_msg = AIMessage(
+        content="",
+        tool_calls=[
+            {
+                "name": "show_spending_breakdown",
+                "args": {"date_from": "2026-07-01", "date_to": "2026-07-31"},
+                "id": "call_1",
+            }
+        ],
+    )
+    final_msg = AIMessage(content="Housing was your biggest expense at 750 EGP.")
+    monkeypatch.setattr(
+        "app.core.llm.get_chat_model", lambda **kwargs: _FakeToolModel([tool_call_msg, final_msg])
+    )
+
+    @tool
+    async def compute_aggregate(**kwargs) -> dict:
+        """Fake aggregate broken out by category."""
+        return {
+            "groups": [
+                {"currency": "EGP", "category": "housing", "value": 750.0},
+                {"currency": "EGP", "category": "groceries", "value": 250.0},
+            ]
+        }
+
+    monkeypatch.setattr(
+        "app.tools.transactions.make_transaction_tools", lambda user_id: [compute_aggregate]
+    )
+
+    state = {
+        "messages": [HumanMessage(content="where did my money go last month?")],
+        "user_id": uuid.uuid4(),
+        "user_context": None,
+        "intent": "analysis",
+    }
+    result = await analysis_node(state)
+
+    from app.features.chat.schemas import SpendingBreakdownWidget
+
+    widget = result["widget"]
+    assert isinstance(widget, SpendingBreakdownWidget)
+    assert widget.payload.currency == "EGP"
+    assert widget.payload.total == pytest.approx(1000.0)
+    # The prose answer still stands on its own — the widget supplements it.
+    assert result["messages"][-1].content == "Housing was your biggest expense at 750 EGP."
+
+
+@pytest.mark.asyncio
+async def test_agentic_analysis_widget_is_none_when_no_display_tool_called(monkeypatch):
+    monkeypatch.setattr(settings.chat_model, "use_mock", False)
+
+    monkeypatch.setattr(
+        "app.core.llm.get_chat_model",
+        lambda **kwargs: _FakeToolModel([AIMessage(content="You spent 400 EGP.")]),
+    )
+    monkeypatch.setattr("app.tools.transactions.make_transaction_tools", lambda user_id: [])
+
+    state = {
+        "messages": [HumanMessage(content="how much did I spend?")],
+        "user_id": uuid.uuid4(),
+        "user_context": None,
+        "intent": "analysis",
+    }
+    result = await analysis_node(state)
+
+    assert result["widget"] is None
+
+
+@pytest.mark.asyncio
+async def test_mock_analysis_emits_transactions_list_widget(monkeypatch):
+    """Mock mode gives a frontend running fully offline something to render."""
+    import datetime
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, MagicMock
+
+    txn_id = uuid.uuid4()
+    transactions = [
+        SimpleNamespace(
+            id=txn_id,
+            amount="340.25",
+            currency="EGP",
+            transaction_date=datetime.date(2026, 7, 14),
+            transaction_type="debit",
+            merchant_raw="Carrefour",
+            merchant_normalized=None,
+            category=SimpleNamespace(name="groceries"),
+        )
+    ]
+
+    mock_result = MagicMock()
+    mock_result.scalars.return_value.all.return_value = transactions
+    mock_session = MagicMock()
+    mock_session.execute = AsyncMock(return_value=mock_result)
+
+    async def _mock_gen():
+        yield mock_session
+
+    monkeypatch.setattr("app.backend_db.get_backend_session", _mock_gen)
+
+    state = {
+        "messages": [],
+        "user_id": uuid.uuid4(),
+        "user_context": None,
+        "intent": "analysis",
+    }
+    result = await analysis_node(state)
+
+    from app.features.chat.schemas import TransactionsListWidget
+
+    widget = result["widget"]
+    assert isinstance(widget, TransactionsListWidget)
+    item = widget.payload.transactions[0]
+    assert item.id == txn_id
+    assert item.title == "Carrefour"
+    assert item.type == "expense"
+    assert item.date == datetime.date(2026, 7, 14)
+
+
+@pytest.mark.asyncio
+async def test_mock_analysis_skips_widget_for_incomplete_rows(monkeypatch):
+    """Minimal test fixtures (no currency/date, non-UUID ids) must not turn a
+    chat turn into a failure — the widget is simply omitted."""
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, MagicMock
+
+    transactions = [
+        SimpleNamespace(
+            id="t1", amount="50.00", merchant_raw="Store", category=SimpleNamespace(name="food")
+        )
+    ]
+
+    mock_result = MagicMock()
+    mock_result.scalars.return_value.all.return_value = transactions
+    mock_session = MagicMock()
+    mock_session.execute = AsyncMock(return_value=mock_result)
+
+    async def _mock_gen():
+        yield mock_session
+
+    monkeypatch.setattr("app.backend_db.get_backend_session", _mock_gen)
+
+    result = await analysis_node(
+        {
+            "messages": [],
+            "user_id": uuid.uuid4(),
+            "user_context": None,
+            "intent": "analysis",
+        }
+    )
+
+    assert result["widget"] is None
+    assert len(result["message_references"]) == 1

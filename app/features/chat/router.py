@@ -13,10 +13,11 @@ _TOKEN_FRAME = 'data: {"event":"token","data":"You spent "}\n\n'
 _DONE_FRAME = (
     'data: {"event":"done","data":{'
     '"content":"You spent 1,240 EGP on groceries last month across 9 transactions.",'
-    '"widget":{"type":"allocation_slider","payload":{"allocations":['
-    '{"category":"Groceries","percentage":25.0},'
-    '{"category":"Rent","percentage":50.0},'
-    '{"category":"Savings","percentage":25.0}]}},'
+    '"widget":{"type":"spending_breakdown","payload":{'
+    '"currency":"EGP","month":"July 2026","total":3975.0,"categories":['
+    '{"name":"groceries","amount":1240.5,"pct":31.2},'
+    '{"name":"housing","amount":2000.0,"pct":50.3},'
+    '{"name":"transport","amount":734.5,"pct":18.5}]}},'
     '"references":[{"target_type":"transaction",'
     '"target_id":"b3f1c2d4-0000-0000-0000-000000000000"}]'
     "}}\n\n"
@@ -34,7 +35,8 @@ _ERROR_FRAME = 'data: {"event":"error","data":{"message":"Chat not available."}}
                 "stream the reply as it is generated (real path) or as one batch (mock "
                 "path, `USE_MOCK_LLM=1` — same envelope, FR-011), followed by exactly one "
                 "terminal `done` event carrying the finalized `content`, a `widget` slot "
-                "(allocation_slider / product_card / null), and `references` (possibly "
+                "(allocation_slider / product_card / spending_breakdown / "
+                "transactions_list / savings_slider / null), and `references` (possibly "
                 "empty). The `done` payload carries no message `id` — Django assigns it "
                 "after persistence (FR-003). On a production failure exactly one `error` "
                 "event is emitted and the stream closes (no `done` follows; FR-010). Not "
