@@ -43,7 +43,7 @@ async def _scope_guard_node(state: ConversationState) -> dict:
     if state.get("stage") == "planning" and state.get("questions_asked", 0) > 0:
         return {"in_scope": True}
 
-    text = build_scope_check_text(state["messages"])
+    text = build_scope_check_text(state["messages"], last_intent=state.get("intent"))
 
     result = await check_scope(text)
     return {"in_scope": result.in_scope}
@@ -64,7 +64,13 @@ async def _refused_node(state: ConversationState) -> dict:
         "spending, budgeting, and banking questions. Let me know if there's "
         "something along those lines I can help with."
     )
-    return {"messages": [AIMessage(content=reply)]}
+    # Maestro never runs on a blocked turn (scope_guard rejects before
+    # routing), so state["intent"] would otherwise still hold whatever it
+    # was from the last turn Maestro DID run — stale and possibly a task
+    # intent, which build_scope_check_text would wrongly trust as context
+    # on the next turn. "refused" isn't in _TASK_INTENTS, so it's excluded
+    # the same way a "general" reply is.
+    return {"messages": [AIMessage(content=reply)], "intent": "refused"}
 
 
 async def _general_node(state: ConversationState) -> dict:

@@ -162,20 +162,36 @@ def get_scope_classifier() -> ScopeClassifier:
 
 CONTEXT_SNIPPET_CHARS = 150
 
+# Only a reply from one of the real finance task agents counts as evidence
+# the conversation is still on-topic. "general"/"refused" replies are
+# deliberately excluded even though they're often finance-flavored — a
+# refusal or redirect ("...I can help with budgeting, saving...") talks
+# about finance to steer the user back on topic, which makes it look
+# finance-relevant to the classifier without actually being genuine
+# engagement. Trusting it as context let unrelated follow-up messages
+# (e.g. right after a refusal) slip past the guard on borrowed vocabulary.
+_TASK_INTENTS = frozenset({"analysis", "planning", "recommendation"})
 
-def build_scope_check_text(messages: list) -> str:
+
+def build_scope_check_text(messages: list, last_intent: str | None = None) -> str:
     """Classifier input: a short, capped snippet of the immediately
     preceding message (context for elliptical follow-ups like "what about
     this month?"), followed by the full current message, last and
     untruncated — so a genuine topic switch still dominates the premise
     instead of being rescued by stale context. Plain prose, no role labels
     or newlines: this NLI model expects natural text, not dialogue-formatted
-    transcripts (unlike an LLM prompt, which handles that fine)."""
+    transcripts (unlike an LLM prompt, which handles that fine).
+
+    `last_intent` is the intent Maestro assigned on the PREVIOUS turn
+    (`state["intent"]`, still holding its old value here since this node
+    runs before Maestro overwrites it for the current turn). The preceding
+    message is only used as context when that intent was a real task
+    agent — see _TASK_INTENTS above."""
     if not messages:
         return ""
     current = messages[-1].content if hasattr(messages[-1], "content") else ""
     current = current if isinstance(current, str) else str(current)
-    if len(messages) < 2:
+    if len(messages) < 2 or last_intent not in _TASK_INTENTS:
         return current
     prev = messages[-2]
     prev_text = prev.content if hasattr(prev, "content") and isinstance(prev.content, str) else ""
