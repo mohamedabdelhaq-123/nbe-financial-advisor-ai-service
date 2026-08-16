@@ -67,7 +67,7 @@ Exactly one per turn, emitted after the stream drains:
 | Field | Type | Rule |
 |---|---|---|
 | `content` | `str` | The complete finalized reply text; MAY be empty but the field is always present |
-| `widget` | `object \| null` | Always present. `null` for `general`/`analysis` and while the planner asks questions; `{"type": "allocation_slider", "payload": {...}}` for a completed plan; `{"type": "product_card", "payload": {...}}` for recommendations (see [../data-model.md](../data-model.md)) |
+| `widget` | `object \| null` | Always present. `null` for `general`, while the planner asks questions, and for an `analysis` turn that called no display tool; `{"type": "allocation_slider", ...}` for a completed plan; `{"type": "product_card", ...}` for recommendations; `{"type": "spending_breakdown" \| "transactions_list" \| "savings_slider", ...}` for an analysis turn that did (see [../data-model.md](../data-model.md)) |
 | `references` | `list` | Always present, possibly `[]`. Each entry is `{"target_type": "transaction"\|"statement", "target_id": "<uuid>"}` (FR-006, FR-007) |
 
 **The `done` event MUST NOT contain an `id` field** (FR-003). Django assigns

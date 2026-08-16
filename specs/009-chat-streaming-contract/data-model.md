@@ -62,17 +62,61 @@ class ProductCardWidget(BaseModel):
     type: Literal["product_card"] = "product_card"
     payload: ProductCardPayload             # {products: [{product_id, product_name, similarity(0-1)}]}
 
-Widget = AllocationSliderWidget | ProductCardWidget
+class SpendingBreakdownWidget(BaseModel):
+    type: Literal["spending_breakdown"] = "spending_breakdown"
+    payload: SpendingBreakdownPayload       # {currency, month, total, categories: [{name, amount, pct(0-100)}]}
+
+class TransactionsListWidget(BaseModel):
+    type: Literal["transactions_list"] = "transactions_list"
+    payload: TransactionsListPayload        # {currency, transactions: [{id, title, category, type, amount, date}]}
+
+class SavingsSliderWidget(BaseModel):
+    type: Literal["savings_slider"] = "savings_slider"
+    payload: SavingsSliderPayload           # {currency, current_balance, default_monthly_savings}
+
+Widget = Annotated[
+    AllocationSliderWidget | ProductCardWidget | SpendingBreakdownWidget
+    | TransactionsListWidget | SavingsSliderWidget,
+    Field(discriminator="type"),
+]
 ```
+
+The union became genuinely tagged when the last three were added: their
+payloads overlap structurally (`spending_breakdown` and `transactions_list`
+both lead with `currency` plus a list), so left-to-right union validation was
+no longer safe. This is a runtime-validation change only — `/internal/chat`
+streams via `StreamingResponse` with no `response_model`, so `Widget` never
+appears in `components.schemas`; the wire shape stays documented by the
+hand-written SSE frame examples in `router.py`.
 
 | Producer | Widget emitted |
 |---|---|
 | `planner` (on `plan_complete`) | `AllocationSliderWidget` mirroring `BudgetAllocation` (percentages sum to 100) |
 | `recommendation` | `ProductCardWidget` mirroring `ProductMatch` (up to `top_k`=3) |
-| `analysis`, `general`, `planner` while asking | `None` |
+| `analysis` (on a `show_*` display-tool call) | `SpendingBreakdownWidget`, `TransactionsListWidget`, or `SavingsSliderWidget` — last display tool called wins |
+| `analysis` (mock mode) | `TransactionsListWidget` from the rows it already reads, so an offline frontend has something to render |
+| `analysis` (no display tool called), `general`, `planner` while asking | `None` |
 
 The terminal `done` event always carries the slot (`Widget | None`),
 satisfying FR-005.
+
+**Analysis widgets (added after 009).** The three analysis widgets are built by
+tools in `app/tools/widgets.py`, which query the backend DB themselves and
+delegate to the existing `compute_aggregate`/`get_transactions` rather than
+duplicating their SQL. The model decides *whether* to show a widget; it never
+authors a figure inside one. `analysis` is also the first producer to emit a
+widget **and** `references` in the same turn — the references remain the
+citation trail for the prose answer.
+
+Two deliberate deviations from the frontend's original handoff doc: `date`
+carries an ISO date (`YYYY-MM-DD`), not an ISO 8601 datetime, because the
+backend stores `transactions.transaction_date` as a `Date` with no time
+component; and `savings_slider` uses snake_case `current_balance` /
+`default_monthly_savings`, matching the repo-wide no-aliasing convention. A
+`savings_slider` is legitimately absent when the user has no known balance —
+`bank_accounts` has no balance column, so it is resolved from
+`net_worth_snapshots.total_across_accounts`, falling back to the newest
+non-null `transactions.balance` per account, and omitted when neither exists.
 
 ## ChatStreamEvent (new — `schemas/events.py`, three envelope models)
 

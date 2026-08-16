@@ -56,6 +56,17 @@ def _flow_types(flow: Literal["income", "expense"] | None) -> tuple[str, ...] | 
     return ("credit",) if flow == "income" else _EXPENSE_TYPES
 
 
+def flow_for_type(transaction_type: str | None) -> Literal["income", "expense"]:
+    """Inverse of `_flow_types` — maps one raw row's type to the income/expense
+    grouping the frontend shows. Public because the widget tools project rows
+    into a payload with an `income`/`expense` field and must use this exact
+    mapping, not a second guess at it: everything that isn't a credit (debit,
+    fee, AND transfer) is an expense. A NULL type is stored as a debit by
+    convention, matching `get_transactions`'s own fallback below.
+    """
+    return "income" if (transaction_type or "debit") == "credit" else "expense"
+
+
 _NONE_SENTINELS = {"none", "null", ""}
 
 
