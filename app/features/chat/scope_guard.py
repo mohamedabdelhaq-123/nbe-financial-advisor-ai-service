@@ -160,6 +160,29 @@ def get_scope_classifier() -> ScopeClassifier:
     return _classifier
 
 
+CONTEXT_SNIPPET_CHARS = 150
+
+
+def build_scope_check_text(messages: list) -> str:
+    """Classifier input: a short, capped snippet of the immediately
+    preceding message (context for elliptical follow-ups like "what about
+    this month?"), followed by the full current message, last and
+    untruncated — so a genuine topic switch still dominates the premise
+    instead of being rescued by stale context. Plain prose, no role labels
+    or newlines: this NLI model expects natural text, not dialogue-formatted
+    transcripts (unlike an LLM prompt, which handles that fine)."""
+    if not messages:
+        return ""
+    current = messages[-1].content if hasattr(messages[-1], "content") else ""
+    current = current if isinstance(current, str) else str(current)
+    if len(messages) < 2:
+        return current
+    prev = messages[-2]
+    prev_text = prev.content if hasattr(prev, "content") and isinstance(prev.content, str) else ""
+    prev_snippet = prev_text[:CONTEXT_SNIPPET_CHARS].strip()
+    return f"{prev_snippet} {current}" if prev_snippet else current
+
+
 async def check_scope(text: str) -> ScopeResult:
     """Entry point. Fails open — if the guard is disabled, or the
     classifier call itself errors (network blip, rate limit, whatever),

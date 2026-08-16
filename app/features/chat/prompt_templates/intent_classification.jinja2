@@ -1,0 +1,6 @@
+Classify the intent of the LATEST user message into one of: analysis, planning, recommendation, general. Use the recent conversation for context if the latest message alone is ambiguous.
+{% if history %}Recent conversation:
+{{ history }}
+
+{% endif %}Latest user message: {{ message }}
+Respond with ONLY the intent word for the latest message.

@@ -11,6 +11,7 @@ import json
 from types import SimpleNamespace
 
 import pytest
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 
 from app.features.chat.schemas import (
     AllocationSliderWidget,
@@ -19,35 +20,38 @@ from app.features.chat.schemas import (
 )
 from app.features.chat.service import stream_chat
 
-_LEAF_NODES = ("analysis", "planner", "recommendation", "general")
+_LEAF_NODES = ("analysis", "planner_ask", "validate_answer", "recommendation", "general")
 
 
-class _FakeChunk:
+class _FakeChunk(AIMessage):
     def __init__(self, content):
-        self.content = content
+        super().__init__(content=content)
 
 
 class _FakeSnapshot:
-    def __init__(self, values):
+    def __init__(self, values, interrupts=()):
         self.values = values
+        self.interrupts = interrupts
 
 
 class _FakeGraph:
     """Minimal stand-in for a compiled LangGraph, configurable per scenario."""
 
-    def __init__(self, *, chunks=None, state_values=None, raise_in_stream=None):
+    def __init__(self, *, chunks=None, state_values=None, raise_in_stream=None, interrupts=()):
         self._chunks = chunks or []
         self._state_values = state_values or {}
         self._raise_in_stream = raise_in_stream
+        self._interrupts = interrupts
 
     async def astream(self, state, config=None, stream_mode="messages", **kwargs):
         for content, node in self._chunks:
-            yield (_FakeChunk(content), {"langgraph_node": node})
+            message = content if isinstance(content, BaseMessage) else _FakeChunk(content)
+            yield (message, {"langgraph_node": node})
         if self._raise_in_stream is not None:
             raise self._raise_in_stream("forced failure")
 
     async def aget_state(self, config=None):
-        return _FakeSnapshot(self._state_values)
+        return _FakeSnapshot(self._state_values, interrupts=self._interrupts)
 
 
 def _fake_app():
@@ -136,6 +140,25 @@ async def test_non_leaf_node_tokens_are_not_forwarded(real_mode, monkeypatch):
     assert tokens == ["leaf-reply"]
 
 
+@pytest.mark.asyncio
+async def test_resumed_human_message_is_not_echoed_as_token(real_mode, monkeypatch):
+    """Regression: planner_ask_node re-appends the user's own answer to history
+    on interrupt() resume — that HumanMessage must never be forwarded as a
+    token even though "planner_ask" is a leaf node."""
+    graph = _FakeGraph(
+        chunks=[
+            (HumanMessage(content="wtf"), "planner_ask"),  # user's own resumed answer
+            ("real reply", "planner_ask"),  # actual assistant output
+        ],
+        state_values={"messages": []},
+    )
+    _install_fake_graph(monkeypatch, graph)
+
+    events = _parse(await _collect(real_mode, _request()))
+    tokens = [e["data"] for e in events if e["event"] == "token"]
+    assert tokens == ["real reply"]
+
+
 # --- T014a: streaming edge cases ---------------------------------------------
 
 
@@ -172,6 +195,36 @@ async def test_empty_content_still_emits_done(real_mode, monkeypatch):
     assert dones[0]["data"]["content"] == ""
     assert dones[0]["data"]["widget"] is None
     assert dones[0]["data"]["references"] == []
+
+
+@pytest.mark.asyncio
+async def test_paused_interrupt_content_is_the_question_not_the_echoed_input(
+    real_mode, monkeypatch
+):
+    """Regression: when planner_ask_node pauses on interrupt() without ever
+    reaching its own return, `messages` still ends at the user's own input
+    (nothing has been appended yet this turn) — the done event's content
+    must come from the interrupt payload's question text, not from
+    `messages[-1]`, or the user sees their own message echoed back."""
+    graph = _FakeGraph(
+        chunks=[],  # planner_ask_node produces no message chunks while paused
+        state_values={"messages": [HumanMessage(content="help me plan my savings")]},
+        interrupts=(
+            SimpleNamespace(
+                value={"question_id": "income_stability", "text": "Is your income stable?"}
+            ),
+        ),
+    )
+    _install_fake_graph(monkeypatch, graph)
+
+    events = _parse(await _collect(real_mode, _request(message="help me plan my savings")))
+    dones = [e for e in events if e["event"] == "done"]
+    tokens = [e["data"] for e in events if e["event"] == "token"]
+
+    assert len(dones) == 1
+    assert dones[0]["data"]["content"] == "Is your income stable?"
+    assert dones[0]["data"]["content"] != "help me plan my savings"
+    assert tokens == ["Is your income stable?"]
 
 
 @pytest.mark.asyncio
@@ -288,7 +341,7 @@ async def test_multi_turn_typed_state_survives_real_postgres(own_db_url):
             )
         ]
         state_a = {
-            "messages": ["hi"],
+            "messages": [HumanMessage(content="hi")],
             "user_context": {},
             "stage": "",
             "intent": "",
@@ -310,51 +363,64 @@ async def test_multi_turn_typed_state_survives_real_postgres(own_db_url):
         assert round_tripped_refs[0].target_type == "transaction"
         assert round_tripped_refs[0].target_id.endswith("0001")
 
-        # --- Part B: multi-turn planner routing resumes and captures answers.
-        config_b = {"configurable": {"thread_id": "conv-t15-planner"}}
+        # --- Part B: multi-turn planner routing pauses on interrupt() and
+        # resumes via Command(resume=...) (service.py's actual mechanism —
+        # see the snapshot.interrupts branch in stream_chat), capturing and
+        # validating the answer rather than losing it.
+        import uuid as uuid_module
 
-        state_first = {
-            "messages": ["help me budget"],
-            "user_context": {},
-            "stage": "",
-            "intent": "",
-            "planner_answers": {},
-            "questions_asked": 0,
-            "message_references": [],
-            "widget": None,
-        }
-        await graph.ainvoke(state_first, config_b)
-        snap1 = await graph.aget_state(config_b)
-        assert snap1.values.get("stage") == "planning"
-        qa_after_first = snap1.values.get("questions_asked", 0)
-        assert qa_after_first > 0
+        from langgraph.types import Command
 
-        # Non-first turn: restore persisted state and supply an answer (mirrors
-        # the resumption logic in service.py).
-        prev = snap1.values
-        planner_answers = dict(prev.get("planner_answers") or {})
-        qa = prev.get("questions_asked", 0)
-        if qa > 0 and prev.get("stage") != "plan_complete":
-            from app.features.plan.service import QUESTIONS
+        # derive_planner_context never raises (see context.py), but a real
+        # DNS lookup against conftest's fake AI_SERVICE_BACKEND_DB__HOST
+        # would otherwise slow this test down waiting to time out — fail
+        # fast instead, exercising the same neutral-context fallback path.
+        async def _failing_get_backend_session():
+            raise RuntimeError("no real backend DB in this test")
+            yield  # pragma: no cover - unreachable, keeps this an async generator
 
-            idx = qa - 1
-            if idx < len(QUESTIONS):
-                planner_answers.setdefault(QUESTIONS[idx].id, "about 4000")
+        monkeypatch = pytest.MonkeyPatch()
+        monkeypatch.setattr("app.backend_db.get_backend_session", _failing_get_backend_session)
+        try:
+            config_b = {"configurable": {"thread_id": "conv-t15-planner"}}
 
-        state_second = {
-            "messages": ["about 4000"],
-            "user_context": {},
-            "stage": prev.get("stage", ""),
-            "intent": "",
-            "planner_answers": planner_answers,
-            "questions_asked": qa,
-            "message_references": [],
-            "widget": None,
-        }
-        await graph.ainvoke(state_second, config_b)
-        snap2 = await graph.aget_state(config_b)
+            state_first = {
+                "messages": [HumanMessage(content="help me budget")],
+                "user_id": uuid_module.uuid4(),
+                "user_context": {},
+                "stage": "",
+                "intent": "",
+                "planner_answers": {},
+                "questions_asked": 0,
+                "last_question_id": None,
+                "planner_validation_attempts": 0,
+                "planner_context": None,
+                "pending_answer": None,
+                "pending_validation_reason": None,
+                "message_references": [],
+                "widget": None,
+            }
+            await graph.ainvoke(state_first, config_b)
+            snap1 = await graph.aget_state(config_b)
+            # stage/questions_asked only update once planner_ask_node's
+            # interrupt() actually resumes — before that, the graph is
+            # simply paused, which is the thing to assert here.
+            assert snap1.interrupts, "expected the planner to pause asking its first question"
 
-        # The questionnaire advanced (the answer was captured, not lost).
-        assert snap2.values.get("questions_asked", 0) > qa_after_first
+            # The first question is income_stability (enum: consistent/
+            # variable) — answer it validly so this asserts advancement,
+            # not app/features/plan/service.py's reprompt-on-invalid path
+            # (covered separately in test_planner_integration.py).
+            await graph.ainvoke(Command(resume="consistent"), config_b)
+            snap2 = await graph.aget_state(config_b)
+
+            # The answer was captured and validated (not lost) — either the
+            # questionnaire moved on to another question (paused again) or,
+            # if that was the last one, completed outright.
+            assert snap2.values.get("planner_answers", {}).get("income_stability") == "consistent"
+            assert snap2.values.get("questions_asked", 0) >= 1
+            assert snap2.interrupts or snap2.values.get("stage") == "plan_complete"
+        finally:
+            monkeypatch.undo()
     finally:
         await pool.close()

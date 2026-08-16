@@ -207,6 +207,7 @@ class Users(BackendBase):
     is_staff: Mapped[bool] = mapped_column(Boolean, nullable=False)
     is_superuser: Mapped[bool] = mapped_column(Boolean, nullable=False)
     password: Mapped[str] = mapped_column(String(128), nullable=False)
+    email_verified: Mapped[bool] = mapped_column(Boolean, nullable=False)
     phone: Mapped[Optional[str]] = mapped_column(String(50))
     employment_status: Mapped[Optional[str]] = mapped_column(String(50))
     income_bracket: Mapped[Optional[str]] = mapped_column(String(50))
@@ -215,8 +216,8 @@ class Users(BackendBase):
     onboarding_date: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime(True))
     last_login: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime(True))
 
-    bank_accounts: Mapped[list["BankAccounts"]] = relationship(
-        "BankAccounts", back_populates="user"
+    bank_connections: Mapped[list["BankConnections"]] = relationship(
+        "BankConnections", back_populates="user"
     )
     budgets: Mapped["Budgets"] = relationship("Budgets", uselist=False, back_populates="user")
     consent_records: Mapped[list["ConsentRecords"]] = relationship(
@@ -246,6 +247,12 @@ class Users(BackendBase):
         "UserPreferences", uselist=False, back_populates="user"
     )
     users_groups: Mapped[list["UsersGroups"]] = relationship("UsersGroups", back_populates="user")
+    bank_accounts: Mapped[list["BankAccounts"]] = relationship(
+        "BankAccounts", back_populates="user"
+    )
+    users_user_permissions: Mapped[list["UsersUserPermissions"]] = relationship(
+        "UsersUserPermissions", back_populates="user"
+    )
     monthly_summaries: Mapped[list["MonthlySummaries"]] = relationship(
         "MonthlySummaries", back_populates="user"
     )
@@ -255,10 +262,10 @@ class Users(BackendBase):
     statement_files: Mapped[list["StatementFiles"]] = relationship(
         "StatementFiles", back_populates="user"
     )
-    users_user_permissions: Mapped[list["UsersUserPermissions"]] = relationship(
-        "UsersUserPermissions", back_populates="user"
-    )
     transactions: Mapped[list["Transactions"]] = relationship("Transactions", back_populates="user")
+    anomaly_flags: Mapped[list["AnomalyFlags"]] = relationship(
+        "AnomalyFlags", back_populates="user"
+    )
 
 
 class AuthPermission(BackendBase):
@@ -298,41 +305,53 @@ class AuthPermission(BackendBase):
     )
 
 
-class BankAccounts(BackendBase):
-    __tablename__ = "bank_accounts"
+class BankConnections(BackendBase):
+    __tablename__ = "bank_connections"
     __table_args__ = (
         ForeignKeyConstraint(
             ["user_id"],
             ["users.id"],
             deferrable=True,
             initially="DEFERRED",
-            name="bank_accounts_user_id_c753e843_fk_users_id",
+            name="bank_connections_user_id_4b19bc0f_fk_users_id",
         ),
-        PrimaryKeyConstraint("id", name="bank_accounts_pkey"),
-        Index("bank_accounts_user_id_c753e843", "user_id"),
+        PrimaryKeyConstraint("id", name="bank_connections_pkey"),
+        Index("bank_connections_user_id_4b19bc0f", "user_id"),
+        Index("idx_bank_conn_user_provider", "user_id", "provider_slug"),
+        Index(
+            "unique_active_bank_connection_per_user_provider",
+            "user_id",
+            "provider_slug",
+            postgresql_where="((status)::text = 'linked'::text)",
+            unique=True,
+        ),
+        Index(
+            "unique_bank_customer_identity",
+            "provider_slug",
+            "external_customer_id",
+            postgresql_where="(external_customer_id IS NOT NULL)",
+            unique=True,
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
-    bank_name: Mapped[str] = mapped_column(String(255), nullable=False)
-    masked_account_number: Mapped[str] = mapped_column(String(50), nullable=False)
-    currency: Mapped[str] = mapped_column(String(10), nullable=False)
-    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    provider_slug: Mapped[str] = mapped_column(String(50), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False)
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime(True), nullable=False)
+    updated_at: Mapped[datetime.datetime] = mapped_column(DateTime(True), nullable=False)
     user_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
-    account_type: Mapped[Optional[str]] = mapped_column(String(50))
+    external_customer_id: Mapped[Optional[str]] = mapped_column(String(255))
+    access_token: Mapped[Optional[str]] = mapped_column(Text)
+    refresh_token: Mapped[Optional[str]] = mapped_column(Text)
+    token_expires_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime(True))
+    oauth_state: Mapped[Optional[str]] = mapped_column(String(255))
+    error_reason: Mapped[Optional[str]] = mapped_column(Text)
+    linked_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime(True))
+    revoked_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime(True))
 
-    user: Mapped["Users"] = relationship("Users", back_populates="bank_accounts")
-    monthly_summaries: Mapped[list["MonthlySummaries"]] = relationship(
-        "MonthlySummaries", back_populates="account"
-    )
-    recurring_charges: Mapped[list["RecurringCharges"]] = relationship(
-        "RecurringCharges", back_populates="account"
-    )
-    statement_files: Mapped[list["StatementFiles"]] = relationship(
-        "StatementFiles", back_populates="account"
-    )
-    transactions: Mapped[list["Transactions"]] = relationship(
-        "Transactions", back_populates="account"
+    user: Mapped["Users"] = relationship("Users", back_populates="bank_connections")
+    bank_accounts: Mapped[list["BankAccounts"]] = relationship(
+        "BankAccounts", back_populates="connection"
     )
 
 
@@ -489,7 +508,7 @@ class ProblemStatements(BackendBase):
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
     statement_text: Mapped[str] = mapped_column(Text, nullable=False)
     product_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
-    embedding: Mapped[Optional[Any]] = mapped_column(VECTOR(1024))
+    embedding: Mapped[Optional[Any]] = mapped_column(VECTOR(768))
 
     product: Mapped["Products"] = relationship("Products", back_populates="problem_statements")
 
@@ -711,6 +730,68 @@ class UsersGroups(BackendBase):
     user: Mapped["Users"] = relationship("Users", back_populates="users_groups")
 
 
+class BankAccounts(BackendBase):
+    __tablename__ = "bank_accounts"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["connection_id"],
+            ["bank_connections.id"],
+            deferrable=True,
+            initially="DEFERRED",
+            name="bank_accounts_connection_id_eaea50ce_fk_bank_connections_id",
+        ),
+        ForeignKeyConstraint(
+            ["user_id"],
+            ["users.id"],
+            deferrable=True,
+            initially="DEFERRED",
+            name="bank_accounts_user_id_c753e843_fk_users_id",
+        ),
+        PrimaryKeyConstraint("id", name="bank_accounts_pkey"),
+        Index("bank_accounts_connection_id_eaea50ce", "connection_id"),
+        Index("bank_accounts_user_id_c753e843", "user_id"),
+        Index(
+            "unique_external_account_per_connection",
+            "connection_id",
+            "external_account_id",
+            postgresql_where="(connection_id IS NOT NULL)",
+            unique=True,
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    bank_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    account_number: Mapped[str] = mapped_column(String(50), nullable=False)
+    currency: Mapped[str] = mapped_column(String(10), nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime(True), nullable=False)
+    user_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    link_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    account_type: Mapped[Optional[str]] = mapped_column(String(50))
+    external_account_id: Mapped[Optional[str]] = mapped_column(String(255))
+    connection_id: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid)
+
+    connection: Mapped[Optional["BankConnections"]] = relationship(
+        "BankConnections", back_populates="bank_accounts"
+    )
+    user: Mapped["Users"] = relationship("Users", back_populates="bank_accounts")
+    monthly_summaries: Mapped[list["MonthlySummaries"]] = relationship(
+        "MonthlySummaries", back_populates="account"
+    )
+    recurring_charges: Mapped[list["RecurringCharges"]] = relationship(
+        "RecurringCharges", back_populates="account"
+    )
+    statement_files: Mapped[list["StatementFiles"]] = relationship(
+        "StatementFiles", back_populates="account"
+    )
+    transactions: Mapped[list["Transactions"]] = relationship(
+        "Transactions", back_populates="account"
+    )
+    anomaly_flags: Mapped[list["AnomalyFlags"]] = relationship(
+        "AnomalyFlags", back_populates="account"
+    )
+
+
 class BudgetAllocations(BackendBase):
     __tablename__ = "budget_allocations"
     __table_args__ = (
@@ -794,6 +875,104 @@ class Messages(BackendBase):
     message_references: Mapped[list["MessageReferences"]] = relationship(
         "MessageReferences", back_populates="message"
     )
+
+
+class TokenBlacklistBlacklistedtoken(BackendBase):
+    __tablename__ = "token_blacklist_blacklistedtoken"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["token_id"],
+            ["token_blacklist_outstandingtoken.id"],
+            deferrable=True,
+            initially="DEFERRED",
+            name="token_blacklist_blacklistedtoken_token_id_3cc7fe56_fk",
+        ),
+        PrimaryKeyConstraint("id", name="token_blacklist_blacklistedtoken_pkey"),
+        UniqueConstraint("token_id", name="token_blacklist_blacklistedtoken_token_id_key"),
+    )
+
+    id: Mapped[int] = mapped_column(
+        BigInteger,
+        Identity(
+            start=1, increment=1, minvalue=1, maxvalue=9223372036854775807, cycle=False, cache=1
+        ),
+        primary_key=True,
+        autoincrement=True,
+    )
+    blacklisted_at: Mapped[datetime.datetime] = mapped_column(DateTime(True), nullable=False)
+    token_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+
+    token: Mapped["TokenBlacklistOutstandingtoken"] = relationship(
+        "TokenBlacklistOutstandingtoken", back_populates="token_blacklist_blacklistedtoken"
+    )
+
+
+class UsersUserPermissions(BackendBase):
+    __tablename__ = "users_user_permissions"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["permission_id"],
+            ["auth_permission.id"],
+            deferrable=True,
+            initially="DEFERRED",
+            name="users_user_permissio_permission_id_6d08dcd2_fk_auth_perm",
+        ),
+        ForeignKeyConstraint(
+            ["user_id"],
+            ["users.id"],
+            deferrable=True,
+            initially="DEFERRED",
+            name="users_user_permissions_user_id_92473840_fk_users_id",
+        ),
+        PrimaryKeyConstraint("id", name="users_user_permissions_pkey"),
+        UniqueConstraint(
+            "user_id",
+            "permission_id",
+            name="users_user_permissions_user_id_permission_id_3b86cbdf_uniq",
+        ),
+        Index("users_user_permissions_permission_id_6d08dcd2", "permission_id"),
+        Index("users_user_permissions_user_id_92473840", "user_id"),
+    )
+
+    id: Mapped[int] = mapped_column(
+        BigInteger,
+        Identity(
+            start=1, increment=1, minvalue=1, maxvalue=9223372036854775807, cycle=False, cache=1
+        ),
+        primary_key=True,
+        autoincrement=True,
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    permission_id: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    permission: Mapped["AuthPermission"] = relationship(
+        "AuthPermission", back_populates="users_user_permissions"
+    )
+    user: Mapped["Users"] = relationship("Users", back_populates="users_user_permissions")
+
+
+class MessageReferences(BackendBase):
+    __tablename__ = "message_references"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["message_id"],
+            ["messages.id"],
+            deferrable=True,
+            initially="DEFERRED",
+            name="message_references_message_id_3c73af41_fk_messages_id",
+        ),
+        PrimaryKeyConstraint("id", name="message_references_pkey"),
+        Index("idx_message_references_target", "target_type", "target_id"),
+        Index("message_references_message_id_3c73af41", "message_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    target_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    target_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime(True), nullable=False)
+    message_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+
+    message: Mapped["Messages"] = relationship("Messages", back_populates="message_references")
 
 
 class MonthlySummaries(BackendBase):
@@ -945,104 +1124,6 @@ class StatementFiles(BackendBase):
     )
 
 
-class TokenBlacklistBlacklistedtoken(BackendBase):
-    __tablename__ = "token_blacklist_blacklistedtoken"
-    __table_args__ = (
-        ForeignKeyConstraint(
-            ["token_id"],
-            ["token_blacklist_outstandingtoken.id"],
-            deferrable=True,
-            initially="DEFERRED",
-            name="token_blacklist_blacklistedtoken_token_id_3cc7fe56_fk",
-        ),
-        PrimaryKeyConstraint("id", name="token_blacklist_blacklistedtoken_pkey"),
-        UniqueConstraint("token_id", name="token_blacklist_blacklistedtoken_token_id_key"),
-    )
-
-    id: Mapped[int] = mapped_column(
-        BigInteger,
-        Identity(
-            start=1, increment=1, minvalue=1, maxvalue=9223372036854775807, cycle=False, cache=1
-        ),
-        primary_key=True,
-        autoincrement=True,
-    )
-    blacklisted_at: Mapped[datetime.datetime] = mapped_column(DateTime(True), nullable=False)
-    token_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
-
-    token: Mapped["TokenBlacklistOutstandingtoken"] = relationship(
-        "TokenBlacklistOutstandingtoken", back_populates="token_blacklist_blacklistedtoken"
-    )
-
-
-class UsersUserPermissions(BackendBase):
-    __tablename__ = "users_user_permissions"
-    __table_args__ = (
-        ForeignKeyConstraint(
-            ["permission_id"],
-            ["auth_permission.id"],
-            deferrable=True,
-            initially="DEFERRED",
-            name="users_user_permissio_permission_id_6d08dcd2_fk_auth_perm",
-        ),
-        ForeignKeyConstraint(
-            ["user_id"],
-            ["users.id"],
-            deferrable=True,
-            initially="DEFERRED",
-            name="users_user_permissions_user_id_92473840_fk_users_id",
-        ),
-        PrimaryKeyConstraint("id", name="users_user_permissions_pkey"),
-        UniqueConstraint(
-            "user_id",
-            "permission_id",
-            name="users_user_permissions_user_id_permission_id_3b86cbdf_uniq",
-        ),
-        Index("users_user_permissions_permission_id_6d08dcd2", "permission_id"),
-        Index("users_user_permissions_user_id_92473840", "user_id"),
-    )
-
-    id: Mapped[int] = mapped_column(
-        BigInteger,
-        Identity(
-            start=1, increment=1, minvalue=1, maxvalue=9223372036854775807, cycle=False, cache=1
-        ),
-        primary_key=True,
-        autoincrement=True,
-    )
-    user_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
-    permission_id: Mapped[int] = mapped_column(Integer, nullable=False)
-
-    permission: Mapped["AuthPermission"] = relationship(
-        "AuthPermission", back_populates="users_user_permissions"
-    )
-    user: Mapped["Users"] = relationship("Users", back_populates="users_user_permissions")
-
-
-class MessageReferences(BackendBase):
-    __tablename__ = "message_references"
-    __table_args__ = (
-        ForeignKeyConstraint(
-            ["message_id"],
-            ["messages.id"],
-            deferrable=True,
-            initially="DEFERRED",
-            name="message_references_message_id_3c73af41_fk_messages_id",
-        ),
-        PrimaryKeyConstraint("id", name="message_references_pkey"),
-        Index("idx_message_references_target", "target_type", "target_id"),
-        Index("message_references_message_id_3c73af41", "message_id"),
-    )
-
-    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
-    target_type: Mapped[str] = mapped_column(String(50), nullable=False)
-    target_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
-    created_at: Mapped[datetime.datetime] = mapped_column(DateTime(True), nullable=False)
-    message_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
-
-    message: Mapped["Messages"] = relationship("Messages", back_populates="message_references")
-
-
 class StatementNormalized(BackendBase):
     __tablename__ = "statement_normalized"
     __table_args__ = (
@@ -1157,7 +1238,7 @@ class Transactions(BackendBase):
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime(True), nullable=False)
     account_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
     user_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
-    merchant_raw: Mapped[Optional[str]] = mapped_column(String(500))
+    merchant_raw: Mapped[Optional[str]] = mapped_column(String(1024))
     merchant_normalized: Mapped[Optional[str]] = mapped_column(String(255))
     confidence_score: Mapped[Optional[decimal.Decimal]] = mapped_column(Numeric(4, 3))
     balance: Mapped[Optional[decimal.Decimal]] = mapped_column(Numeric(14, 2))
@@ -1184,14 +1265,30 @@ class AnomalyFlags(BackendBase):
     __tablename__ = "anomaly_flags"
     __table_args__ = (
         ForeignKeyConstraint(
+            ["account_id"],
+            ["bank_accounts.id"],
+            deferrable=True,
+            initially="DEFERRED",
+            name="anomaly_flags_account_id_7fb8ef5b_fk_bank_accounts_id",
+        ),
+        ForeignKeyConstraint(
             ["transaction_id"],
             ["transactions.id"],
             deferrable=True,
             initially="DEFERRED",
             name="anomaly_flags_transaction_id_c2714b47_fk_transactions_id",
         ),
+        ForeignKeyConstraint(
+            ["user_id"],
+            ["users.id"],
+            deferrable=True,
+            initially="DEFERRED",
+            name="anomaly_flags_user_id_5d4c0492_fk_users_id",
+        ),
         PrimaryKeyConstraint("id", name="anomaly_flags_pkey"),
+        Index("anomaly_flags_account_id_7fb8ef5b", "account_id"),
         Index("anomaly_flags_transaction_id_c2714b47", "transaction_id"),
+        Index("anomaly_flags_user_id_5d4c0492", "user_id"),
         Index("idx_anomaly_flags_severity", "severity", "resolved"),
     )
 
@@ -1200,8 +1297,17 @@ class AnomalyFlags(BackendBase):
     severity: Mapped[str] = mapped_column(String(10), nullable=False)
     resolved: Mapped[bool] = mapped_column(Boolean, nullable=False)
     detected_at: Mapped[datetime.datetime] = mapped_column(DateTime(True), nullable=False)
-    transaction_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    user_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    transaction_id: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid)
+    account_id: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid)
+    category: Mapped[Optional[str]] = mapped_column(String(100))
+    month: Mapped[Optional[datetime.date]] = mapped_column(Date)
+    amount: Mapped[Optional[decimal.Decimal]] = mapped_column(Numeric(14, 2))
 
-    transaction: Mapped["Transactions"] = relationship(
+    account: Mapped[Optional["BankAccounts"]] = relationship(
+        "BankAccounts", back_populates="anomaly_flags"
+    )
+    transaction: Mapped[Optional["Transactions"]] = relationship(
         "Transactions", back_populates="anomaly_flags"
     )
+    user: Mapped["Users"] = relationship("Users", back_populates="anomaly_flags")

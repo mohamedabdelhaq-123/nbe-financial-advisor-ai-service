@@ -45,12 +45,22 @@ _INTENT_KEYWORDS: dict[str, list[str]] = {
 }
 
 
-def classify_intent(message: str) -> str:
+def classify_intent(message: str, history: str = "") -> str:
     lower = message.lower()
     for intent, keywords in _INTENT_KEYWORDS.items():
         for kw in keywords:
             if kw in lower:
                 return intent
+    # The bare message alone carries no keyword signal (a short, elliptical
+    # follow-up like "what about this month?") — fall back to scanning
+    # recent history so mock mode/tests can exercise the same
+    # context-disambiguation the real LLM prompt does with `history` below.
+    if history:
+        lower_history = history.lower()
+        for intent, keywords in _INTENT_KEYWORDS.items():
+            for kw in keywords:
+                if kw in lower_history:
+                    return intent
     return "general"
 
 
@@ -78,30 +88,59 @@ def _parse_llm_intent(raw: str, message: str) -> str:
     return keyword_intent
 
 
+async def _planner_context_update(state: ConversationState) -> dict:
+    """Assembles planner_context once per session (Pipeline.md §3: Maestro
+    assembles user context before delegating to a sub-agent) and caches it
+    in state — never re-derives once set. Deriving it here rather than in
+    planner_ask_node also sidesteps a real LangGraph interrupt() gotcha: a
+    node that calls interrupt() re-executes from its own start on every
+    resume, so anything before the interrupt() call would otherwise re-run
+    (and re-hit the DB) on every single answer, not just once per session.
+    Maestro doesn't run again during the interrupt loop at all, so this is
+    the one place a single derivation actually sticks."""
+    if state.get("planner_context") is not None:
+        return {}
+    from app.features.plan.context import derive_planner_context
+
+    context = await derive_planner_context(state["user_id"])
+    return {"planner_context": context}
+
+
 async def maestro_node(state: ConversationState) -> dict:
     # If we are already mid-planning (questions asked but plan not yet complete),
     # preserve the routing — the new message is an answer to the questionnaire,
     # not a fresh intent signal.
     if state.get("stage") == "planning" and state.get("questions_asked", 0) > 0:
-        return {"intent": "planning"}
+        return {"intent": "planning", **await _planner_context_update(state)}
 
     last_msg = state["messages"][-1] if state["messages"] else None
     text = ""
     if last_msg and hasattr(last_msg, "content") and isinstance(last_msg.content, str):
         text = last_msg.content
 
+    from app.features.chat.summarize import format_turns
+
+    history = format_turns(state["messages"][:-1], limit=4)
+
     if settings.chat_model.use_mock:
-        intent = classify_intent(text)
+        intent = classify_intent(text, history=history)
     else:
         from app.core.llm import get_chat_model
+        from app.features.chat.prompts import get_intent_classification_prompt
 
-        prompt = (
-            "Classify the intent of this user message into one of: "
-            "analysis, planning, recommendation, general.\n"
-            f"Message: {text}\nRespond with ONLY the intent word."
-        )
+        prompt = get_intent_classification_prompt().render(message=text, history=history or None)
         result = await get_chat_model().ainvoke(prompt)
         raw = result.content if isinstance(result.content, str) else str(result.content)
         intent = _parse_llm_intent(raw, text)
 
+    if intent == "planning":
+        was_first_turn = state.get("planner_context") is None
+        extra = await _planner_context_update(state)
+        if was_first_turn:
+            from app.features.plan.service import extract_stated_goal
+
+            stated_goal = await extract_stated_goal(text)
+            if stated_goal:
+                extra["stated_savings_goal"] = stated_goal
+        return {"intent": intent, **extra}
     return {"intent": intent}

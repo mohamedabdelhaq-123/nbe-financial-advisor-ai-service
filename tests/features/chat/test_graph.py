@@ -84,6 +84,28 @@ async def test_scope_guard_node_handles_empty_message_history(monkeypatch):
     assert result == {"in_scope": True}
 
 
+@pytest.mark.asyncio
+async def test_scope_guard_node_includes_prior_message_for_elliptical_followup(monkeypatch):
+    async def _fake_check_scope(text):
+        assert text == (
+            "The category you spent the most on this month is lifestyle. "
+            "what was the description of this transaction?"
+        )
+        return ScopeResult(in_scope=True, top_label="finance", score=0.9)
+
+    monkeypatch.setattr(graph_module, "check_scope", _fake_check_scope)
+
+    state = _state(
+        messages=[
+            _HumanLike("The category you spent the most on this month is lifestyle."),
+            _HumanLike("what was the description of this transaction?"),
+        ]
+    )
+    result = await _scope_guard_node(state)
+
+    assert result == {"in_scope": True}
+
+
 # ── _route_scope ─────────────────────────────────────────────────────────────
 
 
@@ -126,7 +148,11 @@ async def test_general_node_sends_a_system_prompt_when_not_mocked(monkeypatch):
             captured["messages"] = messages
             return SimpleNamespace(content="a grounded, on-topic reply")
 
-    monkeypatch.setattr("app.core.llm.get_chat_model", lambda: _FakeChatModel())
+    # **kwargs, not a bare lambda: _general_node asks for get_chat_model(
+    # streaming=True) so its tokens reach the user as they're generated, and
+    # other call sites pass max_tokens. Matching the real signature loosely
+    # keeps this stub from breaking every time one of those is tuned.
+    monkeypatch.setattr("app.core.llm.get_chat_model", lambda **kwargs: _FakeChatModel())
 
     state = _state(messages=[_HumanLike("what can you help me with?")])
     result = await _general_node(state)

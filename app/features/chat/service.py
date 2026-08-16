@@ -3,7 +3,8 @@
 import asyncio
 from collections.abc import AsyncIterator
 
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage
+from langgraph.types import Command
 
 from app.core.logging import get_logger
 from app.features.chat.schemas import (
@@ -19,7 +20,7 @@ logger = get_logger(__name__)
 
 # User-facing leaf agents whose token output is forwarded downstream.
 # Maestro classification and summary generation are consumed internally.
-_LEAF_NODES = frozenset({"analysis", "planner", "recommendation", "general"})
+_LEAF_NODES = frozenset({"analysis", "planner_ask", "validate_answer", "recommendation", "general"})
 
 
 async def stream_chat(app, request: ChatTurnRequest) -> AsyncIterator[str]:
@@ -65,41 +66,53 @@ async def stream_chat(app, request: ChatTurnRequest) -> AsyncIterator[str]:
     snapshot = await graph.aget_state(config)
     prev_values = snapshot.values if snapshot else {}
 
-    initial_messages = [HumanMessage(content=request.message)]
-    conversation_context = (
-        request.initial_context
-        if request.initial_context is not None
-        else prev_values.get("user_context")
-    )
-    planner_answers = dict(prev_values.get("planner_answers") or {})
-    questions_asked = prev_values.get("questions_asked", 0)
-    # Restore the persisted stage so Maestro can detect mid-planning turns.
-    stage = prev_values.get("stage", "")
-
-    if questions_asked > 0 and stage != "plan_complete":
-        from app.features.plan.service import QUESTIONS
-
-        idx = questions_asked - 1
-        if idx < len(QUESTIONS):
-            answered_id = QUESTIONS[idx].id
-            planner_answers.setdefault(answered_id, request.message)
-
-    state = {
-        "messages": initial_messages,
-        "user_id": request.user_id,
-        "user_context": conversation_context,
-        "stage": stage,
-        "intent": "",
-        "planner_answers": planner_answers,
-        "questions_asked": questions_asked,
-        "message_references": [],
-        "widget": None,
-    }
+    if snapshot and snapshot.interrupts:
+        # The planner's ask/validate loop paused on interrupt() waiting for
+        # this exact answer — Command(resume=...) resumes that same paused
+        # node directly. It carries only the resume value, not a fresh
+        # messages list (planner_ask_node appends the HumanMessage itself
+        # once resumed) — building the state dict below is skipped entirely
+        # on this path since the graph doesn't take a fresh state argument
+        # when resuming.
+        run_input: dict | Command = Command(resume=request.message)
+    else:
+        initial_messages = [HumanMessage(content=request.message)]
+        conversation_context = (
+            request.initial_context
+            if request.initial_context is not None
+            else prev_values.get("user_context")
+        )
+        run_input = {
+            "messages": initial_messages,
+            "user_id": request.user_id,
+            "user_context": conversation_context,
+            # Restore the persisted stage so Maestro can detect mid-planning turns.
+            "stage": prev_values.get("stage", ""),
+            "intent": "",
+            "planner_answers": dict(prev_values.get("planner_answers") or {}),
+            "questions_asked": prev_values.get("questions_asked", 0),
+            "last_question_id": prev_values.get("last_question_id"),
+            "planner_validation_attempts": prev_values.get("planner_validation_attempts", 0),
+            "planner_context": prev_values.get("planner_context"),
+            "pending_answer": prev_values.get("pending_answer"),
+            "pending_validation_reason": prev_values.get("pending_validation_reason"),
+            "message_references": [],
+            "widget": None,
+        }
 
     try:
         # FR-001/FR-004: stream incremental token events for leaf-agent output only.
-        async for chunk, metadata in graph.astream(state, config, stream_mode="messages"):
+        async for chunk, metadata in graph.astream(run_input, config, stream_mode="messages"):
             if metadata.get("langgraph_node") in _LEAF_NODES:
+                # stream_mode="messages" replays *every* message a node emits,
+                # not just the model's prose — the analysis agent's tool-calling
+                # loop also appends ToolMessages (raw JSON tool results), and
+                # planner_ask_node re-appends the user's own HumanMessage to
+                # history when a resumed interrupt() turn completes. Only
+                # AIMessage content is the model's actual reply, so anything
+                # else is skipped rather than streamed to the client.
+                if not isinstance(chunk, AIMessage):
+                    continue
                 content = chunk.content
                 if isinstance(content, str) and content:
                     yield f"data: {TokenEvent(data=content).model_dump_json()}\n\n"
@@ -107,15 +120,28 @@ async def stream_chat(app, request: ChatTurnRequest) -> AsyncIterator[str]:
         # FR-002/FR-005/FR-008: exactly one terminal done assembled from finalized state.
         snapshot = await graph.aget_state(config)
         values = snapshot.values if snapshot else {}
-        messages = values.get("messages") or []
-        content = ""
-        if messages:
-            last_msg = messages[-1]
-            last_content = getattr(last_msg, "content", "")
-            if isinstance(last_content, str):
-                content = last_content
-            elif last_content:
-                content = str(last_content)
+
+        if snapshot and snapshot.interrupts:
+            # The planner just paused asking a question — its text lives on
+            # the interrupt payload, not in `messages`. planner_ask_node
+            # only appends to `messages` in the return statement right
+            # after interrupt() resumes, which doesn't happen until the
+            # NEXT turn — reading `messages[-1]` here would echo the user's
+            # own input back to them instead of the actual question, since
+            # nothing has been appended to message history yet this turn.
+            content = snapshot.interrupts[0].value.get("text", "")
+            if content:
+                yield f"data: {TokenEvent(data=content).model_dump_json()}\n\n"
+        else:
+            messages = values.get("messages") or []
+            content = ""
+            if messages:
+                last_msg = messages[-1]
+                last_content = getattr(last_msg, "content", "")
+                if isinstance(last_content, str):
+                    content = last_content
+                elif last_content:
+                    content = str(last_content)
         done_payload = DonePayload(
             content=content,
             widget=values.get("widget"),

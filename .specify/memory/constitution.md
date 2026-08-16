@@ -1,6 +1,39 @@
 <!--
 SYNC IMPACT REPORT
 ==================
+Version change: 3.0.0 → 3.0.1
+Rationale: PATCH. Reference-only correction to the 3.0.0 entry below, which
+cited `specs/017-litellm-iti-provider` as its trigger. That spec was
+subsequently withdrawn and no longer exists in the repository, leaving the
+citation pointing at nothing; the trigger is restated as the underlying
+motivation (reaching an internal model gateway that speaks a non-OpenAI
+request shape) rather than a specific spec path. No principle text changes
+and Principle VI's 3.0.0 redefinition remains in force — the motivation
+outlived the individual spec that first surfaced it.
+Templates checked for consistency: none affected (no normative text changed).
+
+Prior change (2.3.0 → 3.0.0):
+Version change: 2.3.0 → 3.0.0
+Rationale: MAJOR. Principle VI redefined: the hard mandate that "LLM access
+MUST go through `langchain-openai` (`ChatOpenAI`)" is removed — naming a
+specific client library is an implementation detail, not a constitutional
+principle. The principle's actual intent is preserved and strengthened: all
+model access still MUST flow through one configurable seam with no model
+hardcoded at any call site, but that seam is now technology-agnostic and MAY
+be backed by any client (a LiteLLM-based layer, a custom provider handler,
+langchain-openai) so long as provider interchangeability by configuration
+alone is preserved. Dropping an existing MUST is backward-incompatible, hence
+MAJOR. The "AI stack" line in Technology & Quality Standards is softened to
+match. Everything else in Principle VI (single Maestro orchestrator,
+LangChain/LangGraph, no on-demand dashboard analytics, guarded agent outputs)
+is unchanged.
+Trigger: reaching the organization's internal model gateway, which speaks a
+non-OpenAI request shape, requires swapping the access layer; the old
+library-named mandate made that a constitutional violation rather than the
+config-level provider swap the principle always intended to allow. (Corrected
+in 3.0.1 — this originally cited a since-withdrawn ITI custom-provider spec.)
+
+Prior change (2.2.0 → 2.3.0):
 Version change: 2.2.0 → 2.3.0
 Rationale: MINOR. Principle III's absolute "redact before inclusion in LLM
 prompts" rule is replaced by a narrow, conditional exception covering the live
@@ -50,7 +83,7 @@ amended 2.3.0):
   - III. Data Protection & Compliance (NON-NEGOTIABLE) (amended 2.3.0)
   - IV. Data Ownership & Access Boundaries (expanded 2.2.0)
   - V. Feature-Bounded Modular Architecture
-  - VI. LLM & Agent Architecture
+  - VI. LLM & Agent Architecture (redefined 3.0.0)
   - VII. Operational Readiness & Fail-Fast Configuration
   - VIII. Library-First, Minimal Implementation (added 2.1.0)
 
@@ -243,10 +276,14 @@ advisor rather than tangling as it scales.
 ### VI. LLM & Agent Architecture
 The AI assistant MUST be implemented as a single Maestro orchestrator delegating
 to purpose-built sub-agents on LangChain/LangGraph, with chat threads persisted
-through LangChain's storage into the own DB. LLM access MUST go through
-`langchain-openai` (`ChatOpenAI`) behind a configurable base URL and model name;
-the model MUST NOT be hardcoded at a call site, preserving OpenAI/self-hosted
-vLLM interchangeability. Dashboard analytics MUST be produced by background
+through LangChain's storage into the own DB. LLM access MUST flow through a
+single configurable model-access layer behind a configurable endpoint and model
+name; the client library backing that layer is an implementation choice, not a
+constitutional constraint. The model MUST NOT be hardcoded at a call site, and
+the backing provider MUST remain swappable by configuration alone (e.g. an
+OpenAI-compatible endpoint, a self-hosted vLLM instance, or an internal gateway
+reached through a custom provider handler), preserving provider
+interchangeability with no code change. Dashboard analytics MUST be produced by background
 pipeline jobs, not by agents on demand. Agent outputs MUST be guarded:
 retrieval-grounded and sourced where applicable, never fabricating financial
 figures, carrying appropriate advice disclaimers, and using PII-safe prompts.
@@ -293,8 +330,9 @@ intentionally reused.
 - **Async I/O**: `async def` routes with SQLAlchemy 2.0 async on `asyncpg`;
   `pytest-asyncio` for async tests. Own-DB schema managed by Alembic.
 - **AI stack**: LangChain / LangGraph for the Maestro and sub-agents; LangChain
-  storage for chat threads; `langchain-openai` for LLM access behind a
-  configurable base URL/model.
+  storage for chat threads; a single configurable model-access layer for LLM
+  access behind a configurable endpoint/model (the backing client library is an
+  implementation choice, not fixed by this constitution).
 - **Packaging**: `uv` with `pyproject.toml` and a committed `uv.lock` for
   reproducible dependency resolution (consolidating prior requirements files).
 - **Formatting, linting & typing**: Code MUST pass Ruff (`E`, `F`, `I`), Black at
@@ -328,4 +366,4 @@ deviations MUST be justified explicitly in the PR. Runtime development guidance
 lives in repository docs and agent guidance files and MUST stay consistent with
 this constitution.
 
-**Version**: 2.3.0 | **Ratified**: 2026-07-09 | **Last Amended**: 2026-07-20
+**Version**: 3.0.1 | **Ratified**: 2026-07-09 | **Last Amended**: 2026-07-28

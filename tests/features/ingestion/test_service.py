@@ -9,6 +9,7 @@ from sqlalchemy import Select
 
 from app.core.config import settings
 from app.features.ingestion.mineru_client import ParsedDocument
+from app.features.ingestion.normalizer import ExtractedStatement, ExtractedTransaction, ExtraField
 from app.features.ingestion.service import normalize_statement, process_statement
 
 STATEMENT_ID = str(uuid.uuid4())
@@ -553,7 +554,9 @@ class _FakeNormalizerClient:
         self._result = result
         self._exc = exc
 
-    async def normalize(self, content_list, markdown, known_categories):
+    async def normalize(
+        self, content_list, markdown, known_categories, *, statement_id, ocr_result_id
+    ):
         if self._exc:
             raise self._exc
         return self._result
@@ -751,19 +754,20 @@ async def test_normalize_unmatched_category_falls_back_to_other(
         "app.features.ingestion.service.normalize.get_normalizer_client",
         lambda: _FakeNormalizerClient(
             result=(
-                {
-                    "bank_name": "Test Bank",
-                    "account_hint": "****1234",
-                    "transactions": [
-                        {
-                            "transaction_date": "2026-05-01",
-                            "merchant_raw": "Some Merchant",
-                            "category": "spelunking-equipment",
-                            "amount": 42.0,
-                            "transaction_type": "debit",
-                        }
+                ExtractedStatement(
+                    bank_name="Test Bank",
+                    account_number="4213010248203200016",
+                    transactions=[
+                        ExtractedTransaction(
+                            transaction_date="2026-05-01",
+                            merchant_raw="Some Merchant",
+                            ai_description="A test transaction.",
+                            category="spelunking-equipment",
+                            amount=42.0,
+                            transaction_type="debit",
+                        )
                     ],
-                },
+                ),
                 "test-model",
             )
         ),
@@ -777,10 +781,11 @@ async def test_normalize_unmatched_category_falls_back_to_other(
 
 
 @pytest.mark.asyncio
-async def test_normalize_transaction_extra_fields_are_passed_through(
+async def test_normalize_transaction_extra_fields_converted_to_dict(
     monkeypatch,
     own_pg,
 ):
+    """FR-001 — transaction-level extra_fields: list[{key,value}] -> dict[str,str]."""
     session_gen = _normalize_session_gen(
         _FakeOcrResult(statement_id=NORM_STATEMENT_ID),
         user_id=NORM_USER_ID,
@@ -796,20 +801,24 @@ async def test_normalize_transaction_extra_fields_are_passed_through(
         "app.features.ingestion.service.normalize.get_normalizer_client",
         lambda: _FakeNormalizerClient(
             result=(
-                {
-                    "bank_name": "Test Bank",
-                    "account_hint": "****1234",
-                    "transactions": [
-                        {
-                            "transaction_date": "2026-05-01",
-                            "merchant_raw": "Some Merchant",
-                            "category": "other",
-                            "amount": 42.0,
-                            "transaction_type": "debit",
-                            "extra_fields": [{"key": "reference_number", "value": "REF123"}],
-                        }
+                ExtractedStatement(
+                    bank_name="Test Bank",
+                    account_number="4213010248203200016",
+                    transactions=[
+                        ExtractedTransaction(
+                            transaction_date="2026-05-01",
+                            merchant_raw="Some Merchant",
+                            ai_description="A test transaction.",
+                            category="other",
+                            amount=42.0,
+                            transaction_type="debit",
+                            extra_fields=[
+                                ExtraField(key="reference_number", value="REF123"),
+                                ExtraField(key="value_date", value="2026-05-01"),
+                            ],
+                        )
                     ],
-                },
+                ),
                 "test-model",
             )
         ),
@@ -819,9 +828,207 @@ async def test_normalize_transaction_extra_fields_are_passed_through(
         session_gen=session_gen, own_session_gen=own_gen, ocr_result_id=OCR_RESULT_ID
     )
 
-    assert result.normalized_json["transactions"][0]["extra_fields"] == [
-        {"key": "reference_number", "value": "REF123"}
-    ]
+    assert result.normalized_json["transactions"][0]["extra_fields"] == {
+        "reference_number": "REF123",
+        "value_date": "2026-05-01",
+    }
+
+
+@pytest.mark.asyncio
+async def test_normalize_statement_level_extra_fields_converted_to_dict(
+    monkeypatch,
+    own_pg,
+):
+    """FR-001 — statement-level extra_fields: list[{key,value}] -> dict[str,str]."""
+    session_gen = _normalize_session_gen(
+        _FakeOcrResult(statement_id=NORM_STATEMENT_ID),
+        user_id=NORM_USER_ID,
+        dup_rows=[],
+        own_pg=own_pg,
+    )
+    own_gen = _own_session_gen_from_pg(own_pg)
+
+    s3 = _FakeOcrStorage(_ocr_objects(NORM_STATEMENT_ID))
+    _patch_storage(monkeypatch, s3, module="app.features.ingestion.service.normalize")
+
+    monkeypatch.setattr(
+        "app.features.ingestion.service.normalize.get_normalizer_client",
+        lambda: _FakeNormalizerClient(
+            result=(
+                ExtractedStatement(
+                    bank_name="Test Bank",
+                    account_number="4213010248203200016",
+                    extra_fields=[
+                        ExtraField(key="opening_balance", value="24.57"),
+                        ExtraField(key="currency", value="EGP"),
+                    ],
+                    transactions=[],
+                ),
+                "test-model",
+            )
+        ),
+    )
+
+    result = await normalize_statement(
+        session_gen=session_gen, own_session_gen=own_gen, ocr_result_id=OCR_RESULT_ID
+    )
+
+    assert result.normalized_json["extra_fields"] == {
+        "opening_balance": "24.57",
+        "currency": "EGP",
+    }
+
+
+@pytest.mark.asyncio
+async def test_normalize_statement_level_extra_fields_omitted_when_empty(
+    monkeypatch,
+    own_pg,
+):
+    """FR-001 — empty statement-level extra_fields is omitted, not an empty object."""
+    session_gen = _normalize_session_gen(
+        _FakeOcrResult(statement_id=NORM_STATEMENT_ID),
+        user_id=NORM_USER_ID,
+        dup_rows=[],
+        own_pg=own_pg,
+    )
+    own_gen = _own_session_gen_from_pg(own_pg)
+
+    s3 = _FakeOcrStorage(_ocr_objects(NORM_STATEMENT_ID))
+    _patch_storage(monkeypatch, s3, module="app.features.ingestion.service.normalize")
+
+    monkeypatch.setattr(
+        "app.features.ingestion.service.normalize.get_normalizer_client",
+        lambda: _FakeNormalizerClient(
+            result=(
+                ExtractedStatement(
+                    bank_name="Test Bank",
+                    account_number="4213010248203200016",
+                    extra_fields=[],
+                    transactions=[],
+                ),
+                "test-model",
+            )
+        ),
+    )
+
+    result = await normalize_statement(
+        session_gen=session_gen, own_session_gen=own_gen, ocr_result_id=OCR_RESULT_ID
+    )
+
+    assert "extra_fields" not in result.normalized_json
+
+
+@pytest.mark.asyncio
+async def test_normalize_passes_account_number_through_unmasked_null_when_absent(
+    monkeypatch,
+    own_pg,
+):
+    """FR-002 — account_number transcribed exactly, unmasked; null when absent."""
+    session_gen = _normalize_session_gen(
+        _FakeOcrResult(statement_id=NORM_STATEMENT_ID),
+        user_id=NORM_USER_ID,
+        dup_rows=[],
+        own_pg=own_pg,
+    )
+    own_gen = _own_session_gen_from_pg(own_pg)
+
+    s3 = _FakeOcrStorage(_ocr_objects(NORM_STATEMENT_ID))
+    _patch_storage(monkeypatch, s3, module="app.features.ingestion.service.normalize")
+
+    monkeypatch.setattr(
+        "app.features.ingestion.service.normalize.get_normalizer_client",
+        lambda: _FakeNormalizerClient(
+            result=(
+                ExtractedStatement(
+                    bank_name="Test Bank",
+                    account_number="4213010248203200016",
+                    transactions=[],
+                ),
+                "test-model",
+            )
+        ),
+    )
+
+    result = await normalize_statement(
+        session_gen=session_gen, own_session_gen=own_gen, ocr_result_id=OCR_RESULT_ID
+    )
+
+    assert result.normalized_json["account_number"] == "4213010248203200016"
+    assert "account_hint" not in result.normalized_json
+
+
+@pytest.mark.asyncio
+async def test_normalize_passes_balance_and_merchant_normalized_through_always_present(
+    monkeypatch,
+    own_pg,
+):
+    """FR-003 — balance/merchant_normalized are always-present, null when absent."""
+    session_gen = _normalize_session_gen(
+        _FakeOcrResult(statement_id=NORM_STATEMENT_ID),
+        user_id=NORM_USER_ID,
+        dup_rows=[],
+        own_pg=own_pg,
+    )
+    own_gen = _own_session_gen_from_pg(own_pg)
+
+    s3 = _FakeOcrStorage(_ocr_objects(NORM_STATEMENT_ID))
+    _patch_storage(monkeypatch, s3, module="app.features.ingestion.service.normalize")
+
+    monkeypatch.setattr(
+        "app.features.ingestion.service.normalize.get_normalizer_client",
+        lambda: _FakeNormalizerClient(
+            result=(
+                ExtractedStatement(
+                    bank_name="Test Bank",
+                    account_number="4213010248203200016",
+                    transactions=[
+                        ExtractedTransaction(
+                            transaction_date="2026-05-01",
+                            merchant_raw="Carrefour #abc123",
+                            ai_description="A test transaction.",
+                            category="other",
+                            amount=10.0,
+                            transaction_type="debit",
+                            balance=4809.31,
+                            merchant_normalized="Carrefour",
+                        ),
+                        ExtractedTransaction(
+                            transaction_date="2026-05-02",
+                            merchant_raw="Cash withdrawal",
+                            ai_description="A test transaction.",
+                            category="other",
+                            amount=5.0,
+                            transaction_type="debit",
+                        ),
+                    ],
+                ),
+                "test-model",
+            )
+        ),
+    )
+    # Two transactions each call find_duplicate(); the shared fake backend
+    # session only queues one duplicate-check response, so stub it out.
+    monkeypatch.setattr(
+        "app.features.ingestion.service.normalize.find_duplicate",
+        lambda *a, **kw: _return_none(),
+    )
+
+    result = await normalize_statement(
+        session_gen=session_gen, own_session_gen=own_gen, ocr_result_id=OCR_RESULT_ID
+    )
+
+    txns = result.normalized_json["transactions"]
+    assert txns[0]["balance"] == 4809.31
+    assert txns[0]["merchant_normalized"] == "Carrefour"
+    # Always-present keys, null when the source didn't determine one.
+    assert "balance" in txns[1]
+    assert txns[1]["balance"] is None
+    assert "merchant_normalized" in txns[1]
+    assert txns[1]["merchant_normalized"] is None
+
+
+async def _return_none():
+    return None
 
 
 @pytest.mark.asyncio
@@ -863,49 +1070,39 @@ async def test_normalize_skips_transactions_with_malformed_or_missing_date_or_am
     s3 = _FakeOcrStorage(_ocr_objects(NORM_STATEMENT_ID))
     _patch_storage(monkeypatch, s3, module="app.features.ingestion.service.normalize")
 
+    # `transaction_date`/`amount` are required, type-validated fields on
+    # `ExtractedTransaction` (missing-field and wrong-type payloads are now
+    # unrepresentable — pydantic rejects them before this service ever runs).
+    # The one malformed shape still reachable in practice is a syntactically
+    # valid string that isn't ISO-formatted: the schema doesn't constrain
+    # `transaction_date`'s *format*, only that it's a string, so a real LLM
+    # can still emit a non-ISO value despite the field being required.
     monkeypatch.setattr(
         "app.features.ingestion.service.normalize.get_normalizer_client",
         lambda: _FakeNormalizerClient(
             result=(
-                {
-                    "bank_name": "Test Bank",
-                    "account_hint": "****1234",
-                    "transactions": [
-                        {
-                            "transaction_date": "not-a-date",
-                            "merchant_raw": "Malformed Date",
-                            "category": "other",
-                            "amount": 10.0,
-                            "transaction_type": "debit",
-                        },
-                        {
-                            "merchant_raw": "Missing Date",
-                            "category": "other",
-                            "amount": 10.0,
-                            "transaction_type": "debit",
-                        },
-                        {
-                            "transaction_date": "2026-05-01",
-                            "merchant_raw": "Malformed Amount",
-                            "category": "other",
-                            "amount": "not-a-number",
-                            "transaction_type": "debit",
-                        },
-                        {
-                            "transaction_date": "2026-05-01",
-                            "merchant_raw": "Missing Amount",
-                            "category": "other",
-                            "transaction_type": "debit",
-                        },
-                        {
-                            "transaction_date": "2026-05-01",
-                            "merchant_raw": "Valid Transaction",
-                            "category": "other",
-                            "amount": 42.0,
-                            "transaction_type": "debit",
-                        },
+                ExtractedStatement(
+                    bank_name="Test Bank",
+                    account_number="4213010248203200016",
+                    transactions=[
+                        ExtractedTransaction(
+                            transaction_date="not-a-date",
+                            merchant_raw="Malformed Date",
+                            ai_description="A test transaction.",
+                            category="other",
+                            amount=10.0,
+                            transaction_type="debit",
+                        ),
+                        ExtractedTransaction(
+                            transaction_date="2026-05-01",
+                            merchant_raw="Valid Transaction",
+                            ai_description="A test transaction.",
+                            category="other",
+                            amount=42.0,
+                            transaction_type="debit",
+                        ),
                     ],
-                },
+                ),
                 "test-model",
             )
         ),

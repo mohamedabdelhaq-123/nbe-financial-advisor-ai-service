@@ -54,8 +54,7 @@ class DonePayload(BaseModel):
     references: list[Reference] = Field(
         default_factory=list,
         description=(
-            "Citations to underlying financial records; empty list when the reply "
-            "is not grounded."
+            "Citations to underlying financial records; empty list when the reply is not grounded."
         ),
     )
 

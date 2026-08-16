@@ -127,7 +127,7 @@ async def test_plan_generation_prompt_is_not_role_separated_from_client_context(
     from app.features.plan.service import generate_plan
     from redteam.attacks.poisoned_data import POISONED_PLAN_ANSWERS, POISONED_PLAN_CONTEXT
 
-    await generate_plan(user_context=POISONED_PLAN_CONTEXT, answers=POISONED_PLAN_ANSWERS)
+    await generate_plan(context=POISONED_PLAN_CONTEXT, answers=POISONED_PLAN_ANSWERS)
 
     assert len(calls) == 1
     llm_exchange(prompt=format_prompt(calls[0]), completion=mock_completion)
@@ -172,7 +172,7 @@ async def test_plan_category_names_are_always_snapped_to_known_vocabulary(
 
     from app.features.plan.service import generate_plan
 
-    allocations = await generate_plan(user_context={}, answers={})
+    allocations = await generate_plan(context={}, answers={})
     if calls:
         llm_exchange(prompt=format_prompt(calls[0]), completion=mock_completion)
 

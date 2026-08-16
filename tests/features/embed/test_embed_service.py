@@ -26,6 +26,31 @@ async def test_embed_texts_dimensions_forwarded():
     assert len(vectors[0]) == 256
 
 
+@pytest.mark.asyncio
+async def test_embed_texts_cleans_by_default():
+    # Same text, differing only in OCR noise — the mock is deterministic per string,
+    # so identical vectors prove the two inputs converged before embedding.
+    noisy, clean = "كارفور‏  الـــقاهرة  ٢٥٠", "كارفور القاهرة 250"
+    vectors = await embed_texts([noisy, clean])
+    assert vectors[0] == vectors[1]
+
+
+@pytest.mark.asyncio
+async def test_embed_texts_clean_false_embeds_verbatim():
+    noisy, clean = "كارفور‏  الـــقاهرة  ٢٥٠", "كارفور القاهرة 250"
+    vectors = await embed_texts([noisy, clean], clean=False)
+    assert vectors[0] != vectors[1]
+
+
+@pytest.mark.asyncio
+async def test_embed_texts_respects_max_input_chars(monkeypatch):
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings.embeddings, "max_input_chars", 5)
+    truncated, full = await embed_texts(["abcde", "abcdefghij"])
+    assert truncated == full
+
+
 def test_no_hand_rolled_hashlib_mock_remains():
     source = Path("app/features/embed/service.py").read_text()
     tree = ast.parse(source)
