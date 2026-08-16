@@ -453,8 +453,13 @@ def _mock_plan(answers: dict) -> list[BudgetAllocation]:
 
     remaining = 100 - savings_pct - housing
 
+    # "utilities" and "entertainment" aren't real category names in the
+    # backend's `categories` table (only their bucket-mates "housing" and
+    # "lifestyle" are — see core/models/categories/resolution.py's alias map
+    # on the Django side), so those points are folded straight into the
+    # buckets they'd alias to rather than kept as their own line.
     allocations = [
-        BudgetAllocation(category="housing", percentage=Decimal(str(housing))),
+        BudgetAllocation(category="housing", percentage=Decimal(str(housing + 5))),
         BudgetAllocation(category="food", percentage=Decimal("15")),
         BudgetAllocation(category="transport", percentage=Decimal("10")),
         BudgetAllocation(category="savings", percentage=Decimal(str(savings_pct))),

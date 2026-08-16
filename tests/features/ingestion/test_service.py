@@ -1168,3 +1168,68 @@ async def test_normalize_reprocessing_overwrites_same_key(monkeypatch, own_pg):
         key for _, key, _ in s3.put_calls if key == f"{NORM_STATEMENT_ID}/normalized.json"
     ]
     assert len(normalize_put_keys) == 2
+
+
+# ---------------------------------------------------------------------------
+# SEC-005 — oversized source document rejected before the body is ever read
+# ---------------------------------------------------------------------------
+
+
+class _FakeS3WithContentLength(_FakeS3):
+    """Same as _FakeS3, but get_object() also reports ContentLength — the
+    real aioboto3 response always includes it; the shared _FakeS3 above
+    omits it so existing tests exercise the "unknown length" no-op path."""
+
+    def __init__(self, content_length: int, source_bytes: bytes = b"%PDF-fake"):
+        super().__init__(source_bytes=source_bytes)
+        self._content_length = content_length
+
+    async def get_object(self, Bucket, Key):
+        self.get_calls.append((Bucket, Key))
+        return {"Body": _FakeBody(self._source_bytes), "ContentLength": self._content_length}
+
+
+@pytest.mark.asyncio
+async def test_oversized_source_document_rejected_before_reading_body(monkeypatch):
+    from app.features.ingestion.mineru_client import MAX_DOCUMENT_BYTES
+
+    row = _FakeStatement(seaweed_file_id="pfm-statements-raw/u1/s1/original.pdf")
+    session_gen = _session_gen_for(row)
+    own_gen = _own_session_gen()
+
+    s3 = _FakeS3WithContentLength(content_length=MAX_DOCUMENT_BYTES + 1)
+    _patch_storage(monkeypatch, s3)
+    mineru = _FakeMineruClient(parsed=ParsedDocument("md", [], {}))
+    _patch_mineru(monkeypatch, mineru)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await process_statement(
+            session_gen=session_gen, own_session_gen=own_gen, statement_id=STATEMENT_ID
+        )
+
+    assert exc_info.value.status_code == 413
+    # get_object() was called (that's how ContentLength was even known), but
+    # the body stream itself was never entered/read, and MinerU never saw it.
+    assert s3.get_calls
+    assert mineru.calls == []
+
+
+@pytest.mark.asyncio
+async def test_source_document_at_exactly_the_limit_is_accepted(monkeypatch):
+    from app.features.ingestion.mineru_client import MAX_DOCUMENT_BYTES
+
+    row = _FakeStatement(seaweed_file_id="pfm-statements-raw/u1/s1/original.pdf")
+    session_gen = _session_gen_for(row)
+    own_gen = _own_session_gen()
+
+    s3 = _FakeS3WithContentLength(content_length=MAX_DOCUMENT_BYTES)
+    _patch_storage(monkeypatch, s3)
+    mineru = _FakeMineruClient(parsed=ParsedDocument("md", [], {}))
+    _patch_mineru(monkeypatch, mineru)
+
+    result = await process_statement(
+        session_gen=session_gen, own_session_gen=own_gen, statement_id=STATEMENT_ID
+    )
+
+    assert result.ocr_engine == "MinerU"
+    assert mineru.calls
