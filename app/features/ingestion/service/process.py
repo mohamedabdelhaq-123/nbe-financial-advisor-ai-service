@@ -10,7 +10,7 @@ from app.backend_db.models import StatementFile
 from app.core.audit import record_audit
 from app.core.config import settings
 from app.core.storage import get_storage_backend
-from app.features.ingestion.mineru_client import get_mineru_client
+from app.features.ingestion.mineru_client import MAX_DOCUMENT_BYTES, get_mineru_client
 from app.features.ingestion.schemas import ProcessStatementResult
 
 
@@ -40,11 +40,29 @@ async def process_statement(
         )
     source_bucket, source_key = seaweed_file_id.split("/", 1)
 
+    # SEC-005 — checked against the object's declared size (S3's
+    # ContentLength, part of get_object()'s response metadata) before
+    # touching the Body stream at all, so an oversized object is never read
+    # into memory here in the first place — not just before it's forwarded
+    # to MinerU (mineru_client.py's own MAX_DOCUMENT_BYTES check there is a
+    # second backstop, in case this one's ever bypassed by a future call
+    # site that skips process_statement).
     try:
         async with get_storage_backend() as s3:
             obj = await s3.get_object(Bucket=source_bucket, Key=source_key)
+            content_length = obj.get("ContentLength")
+            if content_length is not None and content_length > MAX_DOCUMENT_BYTES:
+                raise HTTPException(
+                    status_code=413,
+                    detail=(
+                        f"source document is {content_length} bytes, over the "
+                        f"{MAX_DOCUMENT_BYTES}-byte limit"
+                    ),
+                )
             async with obj["Body"] as stream:
                 raw_bytes = await stream.read()
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(
             status_code=502, detail=f"failed to retrieve source document: {exc}"

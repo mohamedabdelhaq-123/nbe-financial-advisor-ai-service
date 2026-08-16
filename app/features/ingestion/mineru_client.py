@@ -20,6 +20,18 @@ from app.core.config import settings
 
 _CONTENT_LIST_NAME = "content_list.json"
 
+# SEC-005 — matches the backend repo's own cap (deploy/nginx.conf's
+# client_max_body_size 20m and core/serializers/statements.py's
+# MAX_STATEMENT_UPLOAD_BYTES), so a file the backend accepted is never
+# rejected here in a confusing way. Independent backstop: this service has
+# no way to know the backend's own validation actually ran against whatever
+# object it's asked to process.
+MAX_DOCUMENT_BYTES = 20 * 1024 * 1024
+
+
+class DocumentTooLargeError(Exception):
+    """Raised instead of forwarding an oversized document to MinerU."""
+
 
 @dataclass
 class ParsedDocument:
@@ -71,6 +83,12 @@ class HttpMineruClient:
     """Real `MineruClient` — POSTs to `/file_parse` and unpacks the ZIP response."""
 
     async def parse_document(self, file_bytes: bytes, filename: str) -> ParsedDocument:
+        if len(file_bytes) > MAX_DOCUMENT_BYTES:
+            raise DocumentTooLargeError(
+                f"{filename!r} is {len(file_bytes)} bytes, over the "
+                f"{MAX_DOCUMENT_BYTES}-byte limit — refusing to forward it to MinerU."
+            )
+
         timeout = httpx.Timeout(connect=10.0, read=600.0, write=30.0, pool=10.0)
         api_key = settings.mineru.api_key.get_secret_value()
         headers = {"X-Api-Key": api_key} if api_key else {}
