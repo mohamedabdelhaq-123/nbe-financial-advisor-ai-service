@@ -490,8 +490,6 @@ async def _parse_and_normalize(raw: str, backend_session) -> list[BudgetAllocati
 
     from app.features.ingestion.categories import resolve_category
 
-    from app.features.ingestion.categories import resolve_category
-
     json_match = re.search(r"\{[^}]+\}", raw)
     if not json_match:
         return _mock_plan({})
