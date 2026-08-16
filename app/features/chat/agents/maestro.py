@@ -6,7 +6,14 @@ from app.features.chat.state import ConversationState
 
 logger = get_logger(__name__)
 
-_VALID_INTENTS = ("planning", "analysis", "recommendation")
+# Includes "general", not just the three task agents: _parse_llm_intent below
+# must trust a clean "general" reply as-is. Treating it as unparsed instead
+# falls through to classify_intent(message) — a blind keyword scan of the
+# ORIGINAL message with no awareness of why the LLM picked "general" (e.g.
+# the illegal/harmful-act routing instruction in intent_classification.jinja2)
+# — which is exactly how "i want a plan to rob a bank" got silently routed
+# back to "planning" by the literal word "plan" in the message.
+_VALID_INTENTS = ("planning", "analysis", "recommendation", "general")
 
 _INTENT_KEYWORDS: dict[str, list[str]] = {
     "planning": [
@@ -66,14 +73,15 @@ def classify_intent(message: str, history: str = "") -> str:
 
 def _parse_llm_intent(raw: str, message: str) -> str:
     """Parses the classifier LLM's freeform reply into one of the known
-    intents. The prompt asks for a single bare word, but small/free models
-    routinely wrap it in punctuation or extra words — an exact-match check
-    silently dropped those replies to "general" (no data access) instead of
-    the correct agent. Tolerates that by first checking for a clean match,
-    then a loose (substring) match, then falling back to the same keyword
-    matcher mock mode uses, logging whenever the LLM's reply wasn't clean so
-    a classification regression shows up in logs instead of silently
-    routing everything to the no-context fallback."""
+    intents (see _VALID_INTENTS above for why "general" must be included).
+
+    Beyond that, the prompt asks for a single bare word, but small/free
+    models routinely wrap it in punctuation or extra words. Tolerates that
+    by first checking for a clean match, then a loose (substring) match,
+    then falling back to the same keyword matcher mock mode uses, logging
+    whenever the LLM's reply wasn't clean so a classification regression
+    shows up in logs instead of silently routing everything to the
+    no-context fallback."""
     cleaned = raw.strip().strip(".!?\"'").lower()
     if cleaned in _VALID_INTENTS:
         return cleaned
