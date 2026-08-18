@@ -242,4 +242,6 @@ def test_normalizer_prompt_delimits_untrusted_ocr_content():
     open_idx = prompt.index("<untrusted_ocr_content>")
     close_idx = prompt.index("</untrusted_ocr_content>")
     chunk_idx = prompt.index(rendered_chunk)
-    assert open_idx < chunk_idx < close_idx, "the untrusted OCR content must sit between the delimiter tags"
+    assert open_idx < chunk_idx < close_idx, (
+        "the untrusted OCR content must sit between the delimiter tags"
+    )
