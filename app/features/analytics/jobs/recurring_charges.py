@@ -12,8 +12,8 @@ from app.features.analytics.schemas import RecurringChargeResult
 
 async def detect_recurring_charges(
     session_gen,
-    user_id: str = "",
-    account_id: str = "",
+    user_id: str | uuid.UUID = "",
+    account_id: str | uuid.UUID = "",
 ) -> list[RecurringChargeResult]:
     uid = uuid.UUID(user_id) if isinstance(user_id, str) else user_id
     aid = uuid.UUID(account_id) if isinstance(account_id, str) else account_id

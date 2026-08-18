@@ -15,7 +15,10 @@ from app.core.jinja import build_prompts_env
 
 _env = build_prompts_env(Path(__file__).parent / "prompt_templates")
 _summary_prompt = _env.get_template("summarize.jinja2")
-_intent_classification_prompt = _env.get_template("intent_classification.jinja2")
+_intent_classification_system_prompt = _env.get_template("intent_classification_system.jinja2")
+_intent_classification_human_prompt = _env.get_template("intent_classification_human.jinja2")
+_suggestions_system_prompt = _env.get_template("suggestions_system.jinja2")
+_suggestions_human_prompt = _env.get_template("suggestions_human.jinja2")
 
 
 def get_summary_prompt() -> Template:
@@ -26,13 +29,49 @@ def get_summary_prompt() -> Template:
     return _summary_prompt
 
 
-def get_intent_classification_prompt() -> Template:
-    """Return the intent-classification prompt template.
+def get_intent_classification_system_prompt() -> Template:
+    """Return the intent-classification SystemMessage prompt template.
 
-    Caller renders it: get_intent_classification_prompt().render(message=<str>, history=<str|None>)
+    Static — takes no render variables. Caller renders it with no arguments:
+    get_intent_classification_system_prompt().render()
+    Rendered text constrains the model to exactly: analysis, planning,
+    recommendation, general.
+    """
+    return _intent_classification_system_prompt
+
+
+def get_intent_classification_human_prompt() -> Template:
+    """Return the intent-classification HumanMessage prompt template.
+
+    Caller renders it: get_intent_classification_human_prompt().render(
+        message=<str>, history=<str|None>
+    )
     `history` is an optional digest of recent prior turns, used to
     disambiguate an elliptical latest message; omit/None when there's no
-    prior context. Rendered text still constrains the model to exactly:
-    analysis, planning, recommendation, general.
+    prior context. Split from the system prompt (RT-013) so the untrusted
+    message/history content is role-separated from the task instructions
+    rather than concatenated into one string.
     """
-    return _intent_classification_prompt
+    return _intent_classification_human_prompt
+
+
+def get_suggestions_system_prompt() -> Template:
+    """Return the follow-up-suggestions SystemMessage prompt template.
+
+    Static — takes no render variables. Caller renders it with no arguments:
+    get_suggestions_system_prompt().render()
+    """
+    return _suggestions_system_prompt
+
+
+def get_suggestions_human_prompt() -> Template:
+    """Return the follow-up-suggestions HumanMessage prompt template.
+
+    Caller renders it: get_suggestions_human_prompt().render(
+        content=<str>, widget_type=<str|None>
+    )
+    Split from the system prompt (RT-013) so the untrusted reply content is
+    role-separated from the task instructions rather than concatenated into
+    one string.
+    """
+    return _suggestions_human_prompt

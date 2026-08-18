@@ -35,6 +35,7 @@ def test_done_event_has_no_id_key_anywhere():
         references=[
             Reference(target_type="transaction", target_id="b3f1c2d4-0000-0000-0000-000000000000")
         ],
+        suggestions=["What if I save more?", "Show my transactions", "Revert this change"],
     )
     rendered = json.loads(DoneEvent(data=payload).model_dump_json())
 
@@ -43,18 +44,26 @@ def test_done_event_has_no_id_key_anywhere():
     assert "id" not in rendered["data"]
     assert "widget" in rendered["data"]
     assert "references" in rendered["data"]
+    assert "suggestions" in rendered["data"]
     assert rendered["data"]["widget"]["type"] == "allocation_slider"
     assert rendered["data"]["references"][0]["target_type"] == "transaction"
+    assert rendered["data"]["suggestions"] == [
+        "What if I save more?",
+        "Show my transactions",
+        "Revert this change",
+    ]
 
 
 def test_done_payload_defaults_widget_null_references_empty():
     payload = DonePayload(content="hi")
     assert payload.widget is None
     assert payload.references == []
+    assert payload.suggestions == []
 
     rendered = json.loads(DoneEvent(data=payload).model_dump_json())
     assert rendered["data"]["widget"] is None
     assert rendered["data"]["references"] == []
+    assert rendered["data"]["suggestions"] == []
     assert "id" not in rendered["data"]
 
 

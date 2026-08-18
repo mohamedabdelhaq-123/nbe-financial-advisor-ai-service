@@ -9,9 +9,12 @@ from sqlalchemy import select
 from app.backend_db.models import StatementFile
 from app.core.audit import record_audit
 from app.core.config import settings
+from app.core.logging import get_logger
 from app.core.storage import get_storage_backend
 from app.features.ingestion.mineru_client import MAX_DOCUMENT_BYTES, get_mineru_client
 from app.features.ingestion.schemas import ProcessStatementResult
+
+logger = get_logger(__name__)
 
 
 async def process_statement(
@@ -64,17 +67,30 @@ async def process_statement(
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(
-            status_code=502, detail=f"failed to retrieve source document: {exc}"
-        ) from exc
+        # RT-019: never interpolate the raw exception into the caller-facing
+        # detail — a storage-layer error can plausibly embed connection
+        # strings, tokens, or other secrets. Log the real cause server-side
+        # (get_logger's dict_tracebacks processor captures the full
+        # traceback) and return a generic message instead.
+        logger.warning(
+            "ingestion_source_document_fetch_failed",
+            statement_id=statement_id,
+            error_type=type(exc).__name__,
+            error=str(exc),
+        )
+        raise HTTPException(status_code=502, detail="failed to retrieve source document") from exc
 
     filename = source_key.rsplit("/", 1)[-1]
     try:
         parsed = await get_mineru_client().parse_document(raw_bytes, filename)
     except Exception as exc:
-        raise HTTPException(
-            status_code=502, detail=f"document processing engine failed: {exc}"
-        ) from exc
+        logger.warning(
+            "ingestion_mineru_parse_failed",
+            statement_id=statement_id,
+            error_type=type(exc).__name__,
+            error=str(exc),
+        )
+        raise HTTPException(status_code=502, detail="document processing engine failed") from exc
 
     bucket = settings.storage.s3_ocr_bucket
     prefix = f"{statement_id}/"

@@ -1,6 +1,6 @@
 """Analytics request/response schemas."""
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import UUID4, BaseModel, ConfigDict, Field
 
 
 class MonthlySummaryRequest(BaseModel):
@@ -16,11 +16,11 @@ class MonthlySummaryRequest(BaseModel):
         }
     )
 
-    user_id: str = Field(
+    user_id: UUID4 = Field(
         description="Backend user ID to summarize.",
         examples=["3f9c9b2e-1c2a-4b3d-9e8f-2a7b6c5d4e3f"],
     )
-    account_id: str = Field(
+    account_id: UUID4 = Field(
         description="Backend account ID to summarize.",
         examples=["5a2c1d8e-3f4b-4a2c-9e8f-2a7b6c5d4e3f"],
     )
@@ -40,11 +40,11 @@ class AnomalyCheckRequest(BaseModel):
         }
     )
 
-    user_id: str = Field(
+    user_id: UUID4 = Field(
         description="Backend user ID to check for spending anomalies.",
         examples=["3f9c9b2e-1c2a-4b3d-9e8f-2a7b6c5d4e3f"],
     )
-    account_id: str = Field(
+    account_id: UUID4 = Field(
         description="Backend account ID to check.",
         examples=["5a2c1d8e-3f4b-4a2c-9e8f-2a7b6c5d4e3f"],
     )
@@ -64,11 +64,11 @@ class PostIngestionRequest(BaseModel):
         }
     )
 
-    user_id: str = Field(
+    user_id: UUID4 = Field(
         description="Backend user ID whose statement was just ingested.",
         examples=["3f9c9b2e-1c2a-4b3d-9e8f-2a7b6c5d4e3f"],
     )
-    account_id: str = Field(
+    account_id: UUID4 = Field(
         description="Backend account ID the statement belongs to.",
         examples=["5a2c1d8e-3f4b-4a2c-9e8f-2a7b6c5d4e3f"],
     )

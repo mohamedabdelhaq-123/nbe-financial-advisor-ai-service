@@ -5,9 +5,17 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
+# RT-025: mirrors TransactionEmbedRequest.transaction_ids' MAX_TRANSACTION_EMBED_IDS
+# cap (app/features/transactions/schemas.py) — this endpoint had no equivalent bound.
+MAX_EMBEDDING_BATCH_SIZE = 500
+
 
 class EmbeddingRequest(BaseModel):
-    input: list[str] = Field(description="Text(s) to embed.", examples=["hello world"])
+    input: list[str] = Field(
+        max_length=MAX_EMBEDDING_BATCH_SIZE,
+        description="Text(s) to embed.",
+        examples=["hello world"],
+    )
     model: str | None = Field(
         default=None,
         description="Accepted for OpenAI-shape compatibility; ignored (single configured model).",

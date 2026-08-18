@@ -35,7 +35,11 @@ class _RecordingLLM:
         self._structured_response = structured_response
 
     async def ainvoke(self, input_: Any, *args: Any, **kwargs: Any) -> Any:
-        self._calls.append(input_)
+        # Snapshot, not a reference: callers like `_agentic_analysis` reuse
+        # and mutate the same message list across a tool-calling loop
+        # (`working.append(ai_message)` right after this returns), which
+        # would otherwise silently rewrite an already-recorded call.
+        self._calls.append(list(input_) if isinstance(input_, list) else input_)
         if self._structured_response is not None:
             return self._structured_response
         return SimpleNamespace(content=self._content)
@@ -44,6 +48,9 @@ class _RecordingLLM:
         return self
 
     def with_retry(self, *args: Any, **kwargs: Any) -> "_RecordingLLM":
+        return self
+
+    def bind_tools(self, _tools: Any, **kwargs: Any) -> "_RecordingLLM":
         return self
 
 
@@ -91,7 +98,9 @@ class _PassthroughProxy:
         self._calls = calls
 
     async def ainvoke(self, input_: Any, *args: Any, **kwargs: Any) -> Any:
-        self._calls.append(input_)
+        # Snapshot, not a reference — see the matching comment on
+        # `_RecordingLLM.ainvoke`.
+        self._calls.append(list(input_) if isinstance(input_, list) else input_)
         return await self._real.ainvoke(input_, *args, **kwargs)
 
     def with_structured_output(self, schema: Any) -> "_PassthroughProxy":
@@ -99,6 +108,9 @@ class _PassthroughProxy:
 
     def with_retry(self, *args: Any, **kwargs: Any) -> "_PassthroughProxy":
         return _PassthroughProxy(self._real.with_retry(*args, **kwargs), self._calls)
+
+    def bind_tools(self, tools: Any, **kwargs: Any) -> "_PassthroughProxy":
+        return _PassthroughProxy(self._real.bind_tools(tools, **kwargs), self._calls)
 
 
 def install_passthrough_recorder(monkeypatch: Any) -> list[Any]:
