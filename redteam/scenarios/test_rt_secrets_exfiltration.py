@@ -1,10 +1,9 @@
 """Secrets / internal-detail exfiltration via error paths and logging.
 
-Two contrasting results here on purpose: RT-019 shows the ingestion error
-path currently echoes raw exception text unredacted (a real gap), while
-RT-020 shows the chat error path deliberately does not (FR-010, already a
-positive control worth regression-testing). Phase 13's distinction in
-action: one FAILS (vulnerability), one PASSES (defense confirmed working).
+RT-019 confirms the ingestion error path no longer echoes raw exception text
+unredacted (fixed — see process.py), matching RT-020's chat error path,
+which deliberately never did (FR-010, already a positive control worth
+regression-testing).
 """
 
 import uuid
@@ -72,11 +71,10 @@ async def test_ingestion_process_error_does_not_echo_secret_bearing_exception_te
     connection-string-bearing driver error).
     Expected secure behavior: the `HTTPException.detail` returned to the
     caller never contains the real secret value, regardless of what the
-    underlying exception says.
-    Failure / current state:
-    `app/features/ingestion/service/process.py::process_statement` does
-    `detail=f"failed to retrieve source document: {exc}"` — the raw
-    exception is interpolated with no redaction. EXPECTED TO FAIL today.
+    underlying exception says. Fixed:
+    `app/features/ingestion/service/process.py::process_statement` now logs
+    the real exception server-side and returns a generic detail message,
+    instead of interpolating the raw exception into the response.
     """
     from app.features.ingestion.service.process import process_statement
 

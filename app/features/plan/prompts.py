@@ -15,23 +15,38 @@ from app.core.jinja import build_prompts_env
 
 _env = build_prompts_env(Path(__file__).parent / "prompt_templates")
 _budget_allocation_prompt = _env.get_template("budget_allocation.jinja2")
+_budget_allocation_system_prompt = _env.get_template("budget_allocation_system.jinja2")
 _validate_answer_system_prompt = _env.get_template("validate_answer_system.jinja2")
 _validate_answer_human_prompt = _env.get_template("validate_answer_human.jinja2")
 _goal_extraction_system_prompt = _env.get_template("goal_extraction_system.jinja2")
 
 
+def get_budget_allocation_system_prompt() -> Template:
+    """Return the budget-allocation SystemMessage prompt template.
+
+    Caller renders it: get_budget_allocation_system_prompt().render(
+        known_categories=<list[str]>, example_categories=<str>,
+    )
+    `example_categories` is precomputed by the caller (Python `!r}` repr
+    formatting has no direct Jinja equivalent) as
+    `', '.join(f'{c!r}: 10' for c in known_categories)`.
+    Both are server-derived (the live Category table), never client input.
+    """
+    return _budget_allocation_system_prompt
+
+
 def get_budget_allocation_prompt() -> Template:
-    """Return the budget-allocation prompt template.
+    """Return the budget-allocation HumanMessage prompt template.
 
     Caller renders it: get_budget_allocation_prompt().render(
         avg_monthly_income=<Any>, avg_monthly_recurring_expense=<Any>,
         savings_goal_name=<Any>, savings_goal_target_amount=<Any>,
         savings_goal_timeline_months=<Any>, savings_goal_answer=<Any>,
-        answers=<dict>, known_categories=<list[str]>, example_categories=<str>,
+        answers=<dict>,
     )
-    `example_categories` is precomputed by the caller (Python `!r}` repr
-    formatting has no direct Jinja equivalent) as
-    `', '.join(f'{c!r}: 10' for c in known_categories)`.
+    Split from the system prompt (RT-016) so this client-influenced content
+    is role-separated from the task instructions rather than concatenated
+    into one string.
     """
     return _budget_allocation_prompt
 

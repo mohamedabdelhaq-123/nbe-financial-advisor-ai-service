@@ -287,14 +287,19 @@ async def _agentic_analysis(state: ConversationState, user_id) -> dict:
             "message_references": references,
             "widget": widget_sink[-1] if widget_sink else None,
         }
-    except Exception:
+    except Exception as exc:
         # Reached almost exclusively on an LLM-call failure (timeout/provider
         # hiccup) — the tools themselves never raise up to here, they catch
         # their own DB failures and return {"error": ...} observations for
         # the model to react to (see the per-call try/except above). So the
         # message here must not claim a backend/DB outage it doesn't know
         # happened.
-        logger.exception("analysis_llm_call_failed", user_id=str(user_id))
+        logger.exception(
+            "analysis_llm_call_failed",
+            user_id=str(user_id),
+            error_type=type(exc).__name__,
+            error=str(exc),
+        )
         return {
             "messages": [
                 AIMessage(

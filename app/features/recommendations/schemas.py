@@ -25,7 +25,7 @@ class MatchRequest(BaseModel):
         examples=["low-fee savings account"],
     )
     top_k: int = Field(
-        default=3, le=3, description="Maximum number of matches to return.", examples=[3]
+        default=3, ge=1, le=3, description="Maximum number of matches to return.", examples=[3]
     )
 
 
