@@ -31,8 +31,10 @@ async def stream_chat(app, request: ChatTurnRequest) -> AsyncIterator[str]:
     are consumed internally and never forwarded) — then exactly one terminal event:
 
     * ``done`` — assembled from ``graph.aget_state`` after the stream drains,
-      carrying the finalized ``content``, the ``widget`` slot (nullable), and the
-      ``references`` list (possibly empty). Per FR-003 the payload carries **no**
+      carrying the finalized ``content``, the ``widget`` slot (nullable), the
+      ``references`` list (possibly empty), and up to 3 ``suggestions`` (best-effort;
+      falls back to a static list rather than failing the turn — see
+      app.features.chat.suggestions). Per FR-003 the payload carries **no**
       message ``id`` — Django assigns that after persistence.
     * ``error`` — exactly one on a production failure (FR-010); no ``done`` follows.
 
@@ -48,9 +50,16 @@ async def stream_chat(app, request: ChatTurnRequest) -> AsyncIterator[str]:
 
     if settings.chat_model.use_mock:
         # FR-011: mock mode adopts the same envelope (one token batch + one done).
+        from app.features.chat.suggestions import generate_suggestions
+
         mock_content = f"Mock response to: {request.message[:50]}"
         yield f"data: {TokenEvent(data=mock_content).model_dump_json()}\n\n"
-        yield f"data: {DoneEvent(data=DonePayload(content=mock_content)).model_dump_json()}\n\n"
+        mock_suggestions = await generate_suggestions(mock_content, widget=None)
+        yield (
+            "data: "
+            f"{DoneEvent(data=DonePayload(content=mock_content, suggestions=mock_suggestions)).model_dump_json()}"
+            "\n\n"
+        )
         return
 
     if checkpointer is None:
@@ -142,10 +151,16 @@ async def stream_chat(app, request: ChatTurnRequest) -> AsyncIterator[str]:
                     content = last_content
                 elif last_content:
                     content = str(last_content)
+
+        from app.features.chat.suggestions import generate_suggestions
+
+        widget = values.get("widget")
+        suggestions = await generate_suggestions(content, widget)
         done_payload = DonePayload(
             content=content,
-            widget=values.get("widget"),
+            widget=widget,
             references=list(values.get("message_references") or []),
+            suggestions=suggestions,
         )
         yield f"data: {DoneEvent(data=done_payload).model_dump_json()}\n\n"
     except asyncio.CancelledError:

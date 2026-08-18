@@ -19,7 +19,9 @@ _DONE_FRAME = (
     '{"name":"housing","amount":2000.0,"pct":50.3},'
     '{"name":"transport","amount":734.5,"pct":18.5}]}},'
     '"references":[{"target_type":"transaction",'
-    '"target_id":"b3f1c2d4-0000-0000-0000-000000000000"}]'
+    '"target_id":"b3f1c2d4-0000-0000-0000-000000000000"}],'
+    '"suggestions":["Which category grew the most this month?",'
+    '"How can I cut down on dining expenses?","Compare this to last month"]'
     "}}\n\n"
 )
 _ERROR_FRAME = 'data: {"event":"error","data":{"message":"Chat not available."}}\n\n'
@@ -36,8 +38,9 @@ _ERROR_FRAME = 'data: {"event":"error","data":{"message":"Chat not available."}}
                 "path, `USE_MOCK_LLM=1` — same envelope, FR-011), followed by exactly one "
                 "terminal `done` event carrying the finalized `content`, a `widget` slot "
                 "(allocation_slider / product_card / spending_breakdown / "
-                "transactions_list / savings_slider / null), and `references` (possibly "
-                "empty). The `done` payload carries no message `id` — Django assigns it "
+                "transactions_list / savings_slider / null), `references` (possibly "
+                "empty), and up to 3 `suggestions` (best-effort; MAY be empty). The "
+                "`done` payload carries no message `id` — Django assigns it "
                 "after persistence (FR-003). On a production failure exactly one `error` "
                 "event is emitted and the stream closes (no `done` follows; FR-010). Not "
                 "exercisable via 'Try it out' — use a streaming-aware HTTP client. Wire "
@@ -63,8 +66,9 @@ _ERROR_FRAME = 'data: {"event":"error","data":{"message":"Chat not available."}}
                             "data": {
                                 "description": (
                                     "For `token`: a string reply fragment. For `done`: a "
-                                    "`DonePayload` (content, widget, references; no id). "
-                                    "For `error`: an `ErrorPayload` (message)."
+                                    "`DonePayload` (content, widget, references, "
+                                    "suggestions; no id). For `error`: an `ErrorPayload` "
+                                    "(message)."
                                 ),
                             },
                         },
@@ -99,9 +103,9 @@ async def chat(body: ChatTurnRequest, request: Request):
     The response is a Server-Sent Events stream over the shared ``{"event","data"}``
     envelope: incremental ``token`` events (leaf-agent reply only — Maestro
     classification and summary generation are never forwarded), then exactly one
-    terminal ``done`` carrying the finalized ``content``, a ``widget`` slot, and
-    ``references`` (no message ``id``; Django assigns it after persistence) — or one
-    ``error`` on failure. See
+    terminal ``done`` carrying the finalized ``content``, a ``widget`` slot,
+    ``references``, and ``suggestions`` (no message ``id``; Django assigns it after
+    persistence) — or one ``error`` on failure. See
     ``specs/009-chat-streaming-contract/contracts/chat-stream.md``.
     """
     from fastapi.responses import StreamingResponse

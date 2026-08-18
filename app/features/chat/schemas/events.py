@@ -36,6 +36,11 @@ class DonePayload(BaseModel):
                     "content": "You spent 1,240 EGP on groceries last month.",
                     "widget": None,
                     "references": [],
+                    "suggestions": [
+                        "Which category grew the most this month?",
+                        "How can I cut down on dining expenses?",
+                        "Compare this to last month",
+                    ],
                 }
             ]
         }
@@ -55,6 +60,13 @@ class DonePayload(BaseModel):
         default_factory=list,
         description=(
             "Citations to underlying financial records; empty list when the reply is not grounded."
+        ),
+    )
+    suggestions: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Up to 3 short follow-up prompts the user might send next, grounded in this "
+            "reply. Always present; MAY be empty if generation failed."
         ),
     )
 
@@ -78,6 +90,11 @@ class DoneEvent(BaseModel):
                                 "target_id": "b3f1c2d4-0000-0000-0000-000000000000",
                             },
                         ],
+                        "suggestions": [
+                            "Which category grew the most this month?",
+                            "How can I cut down on dining expenses?",
+                            "Compare this to last month",
+                        ],
                     },
                 }
             ]
@@ -90,7 +107,7 @@ class DoneEvent(BaseModel):
     )
     data: DonePayload = Field(
         description=(
-            "The finalized reply payload (content, widget, references). "
+            "The finalized reply payload (content, widget, references, suggestions). "
             "Carries no message `id` (FR-003)."
         )
     )

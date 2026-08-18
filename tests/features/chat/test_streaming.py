@@ -90,8 +90,16 @@ def _install_fake_graph(monkeypatch, graph):
 def real_mode(monkeypatch):
     """Disable the mock short-circuit so the graph streaming path is exercised."""
     from app.core.config import settings
+    from app.features.chat import suggestions as suggestions_module
 
     monkeypatch.setattr(settings.chat_model, "use_mock", False)
+    # Suggestion generation calls a real LLM once mock mode is off — stub it so
+    # these tests keep exercising only the streaming/done-assembly path, with
+    # no live model/network call (Constitution Principle I).
+    async def _fake_generate_suggestions(content, widget):
+        return ["s1", "s2", "s3"]
+
+    monkeypatch.setattr(suggestions_module, "generate_suggestions", _fake_generate_suggestions)
     return _fake_app()
 
 
@@ -195,6 +203,7 @@ async def test_empty_content_still_emits_done(real_mode, monkeypatch):
     assert dones[0]["data"]["content"] == ""
     assert dones[0]["data"]["widget"] is None
     assert dones[0]["data"]["references"] == []
+    assert dones[0]["data"]["suggestions"] == ["s1", "s2", "s3"]
 
 
 @pytest.mark.asyncio
@@ -256,6 +265,7 @@ async def test_widget_and_references_combo_in_done(real_mode, monkeypatch):
     assert len(data["references"]) == 1
     assert data["references"][0]["target_type"] == "transaction"
     assert data["references"][0]["target_id"] == "b3f1c2d4-0000-0000-0000-000000000000"
+    assert data["suggestions"] == ["s1", "s2", "s3"]
     assert "id" not in data
 
 
