@@ -15,15 +15,13 @@ from pydantic import ValidationError
 @pytest.mark.redteam(id="RT-024", category="resource_abuse", severity="medium")
 def test_chat_message_has_no_size_cap():
     """RT-024 — `ChatTurnRequest.message` (app/features/chat/schemas/
-    request.py) has no `max_length`.
+    request.py) used to have no `max_length`. Fixed: capped at 8000 chars.
 
     Preconditions: none.
     Attack input: `ChatTurnRequest(message="a" * 2_000_000, ...)` — a 2MB
     chat message.
     Expected secure behavior: rejected at the request-validation layer
     before it can reach an LLM call.
-    Failure / current state: no length constraint exists. EXPECTED TO FAIL
-    today — this is SEC-010, reported by the framework.
     """
     from app.features.chat.schemas import ChatTurnRequest
 
@@ -44,16 +42,16 @@ def test_chat_message_has_no_size_cap():
 
 @pytest.mark.redteam(id="RT-025", category="resource_abuse", severity="medium")
 def test_embeddings_request_has_no_batch_size_cap():
-    """RT-025 — `EmbeddingRequest.input` (app/features/embed/schemas.py) has
-    no upper bound on the number or total size of texts in one batch,
-    unlike `TransactionEmbedRequest.transaction_ids`, which does cap at 500
-    (see RT-010's positive control).
+    """RT-025 — `EmbeddingRequest.input` (app/features/embed/schemas.py)
+    used to have no upper bound on the number of texts in one batch, unlike
+    `TransactionEmbedRequest.transaction_ids`, which caps at 500 (see
+    RT-010's positive control). Fixed: `input` now caps at
+    `MAX_EMBEDDING_BATCH_SIZE` (500), mirroring that pattern.
 
     Preconditions: none.
     Attack input: `EmbeddingRequest(input=["some text to embed"] * 100_000)`.
     Expected secure behavior: rejected before reaching the embedding
     provider.
-    Failure / current state: no bound exists. EXPECTED TO FAIL today.
     """
     from app.features.embed.schemas import EmbeddingRequest
 

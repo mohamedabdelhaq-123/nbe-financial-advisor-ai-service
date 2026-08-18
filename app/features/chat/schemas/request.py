@@ -27,6 +27,7 @@ class ChatTurnRequest(BaseModel):
         examples=["7a1b2c3d-4e5f-4a7b-8c9d-0e1f2a3b4c5d"],
     )
     message: str = Field(
+        max_length=8000,
         description="The user's message for this turn.",
         examples=["How much did I spend on groceries last month?"],
     )
