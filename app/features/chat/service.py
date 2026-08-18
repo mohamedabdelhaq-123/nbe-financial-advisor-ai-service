@@ -55,11 +55,8 @@ async def stream_chat(app, request: ChatTurnRequest) -> AsyncIterator[str]:
         mock_content = f"Mock response to: {request.message[:50]}"
         yield f"data: {TokenEvent(data=mock_content).model_dump_json()}\n\n"
         mock_suggestions = await generate_suggestions(mock_content, widget=None)
-        yield (
-            "data: "
-            f"{DoneEvent(data=DonePayload(content=mock_content, suggestions=mock_suggestions)).model_dump_json()}"
-            "\n\n"
-        )
+        mock_done = DonePayload(content=mock_content, suggestions=mock_suggestions)
+        yield f"data: {DoneEvent(data=mock_done).model_dump_json()}\n\n"
         return
 
     if checkpointer is None:

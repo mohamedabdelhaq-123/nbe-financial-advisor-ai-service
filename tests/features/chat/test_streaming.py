@@ -93,6 +93,7 @@ def real_mode(monkeypatch):
     from app.features.chat import suggestions as suggestions_module
 
     monkeypatch.setattr(settings.chat_model, "use_mock", False)
+
     # Suggestion generation calls a real LLM once mock mode is off — stub it so
     # these tests keep exercising only the streaming/done-assembly path, with
     # no live model/network call (Constitution Principle I).

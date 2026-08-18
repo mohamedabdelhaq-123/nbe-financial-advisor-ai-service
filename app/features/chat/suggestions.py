@@ -1,5 +1,7 @@
 """Follow-up suggestion generation — 3 short prompts appended to each reply."""
 
+from typing import cast
+
 from pydantic import BaseModel, Field
 
 from app.core.config import settings
@@ -59,8 +61,11 @@ async def generate_suggestions(content: str, widget: Widget | None) -> list[str]
         structured_llm = get_chat_model(disable_reasoning=True).with_structured_output(
             SuggestedFollowUps
         )
-        result: SuggestedFollowUps = await structured_llm.ainvoke(
-            [SystemMessage(content=system_prompt), HumanMessage(content=human_prompt)]
+        result = cast(
+            SuggestedFollowUps,
+            await structured_llm.ainvoke(
+                [SystemMessage(content=system_prompt), HumanMessage(content=human_prompt)]
+            ),
         )
         cleaned = [s.strip() for s in result.suggestions if s.strip()]
         return cleaned[:3] if len(cleaned) >= 3 else list(_FALLBACK_SUGGESTIONS)
