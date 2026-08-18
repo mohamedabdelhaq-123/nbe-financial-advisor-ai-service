@@ -396,12 +396,16 @@ async def generate_plan(
     if settings.chat_model.use_mock:
         return _mock_plan(answers)
 
+    from langchain_core.messages import HumanMessage, SystemMessage
     from sqlalchemy import select
 
     from app.backend_db import get_backend_session
     from app.backend_db.models import Category
     from app.core.llm import get_chat_model
-    from app.features.plan.prompts import get_budget_allocation_prompt
+    from app.features.plan.prompts import (
+        get_budget_allocation_prompt,
+        get_budget_allocation_system_prompt,
+    )
 
     # The confirming Django endpoint (PATCH /budget -> AllocationInputSerializer)
     # validates `category` against real backend Category rows by exact name, not
@@ -420,6 +424,11 @@ async def generate_plan(
         )
 
         llm = get_chat_model()
+        example_categories = ", ".join(f"{c!r}: 10" for c in known_categories)
+        system_prompt = get_budget_allocation_system_prompt().render(
+            known_categories=known_categories,
+            example_categories=example_categories,
+        )
         prompt = get_budget_allocation_prompt().render(
             avg_monthly_income=context.get("avg_monthly_income"),
             avg_monthly_recurring_expense=context.get("avg_monthly_recurring_expense"),
@@ -428,10 +437,10 @@ async def generate_plan(
             savings_goal_timeline_months=context.get("savings_goal_timeline_months"),
             savings_goal_answer=answers.get("savings_goal"),
             answers=answers,
-            known_categories=known_categories,
-            example_categories=", ".join(f"{c!r}: 10" for c in known_categories),
         )
-        response = await llm.ainvoke(prompt)
+        response = await llm.ainvoke(
+            [SystemMessage(content=system_prompt), HumanMessage(content=prompt)]
+        )
         raw = str(response.content).strip()
 
         return await _parse_and_normalize(raw, backend_session)
