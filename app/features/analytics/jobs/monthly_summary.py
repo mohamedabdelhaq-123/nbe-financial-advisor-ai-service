@@ -12,8 +12,8 @@ from app.features.analytics.schemas import MonthlySummaryResult
 async def compute_monthly_summary(
     session_gen,
     embed_fn=None,
-    user_id: str = "",
-    account_id: str = "",
+    user_id: str | uuid.UUID = "",
+    account_id: str | uuid.UUID = "",
     month: str = "",
 ) -> MonthlySummaryResult:
     if embed_fn is None:

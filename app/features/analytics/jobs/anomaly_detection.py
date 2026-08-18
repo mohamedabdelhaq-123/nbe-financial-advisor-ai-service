@@ -13,8 +13,8 @@ from app.features.analytics.schemas import AnomalyFlagResult
 
 async def detect_anomalies(
     session_gen,
-    user_id: str = "",
-    account_id: str = "",
+    user_id: str | uuid.UUID = "",
+    account_id: str | uuid.UUID = "",
     month: str = "",
 ) -> list[AnomalyFlagResult]:
     uid = uuid.UUID(user_id) if isinstance(user_id, str) else user_id
