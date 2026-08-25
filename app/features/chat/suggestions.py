@@ -63,9 +63,7 @@ async def generate_suggestions(content: str, widget: Widget | None) -> list[str]
         # "none" ("Reasoning is mandatory for this endpoint and cannot be
         # disabled"), which was silently sending every suggestion call to the
         # static fallback.
-        structured_llm = get_chat_model().with_structured_output(
-            SuggestedFollowUps
-        )
+        structured_llm = get_chat_model().with_structured_output(SuggestedFollowUps)
         result = cast(
             SuggestedFollowUps,
             await structured_llm.ainvoke(
