@@ -142,11 +142,21 @@ async def maestro_node(state: ConversationState) -> dict:
     if settings.chat_model.use_mock:
         intent = classify_intent(text, history=history)
     else:
-        from app.core.llm import get_chat_model
-        from app.features.chat.prompts import get_intent_classification_prompt
+        from langchain_core.messages import HumanMessage, SystemMessage
 
-        prompt = get_intent_classification_prompt().render(message=text, history=history or None)
-        result = await get_chat_model().ainvoke(prompt)
+        from app.core.llm import get_chat_model
+        from app.features.chat.prompts import (
+            get_intent_classification_human_prompt,
+            get_intent_classification_system_prompt,
+        )
+
+        system_prompt = get_intent_classification_system_prompt().render()
+        human_prompt = get_intent_classification_human_prompt().render(
+            message=text, history=history or None
+        )
+        result = await get_chat_model().ainvoke(
+            [SystemMessage(content=system_prompt), HumanMessage(content=human_prompt)]
+        )
         raw = result.content if isinstance(result.content, str) else str(result.content)
         intent = _parse_llm_intent(raw, text)
 

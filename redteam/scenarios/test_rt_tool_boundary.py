@@ -84,13 +84,9 @@ def test_match_request_rejects_negative_top_k():
     Attack input: `MatchRequest(user_id=<valid UUID>, query="low-fee savings
     account", top_k=-5)` — `top_k` is the K in top-K product matching.
     Expected secure behavior: rejected at the request-validation layer, the
-    same way an out-of-range positive `top_k` already is (`le=3` is set,
-    but there is no matching `ge` lower bound in
-    app/features/recommendations/schemas.py).
-    Failure / current state: no `ge` constraint exists, so `top_k=-5`
-    currently validates successfully and would reach `match()`'s
-    `.limit(top_k)` unchecked. EXPECTED TO FAIL today — reports a real,
-    fixable input-validation gap, not a broken test.
+    same way an out-of-range positive `top_k` already is. Fixed: `top_k`
+    now has `ge=1` alongside its existing `le=3` in
+    app/features/recommendations/schemas.py.
     """
     from app.features.recommendations.schemas import MatchRequest
 
@@ -107,9 +103,11 @@ def test_match_request_rejects_negative_top_k():
     ["MonthlySummaryRequest", "AnomalyCheckRequest", "PostIngestionRequest"],
 )
 def test_analytics_requests_reject_malformed_user_id(schema_name: str):
-    """RT-009 — type confusion: analytics schemas type `user_id`/`account_id`
-    as plain `str` (app/features/analytics/schemas.py), unlike
-    `ChatTurnRequest`/`MatchRequest`, which both use `UUID4`.
+    """RT-009 — type confusion: analytics schemas used to type
+    `user_id`/`account_id` as plain `str` (app/features/analytics/
+    schemas.py), unlike `ChatTurnRequest`/`MatchRequest`, which both use
+    `UUID4`. Fixed: all three request schemas below now type both fields
+    as `UUID4` too.
 
     Preconditions: none.
     Attack input: `{schema_name}(user_id="not-a-valid-uuid",
@@ -117,11 +115,6 @@ def test_analytics_requests_reject_malformed_user_id(schema_name: str):
     Expected secure behavior: a non-UUID `user_id` is rejected at the
     request-validation layer, consistent with the other schemas in this
     same service.
-    Failure / current state: `str` accepts anything, and the unguarded
-    `uuid.UUID(user_id)` call inside
-    `compute_monthly_summary`/`detect_anomalies` then raises a bare
-    `ValueError` deeper in the call stack instead of a clean 422. EXPECTED
-    TO FAIL today.
     """
     import app.features.analytics.schemas as schemas_module
 
