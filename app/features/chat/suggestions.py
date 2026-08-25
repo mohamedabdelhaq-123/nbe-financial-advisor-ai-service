@@ -1,4 +1,4 @@
-"""Follow-up suggestion generation — 3 short prompts appended to each reply."""
+"""Follow-up suggestion generation — 1-4 short prompts appended to each reply."""
 
 from typing import cast
 
@@ -21,20 +21,23 @@ _FALLBACK_SUGGESTIONS = [
 
 
 class SuggestedFollowUps(BaseModel):
-    """Exactly 3 short follow-up prompts the user might naturally send next."""
+    """1 to 4 short follow-up prompts the user might naturally send next."""
 
     suggestions: list[str] = Field(
-        min_length=3,
-        max_length=3,
+        min_length=1,
+        max_length=4,
         description=(
-            "Three short, natural follow-up questions or requests the user might send "
-            "next, each under ~60 characters, grounded in the reply just given."
+            "1 to 4 short, natural follow-up messages the user might send next, each "
+            "under ~60 characters, grounded in the reply just given. If the reply asks "
+            "the user to enumerate specific items (e.g. rent, loans, subscriptions), "
+            "the suggestions should be short direct answers naming those items rather "
+            "than generic follow-up questions."
         ),
     )
 
 
 async def generate_suggestions(content: str, widget: Widget | None) -> list[str]:
-    """Returns up to 3 follow-up suggestion chips for the reply just generated.
+    """Returns up to 4 follow-up suggestion chips for the reply just generated.
 
     Best-effort: any LLM or parsing failure falls back to a small static list
     rather than propagating and failing the whole chat turn.
@@ -55,12 +58,12 @@ async def generate_suggestions(content: str, widget: Widget | None) -> list[str]
         human_prompt = get_suggestions_human_prompt().render(
             content=content, widget_type=widget.type if widget else None
         )
-        # disable_reasoning: this is a small, fixed-shape classification-like
-        # call, not a task that benefits from hidden reasoning tokens (same
-        # rationale as the ingestion normalizer's structured-output calls).
-        structured_llm = get_chat_model(disable_reasoning=True).with_structured_output(
-            SuggestedFollowUps
-        )
+        # Not disable_reasoning=True here: the configured model
+        # (openai/gpt-oss-20b:nitro via OpenRouter) 400s on reasoning_effort
+        # "none" ("Reasoning is mandatory for this endpoint and cannot be
+        # disabled"), which was silently sending every suggestion call to the
+        # static fallback.
+        structured_llm = get_chat_model().with_structured_output(SuggestedFollowUps)
         result = cast(
             SuggestedFollowUps,
             await structured_llm.ainvoke(
@@ -68,7 +71,7 @@ async def generate_suggestions(content: str, widget: Widget | None) -> list[str]
             ),
         )
         cleaned = [s.strip() for s in result.suggestions if s.strip()]
-        return cleaned[:3] if len(cleaned) >= 3 else list(_FALLBACK_SUGGESTIONS)
+        return cleaned[:4] if cleaned else list(_FALLBACK_SUGGESTIONS)
     except Exception:
         logger.exception("suggestion_generation_failed")
         return list(_FALLBACK_SUGGESTIONS)
