@@ -39,7 +39,7 @@ _ERROR_FRAME = 'data: {"event":"error","data":{"message":"Chat not available."}}
                 "terminal `done` event carrying the finalized `content`, a `widget` slot "
                 "(allocation_slider / product_card / spending_breakdown / "
                 "transactions_list / savings_slider / null), `references` (possibly "
-                "empty), and up to 3 `suggestions` (best-effort; MAY be empty). The "
+                "empty), and up to 4 `suggestions` (best-effort; MAY be empty). The "
                 "`done` payload carries no message `id` — Django assigns it "
                 "after persistence (FR-003). On a production failure exactly one `error` "
                 "event is emitted and the stream closes (no `done` follows; FR-010). Not "

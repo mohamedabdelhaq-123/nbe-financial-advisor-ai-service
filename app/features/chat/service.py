@@ -20,19 +20,24 @@ logger = get_logger(__name__)
 
 # User-facing leaf agents whose token output is forwarded downstream.
 # Maestro classification and summary generation are consumed internally.
-_LEAF_NODES = frozenset({"analysis", "planner_ask", "validate_answer", "recommendation", "general"})
+# validate_answer is also internal: it emits a raw "Valid"/"Invalid: <reason>"
+# classification string (plan/service.py's validate_answer_llm) that
+# planner_ask later turns into the actual user-facing reprompt — it must
+# never be streamed to the user directly.
+_LEAF_NODES = frozenset({"analysis", "planner_ask", "recommendation", "general"})
 
 
 async def stream_chat(app, request: ChatTurnRequest) -> AsyncIterator[str]:
     """Yield the SSE frames for one chat turn over the shared ``{event, data}`` envelope.
 
     Emits zero or more ``token`` events — one per non-empty content chunk from a
-    leaf agent in ``_LEAF_NODES`` (Maestro classification and summary generation
-    are consumed internally and never forwarded) — then exactly one terminal event:
+    leaf agent in ``_LEAF_NODES`` (Maestro classification, summary generation,
+    and answer validation are consumed internally and never forwarded) — then
+    exactly one terminal event:
 
     * ``done`` — assembled from ``graph.aget_state`` after the stream drains,
       carrying the finalized ``content``, the ``widget`` slot (nullable), the
-      ``references`` list (possibly empty), and up to 3 ``suggestions`` (best-effort;
+      ``references`` list (possibly empty), and up to 4 ``suggestions`` (best-effort;
       falls back to a static list rather than failing the turn — see
       app.features.chat.suggestions). Per FR-003 the payload carries **no**
       message ``id`` — Django assigns that after persistence.
