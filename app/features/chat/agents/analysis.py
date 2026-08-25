@@ -49,10 +49,15 @@ ANALYSIS_SYSTEM_PROMPT_TEMPLATE = (
     "show_transactions, and show_savings_projection — that render a chart, a "
     "list, or an interactive projection alongside your reply. Call the "
     "matching one IN ADDITION to answering when the user asks where their "
-    "money went, to see their transactions, or about saving per month. Your "
-    "written answer must still stand on its own: state the figures in prose "
-    "too, never reply with only a display tool call or point at the widget "
-    "instead of answering. If a display tool reports shown=false, explain its "
+    "money went, to see their transactions, or about saving per month. For "
+    "show_spending_breakdown and show_savings_projection, your written answer "
+    "must still stand on its own: state the figures in prose too, never reply "
+    "with only a display tool call or point at the widget instead of "
+    "answering. For show_transactions, do the opposite: keep your prose to a "
+    "brief one- or two-sentence summary (how many, the date range, the total) "
+    "and never enumerate the individual transactions as a list or markdown "
+    "table — the widget already shows every row, so repeating them in prose "
+    "is pure duplication. If a display tool reports shown=false, explain its "
     "reason plainly rather than estimating the missing figure yourself.\n\n"
     "If the request describes, seeks help with, or asks for a method for an "
     "illegal or harmful act, decline plainly instead of answering, even if "
@@ -144,7 +149,6 @@ async def _mock_analysis(user_id) -> dict:
         # MissingGreenlet — so it must be eager-loaded as part of this query
         # (selectinload), not touched lazily later regardless of session state.
         references: list[Reference] = []
-        lines: list[str] = []
         widget: TransactionsListWidget | None = None
         async for session in get_backend_session():
             result = await session.execute(
@@ -158,12 +162,8 @@ async def _mock_analysis(user_id) -> dict:
 
             for txn in transactions:
                 references.append(Reference(target_type="transaction", target_id=str(txn.id)))
-                amount = getattr(txn, "amount", 0)
-                desc = getattr(txn, "merchant_raw", "unknown")
-                category = txn.category.name if txn.category else "uncategorized"
-                lines.append(f"- {desc} ({category}): {amount}")
 
-        if not lines:
+        if not references:
             return {
                 "messages": [
                     AIMessage(content="I don't have that data yet. No transactions found."),
@@ -171,7 +171,12 @@ async def _mock_analysis(user_id) -> dict:
                 "message_references": [],
             }
 
-        reply = "Based on your transactions:\n" + "\n".join(lines)
+        # Deliberately a one-line summary, not a per-row list: the widget
+        # already shows every row, so repeating them in prose would duplicate
+        # the same data the user just saw in the transactions_list card (see
+        # show_transactions's docstring in app/tools/widgets.py for the same
+        # rule on the real-model path).
+        reply = f"Here are your {len(references)} most recent transactions."
         return {
             "messages": [AIMessage(content=reply)],
             "message_references": references,

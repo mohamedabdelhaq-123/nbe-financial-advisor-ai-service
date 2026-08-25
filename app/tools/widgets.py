@@ -21,7 +21,11 @@ no balance read path existed anywhere in the service before this.
 Each tool returns a plain dict observation to the model *in addition to*
 stashing the typed widget in the per-turn sink, so the model can narrate the
 same figures in prose — the prose is what streams to the user as `token`
-events, and it has to stand on its own for any client that ignores widgets.
+events. For the aggregate widgets (breakdown, projection) prose still states
+the headline figures so a client that ignores widgets isn't left with
+nothing. `show_transactions` is the one exception: its widget already IS the
+full row-level answer, so its docstring asks for a short summary instead of a
+duplicated table — see that tool's docstring for why.
 """
 
 from __future__ import annotations
@@ -272,8 +276,11 @@ def make_widget_tools(
         """Display a list of the user's transactions.
 
         Call this in addition to answering when the user asks to see their
-        recent transactions, purchases, or history. Still summarise in prose as
-        well — the list supplements your reply, it does not replace it.
+        recent transactions, purchases, or history. Give a brief one- or
+        two-sentence summary in prose (e.g. how many, the date range, the
+        total) — do NOT enumerate the individual transactions as a list or
+        markdown table; the widget already shows every row, so repeating them
+        in prose is pure duplication.
 
         Args:
             category: category name to filter by. Omit for all categories.
