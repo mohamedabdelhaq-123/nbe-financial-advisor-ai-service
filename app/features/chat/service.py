@@ -1,6 +1,7 @@
 """Chat streaming service — SSE endpoint implementation."""
 
 import asyncio
+import re
 import uuid
 from collections.abc import AsyncIterator
 
@@ -73,6 +74,42 @@ async def _conversation_belongs_to_user(conversation_id: str, user_id: uuid.UUID
         return False
 
     return False
+
+# Tool names bound in analysis.py's _agentic_analysis — the only node that
+# calls bind_tools(). Against OpenAI itself a tool call always rides in the
+# message's structured tool_calls field with empty `content`, so intermediate
+# turns never leak into the token stream. Some OpenAI-compatible self-hosted
+# backends (vLLM etc. — see app/core/llm.py) emulate tool-calling by having
+# the model literally emit the call as XML-ish text in `content` (e.g.
+# `<show_transactions count="10"></show_transactions>`), which their own
+# tool-call parser then strips out of the FINAL assembled response but not
+# necessarily out of each streamed delta — so the raw tag text can reach the
+# client as one or more `token` events before it's recognized as a tool call.
+# This is a defensive strip, not the root cause fix (that would require
+# buffering per-turn to detect a tool call before forwarding anything, which
+# would give up incremental streaming for the analysis node entirely) — it
+# just keeps the known tag shapes out of what the user ever sees, on both the
+# streamed chunks and the final persisted content.
+_TOOL_NAMES = (
+    "show_spending_breakdown",
+    "show_transactions",
+    "show_savings_projection",
+    "get_transactions",
+    "compute_aggregate",
+)
+_TOOL_TAG_RE = re.compile(
+    r"<(?:" + "|".join(_TOOL_NAMES) + r")\b[^>]*?(?:/>|>.*?</(?:" + "|".join(_TOOL_NAMES) + r")>)",
+    re.DOTALL,
+)
+
+
+def _strip_tool_call_tags(text: str) -> str:
+    """Removes any recognized `<tool_name ...>...</tool_name>` (or
+    self-closing `<tool_name .../>`) block from model output text — see
+    `_TOOL_TAG_RE`'s comment above for why these sometimes leak through."""
+    if "<" not in text:
+        return text
+    return _TOOL_TAG_RE.sub("", text)
 
 
 async def stream_chat(app, request: ChatTurnRequest) -> AsyncIterator[str]:
@@ -204,7 +241,9 @@ async def stream_chat(app, request: ChatTurnRequest) -> AsyncIterator[str]:
                     continue
                 content = chunk.content
                 if isinstance(content, str) and content:
-                    yield f"data: {TokenEvent(data=content).model_dump_json()}\n\n"
+                    content = _strip_tool_call_tags(content)
+                    if content:
+                        yield f"data: {TokenEvent(data=content).model_dump_json()}\n\n"
 
         # FR-002/FR-005/FR-008: exactly one terminal done assembled from finalized state.
         snapshot = await graph.aget_state(config)
@@ -234,6 +273,7 @@ async def stream_chat(app, request: ChatTurnRequest) -> AsyncIterator[str]:
 
         from app.features.chat.suggestions import generate_suggestions
 
+        content = _strip_tool_call_tags(content)
         widget = values.get("widget")
         suggestions = await generate_suggestions(content, widget)
         done_payload = DonePayload(
