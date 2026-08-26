@@ -21,17 +21,25 @@ _FALLBACK_SUGGESTIONS = [
 
 
 class SuggestedFollowUps(BaseModel):
-    """1 to 4 short follow-up prompts the user might naturally send next."""
+    """Short follow-up prompts the user might naturally send next.
+
+    1-4 in general; if the reply poses a question with a small enumerable
+    set of choices, one direct answer per plausible choice, never padded.
+    See the system prompt for the full rule — this description is a
+    fallback for schema-only inspection.
+    """
 
     suggestions: list[str] = Field(
         min_length=1,
         max_length=4,
         description=(
-            "1 to 4 short, natural follow-up messages the user might send next, each "
-            "under ~60 characters, grounded in the reply just given. If the reply asks "
-            "the user to enumerate specific items (e.g. rent, loans, subscriptions), "
-            "the suggestions should be short direct answers naming those items rather "
-            "than generic follow-up questions."
+            "Short, natural follow-up messages the user might send next, each under "
+            "~60 characters, grounded in the reply just given. If the reply poses a "
+            "question with a small set of plausible answers (e.g. 'consistent or "
+            "variable?'), return one direct answer per choice, no more. Otherwise "
+            "return 1 to 4 specific, non-generic follow-ups — never pad with filler "
+            "just to reach 4. Never name a specific bank product (account type, "
+            "card, loan, savings/deposit product)."
         ),
     )
 
