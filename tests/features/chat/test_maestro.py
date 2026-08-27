@@ -1,111 +1,322 @@
-"""US1 Unit test: Maestro intent classification (mock mode)."""
+"""Unit tests for Maestro's context-aware structured routing."""
 
+import asyncio
 import uuid
 from decimal import Decimal
 
 import pytest
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from pydantic import ValidationError
+from structlog.testing import capture_logs
 
-from app.features.chat.agents.maestro import _parse_llm_intent, classify_intent, maestro_node
+from app.core.config import settings
+from app.features.chat.agents.maestro import (
+    _normalise_decision,
+    classify_intent,
+    maestro_node,
+)
+from app.features.chat.routing import MaestroRoutingDecision
+from app.features.chat.scope_guard import ScopeResult
+from redteam.runners.fake_llm import install_fake_chat_model
 
 
 @pytest.mark.parametrize(
-    "message,expected",
+    ("message", "expected"),
     [
         ("how much did I spend on food last month", "analysis"),
         ("show me my transactions", "analysis"),
-        ("what were my expenses", "analysis"),
         ("help me budget for next month", "planning"),
-        ("I want to plan my spending", "planning"),
-        ("create a budget for me", "planning"),
         ("which credit card should I get", "recommendation"),
         ("what savings account is best", "recommendation"),
-        ("recommend a product for me", "recommendation"),
         ("help me invest my remaining money", "investment_planning"),
-        ("How should I use my remaining money?", "investment_planning"),
         ("check the latest gold price for an investment plan", "investment_planning"),
-        ("compare fund NAVs before I invest", "investment_planning"),
         ("hello there", "general"),
-        ("what can you do", "general"),
-        ("thank you", "general"),
     ],
 )
-def test_classify_intent(message: str, expected: str):
-    result = classify_intent(message)
-    assert result == expected
+def test_mock_classifier_exercises_each_offline_graph_route(message: str, expected: str):
+    assert classify_intent(message) == expected
 
 
-# Real-LLM classification path (maestro_node's `else` branch, chat_model.use_mock=False)
-# was previously untested — only classify_intent()'s mock-mode keyword matcher above
-# had coverage. These exercise _parse_llm_intent() directly against the kind of
-# not-quite-bare-word replies a real model returns, which the old exact-match check
-# (`classified in _INTENT_KEYWORDS`) silently dropped to "general".
-@pytest.mark.parametrize(
-    "raw",
-    [
-        "analysis",
-        "Analysis",
-        "Analysis.",
-        "'analysis'",
-        '"analysis"',
-        "the answer is analysis",
-    ],
-)
-def test_parse_llm_intent_tolerates_a_dirty_reply(raw: str):
-    result = _parse_llm_intent(raw, "what are my recent transactions?")
-    assert result == "analysis"
-
-
-def test_parse_llm_intent_falls_back_to_keywords_when_unparsable():
-    # A reply with none of the three intent words in it at all — falls back
-    # to the same keyword matcher mock mode uses, rather than "general".
-    result = _parse_llm_intent("sure, I can help with that", "recommend a savings account")
-    assert result == "recommendation"
-
-
-@pytest.mark.parametrize(
-    "raw",
-    ["general", "General", "General.", "'general'", "the answer is general"],
-)
-def test_parse_llm_intent_trusts_a_clean_general_reply(raw: str):
-    # Regression test for a real bug: the LLM correctly classified "i want a
-    # plan to rob a bank" as "general" (per the illegal/harmful-act routing
-    # instruction in intent_classification.jinja2), but "general" wasn't in
-    # _VALID_INTENTS, so it was treated as unparsed and fell through to
-    # classify_intent() — a blind keyword scan of the ORIGINAL message, where
-    # the literal word "plan" silently overrode the LLM's correct answer
-    # back to "planning". A clean "general" reply must be trusted as-is,
-    # exactly like the task intents already are.
-    result = _parse_llm_intent(raw, "i want a plan to rob a bank")
-    assert result == "general"
-
-
-def test_parse_llm_intent_falls_back_to_general_when_truly_unclassifiable():
-    result = _parse_llm_intent("sure, I can help with that", "hello there")
-    assert result == "general"
-
-
-# ── classify_intent: history fallback for elliptical follow-ups ─────────────
-
-
-def test_classify_intent_falls_back_to_history_when_message_has_no_keywords():
-    # "what about this month ?" alone carries no _INTENT_KEYWORDS match.
-    result = classify_intent(
-        "what about this month ?", history="human: what did i spend on the most last month?"
+def test_mock_classifier_uses_history_for_an_elliptical_followup():
+    assert (
+        classify_intent(
+            "what about this month?",
+            history="human: what did i spend on the most last month?",
+        )
+        == "analysis"
     )
-    assert result == "analysis"
 
 
-def test_classify_intent_prefers_message_keywords_over_history():
-    result = classify_intent(
-        "which credit card should I get", history="human: what did i spend on the most last month?"
+def test_mock_classifier_prefers_latest_message_over_history():
+    assert (
+        classify_intent(
+            "which credit card should I get?",
+            history="human: what did i spend on the most last month?",
+        )
+        == "recommendation"
     )
-    assert result == "recommendation"
 
 
-def test_classify_intent_general_when_neither_message_nor_history_match():
-    result = classify_intent("hello there", history="human: hi\nai: hello, how can I help?")
-    assert result == "general"
+def test_low_confidence_route_becomes_one_short_clarification(monkeypatch):
+    monkeypatch.setattr(settings.maestro_routing, "minimum_confidence", 0.7)
+    result = _normalise_decision(
+        MaestroRoutingDecision(outcome="route", route="analysis", confidence=0.4)
+    )
+    assert result.outcome == "clarify"
+    assert result.route is None
+    assert result.clarification_question
+    assert len(result.clarification_question) <= 180
+
+
+def test_unknown_model_route_is_rejected_by_the_structured_schema():
+    with pytest.raises(ValidationError):
+        MaestroRoutingDecision(outcome="route", route="invented_agent", confidence=0.99)
+
+
+def test_irrelevant_route_is_discarded_for_refuse_or_clarify_outcome():
+    refused = MaestroRoutingDecision(outcome="refuse", route="general", confidence=0.99)
+    clarified = MaestroRoutingDecision(
+        outcome="clarify",
+        route="analysis",
+        confidence=0.8,
+        clarification_question="Which period would you like to review?",
+    )
+    assert refused.route is None
+    assert clarified.route is None
+
+
+def test_clarification_with_internal_route_names_is_rewritten_for_users():
+    result = _normalise_decision(
+        MaestroRoutingDecision(
+            outcome="clarify",
+            route="general",
+            confidence=0.8,
+            clarification_question="Do you want analysis or recommendation?",
+        )
+    )
+    assert "analysis" not in result.clarification_question.lower()
+    assert "recommendation" not in result.clarification_question.lower()
+
+
+@pytest.mark.asyncio
+async def test_real_maestro_uses_validated_structured_output_for_a_long_message(monkeypatch):
+    monkeypatch.setattr(settings.chat_model, "use_mock", False)
+    decision = MaestroRoutingDecision(outcome="route", route="analysis", confidence=0.94)
+    calls = install_fake_chat_model(monkeypatch, structured_response=decision)
+    long_message = (
+        "I have been trying to understand my finances across the last few months. "
+        "Please use my existing transactions to show where my spending increased, "
+        "but do not start a new budget questionnaire yet."
+    )
+
+    result = await maestro_node(
+        {
+            "messages": [HumanMessage(content=long_message)],
+            "stage": "",
+            "questions_asked": 0,
+            "intent": "",
+        }
+    )
+
+    assert result["intent"] == "analysis"
+    assert result["routing_outcome"] == "route"
+    assert result["routing_confidence"] == 0.94
+    assert len(calls) == 1
+    assert isinstance(calls[0][0], SystemMessage)
+    assert isinstance(calls[0][1], HumanMessage)
+    assert calls[0][1].content.endswith(long_message)
+
+
+@pytest.mark.asyncio
+async def test_real_maestro_sends_recent_context_for_a_short_answer(monkeypatch):
+    monkeypatch.setattr(settings.chat_model, "use_mock", False)
+    decision = MaestroRoutingDecision(outcome="route", route="investment_planning", confidence=0.96)
+    calls = install_fake_chat_model(monkeypatch, structured_response=decision)
+
+    async def _fake_investment_context(state):
+        return {"investment_context": {"instruments": []}, "investment_answers": {}}
+
+    monkeypatch.setattr(
+        "app.features.chat.agents.maestro._investment_context_update",
+        _fake_investment_context,
+    )
+
+    result = await maestro_node(
+        {
+            "messages": [
+                HumanMessage(content="How should I invest my remaining money?"),
+                AIMessage(content="What is your main objective?"),
+                HumanMessage(content="growth"),
+            ],
+            "stage": "",
+            "questions_asked": 0,
+            "intent": "general",
+        }
+    )
+
+    assert result["intent"] == "investment_planning"
+    assert "What is your main objective?" in calls[0][1].content
+    assert calls[0][1].content.endswith("Latest user message: growth")
+
+
+@pytest.mark.asyncio
+async def test_active_investment_questionnaire_routes_growth_without_reclassification(monkeypatch):
+    def _unexpected_model():
+        raise AssertionError("active workflow answers must not be reclassified")
+
+    monkeypatch.setattr("app.core.llm.get_chat_model", _unexpected_model)
+    result = await maestro_node(
+        {
+            "messages": [HumanMessage(content="growth")],
+            "stage": "investment_planning",
+            "questions_asked": 0,
+            "intent": "investment_planning",
+        }
+    )
+
+    assert result["intent"] == "investment_planning"
+    assert result["routing_outcome"] == "route"
+
+
+@pytest.mark.asyncio
+async def test_real_maestro_refuses_out_of_scope_without_routing_to_general(monkeypatch):
+    monkeypatch.setattr(settings.chat_model, "use_mock", False)
+    decision = MaestroRoutingDecision(outcome="refuse", confidence=0.98)
+    install_fake_chat_model(monkeypatch, structured_response=decision)
+
+    result = await maestro_node(
+        {
+            "messages": [HumanMessage(content="write me a cooking recipe")],
+            "stage": "",
+            "questions_asked": 0,
+            "intent": "",
+        }
+    )
+
+    assert result["routing_outcome"] == "refuse"
+    assert result["in_scope"] is False
+
+
+@pytest.mark.asyncio
+async def test_invalid_structured_result_fails_to_clarification_not_keywords(monkeypatch):
+    monkeypatch.setattr(settings.chat_model, "use_mock", False)
+    install_fake_chat_model(monkeypatch, structured_response={"route": "analysis"})
+
+    with capture_logs() as logs:
+        result = await maestro_node(
+            {
+                "messages": [HumanMessage(content="show spending")],
+                "stage": "",
+                "questions_asked": 0,
+                "intent": "",
+            }
+        )
+
+    assert result["routing_outcome"] == "clarify"
+    assert result["intent"] == "general"
+    assert any(entry["event"] == "maestro_routing_failed" for entry in logs)
+
+
+@pytest.mark.asyncio
+async def test_nli_shadow_is_observed_but_cannot_override_maestro(monkeypatch):
+    monkeypatch.setattr(settings.chat_model, "use_mock", True)
+    monkeypatch.setattr(settings.nli_shadow, "enabled", True)
+
+    async def _shadow_disagrees(text):
+        return ScopeResult(in_scope=False, top_label="other", score=0.91)
+
+    monkeypatch.setattr("app.features.chat.scope_guard.check_scope", _shadow_disagrees)
+
+    with capture_logs() as logs:
+        result = await maestro_node(
+            {
+                "messages": [HumanMessage(content="hello there")],
+                "stage": "",
+                "questions_asked": 0,
+                "intent": "",
+            }
+        )
+
+    assert result["routing_outcome"] == "route"
+    assert result["intent"] == "general"
+    comparison = next(entry for entry in logs if entry["event"] == "nli_shadow_comparison")
+    assert comparison["agreement"] is False
+    assert comparison["nli_in_scope"] is False
+
+
+@pytest.mark.asyncio
+async def test_slow_nli_shadow_does_not_delay_maestro_reply(monkeypatch):
+    monkeypatch.setattr(settings.chat_model, "use_mock", True)
+    monkeypatch.setattr(settings.nli_shadow, "enabled", True)
+    release_shadow = asyncio.Event()
+    shadow_finished = asyncio.Event()
+
+    async def _slow_shadow(text):
+        await release_shadow.wait()
+        shadow_finished.set()
+        return ScopeResult(in_scope=True, top_label="finance", score=0.8)
+
+    monkeypatch.setattr("app.features.chat.scope_guard.check_scope", _slow_shadow)
+
+    result = await asyncio.wait_for(
+        maestro_node(
+            {
+                "messages": [HumanMessage(content="hello there")],
+                "stage": "",
+                "questions_asked": 0,
+                "intent": "",
+            }
+        ),
+        timeout=0.1,
+    )
+
+    assert result["intent"] == "general"
+    assert shadow_finished.is_set() is False
+    release_shadow.set()
+    await asyncio.wait_for(shadow_finished.wait(), timeout=1)
+
+
+@pytest.mark.asyncio
+async def test_cancelling_maestro_also_cancels_optional_nli_shadow(monkeypatch):
+    monkeypatch.setattr(settings.chat_model, "use_mock", False)
+    monkeypatch.setattr(settings.nli_shadow, "enabled", True)
+    shadow_started = asyncio.Event()
+    shadow_cancelled = asyncio.Event()
+
+    async def _blocking_shadow(text):
+        shadow_started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            shadow_cancelled.set()
+            raise
+
+    class _BlockingModel:
+        def with_structured_output(self, schema):
+            return self
+
+        async def ainvoke(self, messages):
+            await asyncio.Event().wait()
+
+    monkeypatch.setattr("app.features.chat.scope_guard.check_scope", _blocking_shadow)
+    monkeypatch.setattr("app.core.llm.get_chat_model", lambda: _BlockingModel())
+
+    routing_task = asyncio.create_task(
+        maestro_node(
+            {
+                "messages": [HumanMessage(content="show my spending")],
+                "stage": "",
+                "questions_asked": 0,
+                "intent": "",
+            }
+        )
+    )
+    await asyncio.wait_for(shadow_started.wait(), timeout=1)
+    routing_task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await routing_task
+    await asyncio.wait_for(shadow_cancelled.wait(), timeout=1)
 
 
 @pytest.mark.asyncio
@@ -114,10 +325,11 @@ async def test_maestro_node_uses_history_for_elliptical_followup_in_mock_mode():
         "messages": [
             HumanMessage(content="what did i spend on the most last month?"),
             AIMessage(content="I don't have that data yet. Backend is unavailable."),
-            HumanMessage(content="what about this month ?"),
+            HumanMessage(content="what about this month?"),
         ],
         "stage": "",
         "questions_asked": 0,
+        "intent": "",
     }
     result = await maestro_node(state)
     assert result["intent"] == "analysis"
@@ -180,21 +392,13 @@ async def test_completed_investment_plan_accepts_catalogue_selection_change():
         "show me a savings projection",
     ],
 )
-def test_savings_projection_questions_route_to_analysis(message):
-    """These are answerable from the user's own data, so they belong to the
-    analysis agent — not to planning, which would start the questionnaire."""
+def test_savings_projection_questions_route_to_analysis_in_mock_mode(message):
     assert classify_intent(message) == "analysis"
 
 
 @pytest.mark.parametrize(
     "message",
-    [
-        "which savings account is best?",
-        "recommend a savings account",
-    ],
+    ["which savings account is best?", "recommend a savings account"],
 )
-def test_savings_account_questions_still_route_to_recommendation(message):
-    """Regression guard for the keyword-ordering hazard: _INTENT_KEYWORDS is
-    scanned in insertion order and returns on the first hit, so a bare "saving"
-    added to the analysis list would hijack these away from recommendation."""
+def test_savings_account_questions_route_to_recommendation_in_mock_mode(message):
     assert classify_intent(message) == "recommendation"

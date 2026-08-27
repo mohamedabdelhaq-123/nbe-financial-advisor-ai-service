@@ -25,8 +25,7 @@ dependencies = [
     "opentelemetry-exporter-otlp-proto-http>=1.44.0",
     "openinference-instrumentation-langchain>=0.1.67",
     "saq[postgres]>=0.26.4",
-    # HTTP client for the scope-guard's "hosted" mode (app/features/chat/scope_guard.py) —
-    # calls the zero-shot classifier over the HF Inference API instead of running it in-process.
+    # HTTP client for optional hosted NLI shadow comparison (scope_guard.py).
     "httpx>=0.27",
 ]
 
@@ -50,8 +49,8 @@ codegen = [
     "sqlacodegen==4.0.4",
     "psycopg[binary]==3.3.4",
 ]
-# Local zero-shot scope-guard model (app/features/chat/scope_guard.py) — mDeBERTa-v3-base-mnli-xnli
-# run in-process, for AI_SERVICE_SCOPE_GUARD__MODE=local. Kept out of default-groups, same
+# Local NLI shadow model (app/features/chat/scope_guard.py) — mDeBERTa-v3-base-mnli-xnli
+# run in-process, for AI_SERVICE_NLI_SHADOW__MODE=local. Kept out of default-groups, same
 # reasoning as codegen above: a plain `uv sync` (CI, and any deployment running in "hosted"
 # mode) never pulls in ~200MB of CPU-only torch it won't use. Activate with
 # `uv sync --group local-scope-guard` before switching the mode flag to "local".

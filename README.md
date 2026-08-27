@@ -171,7 +171,7 @@ review, not CI).
 
 | Endpoint | Description |
 |---|---|
-| `POST /internal/chat` | SSE streaming chat (Maestro intent routing) |
+| `POST /internal/chat` | SSE streaming chat (context-aware structured Maestro routing) |
 
 ### Analytics — Deterministic insight pipelines
 

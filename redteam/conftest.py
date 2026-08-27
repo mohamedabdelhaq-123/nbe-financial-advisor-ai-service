@@ -12,7 +12,7 @@ double in `redteam/runners/fake_llm.py` (still no network call) or is marked
 IMPORTANT: this suite is routinely run inside the same dev containers that
 carry *real* provider credentials as process env vars (e.g. this repo's
 `docker-compose.dev.yml` `env_file:`s — confirmed to include a live
-`AI_SERVICE_SCOPE_GUARD__HOSTED_API_KEY` and `AI_SERVICE_CHAT_MODEL__USE_MOCK=0`
+`AI_SERVICE_NLI_SHADOW__HOSTED_API_KEY` and `AI_SERVICE_CHAT_MODEL__USE_MOCK=0`
 in that setup). `os.environ.setdefault(...)` does NOT override an
 already-set var, so the safety/determinism-critical flags below are force-set
 with plain assignment instead — the one deliberate exception to "never
@@ -33,7 +33,7 @@ from types import ModuleType
 # means a real LLM/embedding/OCR/HF/Langfuse call, not just a wrong result.
 os.environ["AI_SERVICE_CHAT_MODEL__USE_MOCK"] = "1"
 os.environ["AI_SERVICE_MINERU__USE_MOCK"] = "1"
-os.environ["AI_SERVICE_SCOPE_GUARD__ENABLED"] = "0"
+os.environ["AI_SERVICE_NLI_SHADOW__ENABLED"] = "0"
 os.environ["AI_SERVICE_LANGFUSE__ENABLED"] = "0"
 
 os.environ.setdefault("AI_SERVICE_CHAT_MODEL__OPENAI_BASE_URL", "https://api.openai.com/v1")

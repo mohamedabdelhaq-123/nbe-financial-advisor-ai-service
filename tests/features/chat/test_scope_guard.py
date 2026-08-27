@@ -1,4 +1,4 @@
-"""Unit tests: the scope guardrail's decision logic and fail-open behaviour.
+"""Unit tests for the legacy NLI classifier used in shadow mode.
 
 LocalScopeClassifier (real transformers/torch) is deliberately not exercised
 here — it needs the optional `local-scope-guard` dependency group, which CI
@@ -45,8 +45,8 @@ def test_allows_confident_greeting():
 
 
 def test_fails_open_on_low_confidence_out_of_scope():
-    # Below settings.scope_guard.threshold (default 0.55) — an unsure
-    # classifier must not refuse a possibly-legitimate question.
+    # Below settings.nli_shadow.threshold (default 0.55) — an unsure
+    # classifier records an open result for comparison telemetry.
     result = _result_from_scores(OUT_OF_SCOPE_LABEL, 0.4)
     assert result.in_scope is True
 
@@ -79,7 +79,7 @@ def test_is_known_in_scope_phrase_does_not_overmatch(text: str):
 
 @pytest.mark.asyncio
 async def test_check_scope_bypasses_classifier_for_capability_phrase(monkeypatch):
-    monkeypatch.setattr(scope_guard_module.settings.scope_guard, "enabled", True)
+    monkeypatch.setattr(scope_guard_module.settings.nli_shadow, "enabled", True)
 
     def _fail_if_called():
         raise AssertionError("classifier must not be called for a known capability phrase")
@@ -194,14 +194,14 @@ def test_build_scope_check_text_uses_prior_message_for_task_intents(last_intent)
 
 @pytest.mark.asyncio
 async def test_check_scope_allows_everything_when_disabled(monkeypatch):
-    monkeypatch.setattr(scope_guard_module.settings.scope_guard, "enabled", False)
+    monkeypatch.setattr(scope_guard_module.settings.nli_shadow, "enabled", False)
     result = await check_scope("anything at all")
     assert result.in_scope is True
 
 
 @pytest.mark.asyncio
 async def test_check_scope_fails_open_when_classifier_errors(monkeypatch):
-    monkeypatch.setattr(scope_guard_module.settings.scope_guard, "enabled", True)
+    monkeypatch.setattr(scope_guard_module.settings.nli_shadow, "enabled", True)
 
     class _BrokenClassifier:
         async def classify(self, text: str) -> ScopeResult:
@@ -214,8 +214,8 @@ async def test_check_scope_fails_open_when_classifier_errors(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_check_scope_logs_outcome_without_the_message_text(monkeypatch):
-    monkeypatch.setattr(scope_guard_module.settings.scope_guard, "enabled", True)
+async def test_shadow_classifier_does_not_log_raw_message_text(monkeypatch):
+    monkeypatch.setattr(scope_guard_module.settings.nli_shadow, "enabled", True)
 
     class _BlockingClassifier:
         async def classify(self, text: str) -> ScopeResult:
@@ -228,13 +228,8 @@ async def test_check_scope_logs_outcome_without_the_message_text(monkeypatch):
         result = await check_scope(secret_message)
 
     assert result.in_scope is False
-    blocked_events = [e for e in entries if e["event"] == "scope_guard_blocked"]
-    assert len(blocked_events) == 1
-    logged = blocked_events[0]
-    assert logged["top_label"] == OUT_OF_SCOPE_LABEL
-    assert logged["score"] == 0.87
-    # The whole point: the guard's own logs must not become a new PII leak.
-    assert secret_message not in repr(logged)
+    assert entries == []
+    assert secret_message not in repr(entries)
 
 
 # ── HostedScopeClassifier: mocked HTTP, never a real network call ──────────
@@ -243,7 +238,7 @@ async def test_check_scope_logs_outcome_without_the_message_text(monkeypatch):
 @pytest.mark.asyncio
 async def test_hosted_classifier_parses_response(monkeypatch):
     fake_key = MagicMock(get_secret_value=lambda: "test-token")
-    monkeypatch.setattr(scope_guard_module.settings.scope_guard, "hosted_api_key", fake_key)
+    monkeypatch.setattr(scope_guard_module.settings.nli_shadow, "hosted_api_key", fake_key)
 
     classifier = HostedScopeClassifier()
 

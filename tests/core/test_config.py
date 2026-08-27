@@ -18,8 +18,10 @@ from app.core.config import (
     EmbeddingsSettings,
     LangfuseSettings,
     LoggingSettings,
+    MaestroRoutingSettings,
     MarketDataSettings,
     MinerUSettings,
+    NliShadowSettings,
     OwnDbSettings,
     Settings,
     StorageSettings,
@@ -90,6 +92,22 @@ def test_market_data_http_accepts_public_or_internal_endpoint():
     )
     assert public.base_url == "https://prices.example"
     assert internal.base_url == "http://market-data:8090"
+
+
+def test_maestro_routing_confidence_is_bounded():
+    MaestroRoutingSettings(minimum_confidence=0.55)
+    with pytest.raises(ValidationError):
+        MaestroRoutingSettings(minimum_confidence=1.1)
+
+
+def test_nli_shadow_disabled_needs_no_external_key():
+    NliShadowSettings(enabled=False, mode="hosted", hosted_api_key="")
+
+
+def test_nli_shadow_hosted_requires_key_only_when_enabled():
+    with pytest.raises(ValidationError, match="AI_SERVICE_NLI_SHADOW__HOSTED_API_KEY"):
+        NliShadowSettings(enabled=True, mode="hosted", hosted_api_key="")
+    NliShadowSettings(enabled=True, mode="hosted", hosted_api_key="test-key")
 
 
 def test_langfuse_valid_construction_when_disabled_raises_nothing():

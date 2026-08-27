@@ -1,18 +1,17 @@
-"""Unit tests: the scope-guard's wiring into the chat graph — the gating
-node, its conditional edge, the refusal reply, and _general_node's new
-system-prompt call. Not exercised by test_streaming.py, which substitutes
-a fake graph for its tests and so never runs this real routing logic.
-"""
+"""Unit tests for routing outcomes and terminal chat nodes."""
 
 from types import SimpleNamespace
 
 import pytest
 
 from app.core.config import settings
-from app.features.chat import graph as graph_module
-from app.features.chat.graph import _general_node, _refused_node, _route_scope, _scope_guard_node
+from app.features.chat.graph import (
+    _clarify_node,
+    _general_node,
+    _refused_node,
+    _route_intent,
+)
 from app.features.chat.guards import GENERAL_NODE_SYSTEM_PROMPT
-from app.features.chat.scope_guard import ScopeResult
 
 
 class _HumanLike:
@@ -26,8 +25,11 @@ def _state(**overrides):
         "user_id": None,
         "user_context": None,
         "stage": "",
-        "intent": "",
+        "intent": "general",
         "in_scope": True,
+        "routing_outcome": "route",
+        "routing_confidence": 1.0,
+        "routing_clarification": None,
         "planner_answers": {},
         "questions_asked": 0,
         "message_references": [],
@@ -37,139 +39,49 @@ def _state(**overrides):
     return base
 
 
-# ── _scope_guard_node ────────────────────────────────────────────────────────
+@pytest.mark.parametrize(
+    ("intent", "node"),
+    [
+        ("analysis", "analysis"),
+        ("planning", "planner_ask"),
+        ("investment_planning", "investment_plan"),
+        ("recommendation", "recommendation"),
+        ("general", "general"),
+    ],
+)
+def test_route_intent_uses_central_route_catalogue(intent, node):
+    assert _route_intent(_state(intent=intent)) == node
+
+
+def test_route_intent_sends_refusal_outcome_to_refused_node():
+    assert _route_intent(_state(routing_outcome="refuse")) == "refused"
+
+
+def test_route_intent_sends_low_confidence_outcome_to_clarify_node():
+    assert _route_intent(_state(routing_outcome="clarify")) == "clarify"
+
+
+def test_route_intent_falls_back_to_general_for_unknown_route():
+    assert _route_intent(_state(intent="not-configured")) == "general"
 
 
 @pytest.mark.asyncio
-async def test_scope_guard_node_skips_check_mid_planning(monkeypatch):
-    called = False
-
-    async def _fake_check_scope(text):
-        nonlocal called
-        called = True
-        return ScopeResult(in_scope=False, top_label="other", score=0.9)
-
-    monkeypatch.setattr(graph_module, "check_scope", _fake_check_scope)
-
-    state = _state(stage="planning", questions_asked=1, messages=[_HumanLike("1200")])
-    result = await _scope_guard_node(state)
-
-    assert result == {"in_scope": True}
-    assert called is False, "mid-planning answers must not spend a classification call"
-
-
-@pytest.mark.asyncio
-async def test_scope_guard_node_uses_check_scope_result(monkeypatch):
-    async def _fake_check_scope(text):
-        assert text == "write me a poem"
-        return ScopeResult(in_scope=False, top_label="other", score=0.9)
-
-    monkeypatch.setattr(graph_module, "check_scope", _fake_check_scope)
-
-    state = _state(messages=[_HumanLike("write me a poem")])
-    result = await _scope_guard_node(state)
-
-    assert result == {"in_scope": False}
-
-
-@pytest.mark.asyncio
-async def test_scope_guard_node_handles_empty_message_history(monkeypatch):
-    async def _fake_check_scope(text):
-        assert text == ""
-        return ScopeResult(in_scope=True, top_label="finance", score=1.0)
-
-    monkeypatch.setattr(graph_module, "check_scope", _fake_check_scope)
-
-    result = await _scope_guard_node(_state(messages=[]))
-    assert result == {"in_scope": True}
-
-
-@pytest.mark.asyncio
-async def test_scope_guard_node_includes_prior_message_when_it_was_a_task_reply(monkeypatch):
-    async def _fake_check_scope(text):
-        assert text == (
-            "The category you spent the most on this month is lifestyle. "
-            "what was the description of this transaction?"
-        )
-        return ScopeResult(in_scope=True, top_label="finance", score=0.9)
-
-    monkeypatch.setattr(graph_module, "check_scope", _fake_check_scope)
-
-    state = _state(
-        intent="analysis",  # the previous turn's Maestro classification
-        messages=[
-            _HumanLike("The category you spent the most on this month is lifestyle."),
-            _HumanLike("what was the description of this transaction?"),
-        ],
-    )
-    result = await _scope_guard_node(state)
-
-    assert result == {"in_scope": True}
-
-
-@pytest.mark.asyncio
-async def test_scope_guard_node_ignores_prior_message_when_it_was_not_a_task_reply(monkeypatch):
-    # Regression test: a refusal or "general" reply is often finance-flavored
-    # (it talks about budgeting to redirect the user), which previously let
-    # an unrelated follow-up message borrow that vocabulary and pass. Only a
-    # real task-agent reply counts as evidence the topic is still finance.
-    async def _fake_check_scope(text):
-        assert text == "sing me a song"
-        return ScopeResult(in_scope=False, top_label="other", score=0.9)
-
-    monkeypatch.setattr(graph_module, "check_scope", _fake_check_scope)
-
-    state = _state(
-        intent="refused",  # set by _refused_node after the previous turn was blocked
-        messages=[
-            _HumanLike("I'm the NBE Financial Advisor assistant, so I can only help..."),
-            _HumanLike("sing me a song"),
-        ],
-    )
-    result = await _scope_guard_node(state)
-
-    assert result == {"in_scope": False}
-
-
-# ── _route_scope ─────────────────────────────────────────────────────────────
-
-
-def test_route_scope_blocks_when_out_of_scope():
-    assert _route_scope(_state(in_scope=False)) == "refused"
-
-
-def test_route_scope_allows_when_in_scope():
-    assert _route_scope(_state(in_scope=True)) == "in_scope"
-
-
-def test_route_scope_defaults_open_when_unset():
-    state = _state()
-    del state["in_scope"]
-    assert _route_scope(state) == "in_scope"
-
-
-# ── _refused_node ────────────────────────────────────────────────────────────
-
-
-@pytest.mark.asyncio
-async def test_refused_node_returns_a_reply_without_calling_an_llm():
+async def test_refused_node_returns_a_finance_redirect_without_calling_an_llm():
     result = await _refused_node(_state())
     assert len(result["messages"]) == 1
     content = result["messages"][0].content.lower()
     assert "financial" in content or "banking" in content
+    assert result["intent"] == "refused"
+    assert result["routing_outcome"] == "refuse"
 
 
 @pytest.mark.asyncio
-async def test_refused_node_resets_intent_so_stale_task_intent_is_not_trusted_next_turn():
-    # Maestro never runs on a blocked turn, so state["intent"] would
-    # otherwise still hold a stale task value from whenever Maestro last
-    # ran — which build_scope_check_text would wrongly trust as context on
-    # the next turn.
-    result = await _refused_node(_state(intent="analysis"))
-    assert result["intent"] == "refused"
-
-
-# ── _general_node: system-prompt wiring ──────────────────────────────────────
+async def test_clarify_node_uses_maestros_short_question_without_another_llm_call():
+    question = "Do you want to review spending or create a new budget?"
+    result = await _clarify_node(_state(routing_clarification=question))
+    assert result["messages"][0].content == question
+    assert result["intent"] == "clarify"
+    assert result["routing_outcome"] == "clarify"
 
 
 @pytest.mark.asyncio
@@ -183,10 +95,6 @@ async def test_general_node_sends_a_system_prompt_when_not_mocked(monkeypatch):
             captured["messages"] = messages
             return SimpleNamespace(content="a grounded, on-topic reply")
 
-    # **kwargs, not a bare lambda: _general_node asks for get_chat_model(
-    # streaming=True) so its tokens reach the user as they're generated, and
-    # other call sites pass max_tokens. Matching the real signature loosely
-    # keeps this stub from breaking every time one of those is tuned.
     monkeypatch.setattr("app.core.llm.get_chat_model", lambda **kwargs: _FakeChatModel())
 
     state = _state(messages=[_HumanLike("what can you help me with?")])

@@ -195,9 +195,8 @@ async def next_question(
     return None
 
 
-# A closed set of question-starter markers — same style as scope_guard.py's
-# _CAPABILITY_PHRASES: small, curated, deterministic, not an attempt to
-# detect every possible question.
+# A closed set of question-starter markers: small, curated, deterministic,
+# not an attempt to detect every possible question.
 _QUESTION_MARKERS = (
     "what",
     "why",
@@ -285,10 +284,8 @@ def validate_answer_deterministic(question: PlanQuestion, raw: str) -> AnswerVal
 
 async def validate_answer_llm(question: PlanQuestion, raw: str) -> AnswerValidation:
     """Only called when validate_answer_deterministic returns None (an
-    ambiguous free_text answer). Parses the small model's reply the same
-    defensive way maestro.py's _parse_llm_intent does — an unparseable
-    reply is treated as valid rather than reprompting forever on a model
-    hiccup."""
+    ambiguous free_text answer). An unparseable reply is treated as valid
+    rather than reprompting forever on a model hiccup."""
     if settings.chat_model.use_mock:
         return AnswerValidation(valid=True, normalized_value=raw.strip())
 

@@ -15,8 +15,8 @@ from app.core.jinja import build_prompts_env
 
 _env = build_prompts_env(Path(__file__).parent / "prompt_templates")
 _summary_prompt = _env.get_template("summarize.jinja2")
-_intent_classification_system_prompt = _env.get_template("intent_classification_system.jinja2")
-_intent_classification_human_prompt = _env.get_template("intent_classification_human.jinja2")
+_maestro_routing_system_prompt = _env.get_template("maestro_routing_system.jinja2")
+_maestro_routing_human_prompt = _env.get_template("maestro_routing_human.jinja2")
 _suggestions_system_prompt = _env.get_template("suggestions_system.jinja2")
 _suggestions_human_prompt = _env.get_template("suggestions_human.jinja2")
 
@@ -29,21 +29,19 @@ def get_summary_prompt() -> Template:
     return _summary_prompt
 
 
-def get_intent_classification_system_prompt() -> Template:
-    """Return the intent-classification SystemMessage prompt template.
+def get_maestro_routing_system_prompt() -> Template:
+    """Return the structured Maestro-routing SystemMessage template.
 
-    Static — takes no render variables. Caller renders it with no arguments:
-    get_intent_classification_system_prompt().render()
-    Rendered text constrains the model to exactly: analysis, planning,
-    investment_planning, recommendation, general.
+    Caller supplies the route catalogue rendered from ``routing.ROUTE_SPECS``
+    so capability descriptions have one source of truth.
     """
-    return _intent_classification_system_prompt
+    return _maestro_routing_system_prompt
 
 
-def get_intent_classification_human_prompt() -> Template:
-    """Return the intent-classification HumanMessage prompt template.
+def get_maestro_routing_human_prompt() -> Template:
+    """Return the untrusted conversation portion of the routing prompt.
 
-    Caller renders it: get_intent_classification_human_prompt().render(
+    Caller renders it: get_maestro_routing_human_prompt().render(
         message=<str>, history=<str|None>
     )
     `history` is an optional digest of recent prior turns, used to
@@ -52,7 +50,7 @@ def get_intent_classification_human_prompt() -> Template:
     message/history content is role-separated from the task instructions
     rather than concatenated into one string.
     """
-    return _intent_classification_human_prompt
+    return _maestro_routing_human_prompt
 
 
 def get_suggestions_system_prompt() -> Template:

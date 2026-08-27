@@ -25,7 +25,17 @@ logger = get_logger(__name__)
 # classification string (plan/service.py's validate_answer_llm) that
 # planner_ask later turns into the actual user-facing reprompt — it must
 # never be streamed to the user directly.
-_LEAF_NODES = frozenset({"analysis", "planner_ask", "investment_plan", "recommendation", "general"})
+_LEAF_NODES = frozenset(
+    {
+        "analysis",
+        "planner_ask",
+        "investment_plan",
+        "recommendation",
+        "general",
+        "clarify",
+        "refused",
+    }
+)
 
 
 async def _conversation_belongs_to_user(conversation_id: str, user_id: uuid.UUID) -> bool:
@@ -110,40 +120,10 @@ async def stream_chat(app, request: ChatTurnRequest) -> AsyncIterator[str]:
     config = {"configurable": {"thread_id": request.conversation_id}}
     snapshot = None
 
-    # Investment planning is deliberately deterministic except for its quote
-    # provider, so it remains fully exercisable when the chat LLM is mocked.
-    # Existing generic mock-chat behaviour stays intact for all other fresh
-    # turns. A pending interrupt also has to resume through the graph because
-    # terse questionnaire answers do not carry an investment keyword.
-    if settings.chat_model.use_mock and checkpointer is not None:
-        from app.features.chat.agents.maestro import classify_intent
-        from app.features.chat.graph import build_graph
-
-        graph = build_graph(checkpointer=checkpointer)
-        snapshot = await graph.aget_state(config)
-        classified_intent = classify_intent(request.message)
-        is_task_turn = classified_intent != "general"
-        is_completed_plan_edit = False
-        if snapshot and snapshot.values.get("stage") == "investment_plan_complete":
-            from app.features.chat.agents.investment import parse_instrument_selection
-
-            is_completed_plan_edit = bool(
-                parse_instrument_selection(
-                    request.message,
-                    snapshot.values.get("investment_context"),
-                    snapshot.values.get("investment_answers"),
-                )
-            )
-        has_pending_question = bool(snapshot and snapshot.interrupts)
-    else:
-        is_task_turn = False
-        is_completed_plan_edit = False
-        has_pending_question = False
-
-    if settings.chat_model.use_mock and not (
-        is_task_turn or is_completed_plan_edit or has_pending_question
-    ):
-        # FR-011: mock mode adopts the same envelope (one token batch + one done).
+    if settings.chat_model.use_mock and checkpointer is None:
+        # Transport-only tests may construct the app without running its
+        # lifespan/checkpointer. A real service instance always uses the graph,
+        # even in mock mode, so no user-facing turn is bypassed by keyword logic.
         from app.features.chat.suggestions import generate_suggestions
 
         mock_content = f"Mock response to: {request.message[:50]}"
@@ -188,7 +168,12 @@ async def stream_chat(app, request: ChatTurnRequest) -> AsyncIterator[str]:
             "user_context": conversation_context,
             # Restore the persisted stage so Maestro can detect mid-planning turns.
             "stage": prev_values.get("stage", ""),
-            "intent": "",
+            # Preserve the previous route for optional NLI-shadow context.
+            # Maestro overwrites it with the current structured decision.
+            "intent": prev_values.get("intent", ""),
+            "routing_outcome": "route",
+            "routing_confidence": 0.0,
+            "routing_clarification": None,
             "planner_answers": dict(prev_values.get("planner_answers") or {}),
             "questions_asked": prev_values.get("questions_asked", 0),
             "last_question_id": prev_values.get("last_question_id"),

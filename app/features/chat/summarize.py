@@ -43,8 +43,6 @@ def trim_for_llm(messages: list) -> list:
 
 def format_turns(messages: list, limit: int = 4) -> str:
     """Compact "role: content" digest of the last `limit` messages, for
-    feeding a bounded window of recent history into an LLM prompt (unlike
-    scope_guard's build_scope_check_text, an LLM prompt handles this
-    dialogue-formatted shape natively)."""
+    feeding a bounded window of recent history into the Maestro prompt."""
     recent = messages[-limit:]
     return "\n".join(f"{m.type}: {m.content[:200]}" for m in recent if hasattr(m, "content"))

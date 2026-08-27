@@ -1,126 +1,174 @@
-"""Maestro orchestrator — classifies user intent and routes to sub-agents."""
+"""Context-aware Maestro orchestrator for scope and capability routing."""
+
+import asyncio
+from typing import cast
+
+from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.core.config import settings
 from app.core.logging import get_logger
+from app.features.chat.routing import (
+    DEFAULT_CLARIFICATION,
+    ROUTES_BY_NAME,
+    MaestroRoutingDecision,
+    mock_routing_decision,
+    route_catalogue,
+)
 from app.features.chat.state import ConversationState
 
 logger = get_logger(__name__)
-
-# Includes "general", not just the three task agents: _parse_llm_intent below
-# must trust a clean "general" reply as-is. Treating it as unparsed instead
-# falls through to classify_intent(message) — a blind keyword scan of the
-# ORIGINAL message with no awareness of why the LLM picked "general" (e.g.
-# the illegal/harmful-act routing instruction in intent_classification.jinja2)
-# — which is exactly how "i want a plan to rob a bank" got silently routed
-# back to "planning" by the literal word "plan" in the message.
-_VALID_INTENTS = (
-    "investment_planning",
-    "planning",
-    "analysis",
-    "recommendation",
-    "general",
-)
-
-_INTENT_KEYWORDS: dict[str, list[str]] = {
-    "investment_planning": [
-        "invest",
-        "investment",
-        "remaining money",
-        "investable amount",
-        "buy gold",
-        "gold price",
-        "fund price",
-        "fund nav",
-        "exchange rate",
-        "currency price",
-    ],
-    "planning": [
-        "budget",
-        "plan",
-        "spending plan",
-        "allocate",
-        "allocation",
-        "planning",
-    ],
-    "analysis": [
-        "spend",
-        "spent",
-        "expense",
-        "expenses",
-        "transaction",
-        "transactions",
-        "how much",
-        "income",
-        "salary",
-        "balance",
-        "statement",
-        # Savings-projection phrasings. Deliberately multi-word: this dict is
-        # scanned in insertion order and returns on the first hit, so a bare
-        # "saving" here would swallow "which savings account is best" before
-        # the recommendation list below ever gets a look.
-        "how much should i save",
-        "how much can i save",
-        "save per month",
-        "saving per month",
-        "savings projection",
-    ],
-    "recommendation": [
-        "recommend",
-        "product",
-        "card",
-        "account",
-        "which card",
-        "best card",
-        "which account",
-        "best account",
-        "savings account",
-        "credit card",
-    ],
-}
+_shadow_comparison_tasks: set[asyncio.Task[None]] = set()
 
 
 def classify_intent(message: str, history: str = "") -> str:
-    lower = message.lower()
-    for intent, keywords in _INTENT_KEYWORDS.items():
-        for kw in keywords:
-            if kw in lower:
-                return intent
-    # The bare message alone carries no keyword signal (a short, elliptical
-    # follow-up like "what about this month?") — fall back to scanning
-    # recent history so mock mode/tests can exercise the same
-    # context-disambiguation the real LLM prompt does with `history` below.
-    if history:
-        lower_history = history.lower()
-        for intent, keywords in _INTENT_KEYWORDS.items():
-            for kw in keywords:
-                if kw in lower_history:
-                    return intent
-    return "general"
+    """Backward-compatible deterministic helper for offline/mock callers only."""
+
+    return mock_routing_decision(message, history).route or "general"
 
 
-def _parse_llm_intent(raw: str, message: str) -> str:
-    """Parses the classifier LLM's freeform reply into one of the known
-    intents (see _VALID_INTENTS above for why "general" must be included).
+def _clarification_decision() -> MaestroRoutingDecision:
+    return MaestroRoutingDecision(
+        outcome="clarify",
+        confidence=0.0,
+        clarification_question=DEFAULT_CLARIFICATION,
+    )
 
-    Beyond that, the prompt asks for a single bare word, but small/free
-    models routinely wrap it in punctuation or extra words. Tolerates that
-    by first checking for a clean match, then a loose (substring) match,
-    then falling back to the same keyword matcher mock mode uses, logging
-    whenever the LLM's reply wasn't clean so a classification regression
-    shows up in logs instead of silently routing everything to the
-    no-context fallback."""
-    cleaned = raw.strip().strip(".!?\"'").lower()
-    if cleaned in _VALID_INTENTS:
-        return cleaned
 
-    for intent in _VALID_INTENTS:
-        if intent in cleaned:
-            logger.warning("intent_classification_loose_match", raw=raw, matched=intent)
-            return intent
+def _normalise_decision(decision: MaestroRoutingDecision) -> MaestroRoutingDecision:
+    """Validate a model decision against the live route catalogue."""
 
-    keyword_intent = classify_intent(message)
-    logger.warning("intent_classification_unparsed", raw=raw, fallback=keyword_intent)
-    return keyword_intent
+    if decision.outcome != "route":
+        if decision.outcome == "clarify":
+            question = (decision.clarification_question or "").casefold()
+            internal_terms = ("analysis", "recommendation", "investment_planning", "route")
+            if any(term in question for term in internal_terms):
+                return MaestroRoutingDecision(
+                    outcome="clarify",
+                    confidence=decision.confidence,
+                    clarification_question=DEFAULT_CLARIFICATION,
+                )
+        return decision
+    if decision.route not in ROUTES_BY_NAME:
+        logger.warning("maestro_unknown_route", route=decision.route)
+        return _clarification_decision()
+    if decision.confidence < settings.maestro_routing.minimum_confidence:
+        logger.info(
+            "maestro_low_confidence",
+            route=decision.route,
+            confidence=decision.confidence,
+        )
+        return MaestroRoutingDecision(
+            outcome="clarify",
+            confidence=decision.confidence,
+            clarification_question=DEFAULT_CLARIFICATION,
+        )
+    return decision
+
+
+async def _log_shadow_comparison(
+    shadow_task: asyncio.Task, decision: MaestroRoutingDecision
+) -> None:
+    """Record optional legacy NLI telemetry without delaying the chat turn."""
+
+    try:
+        shadow = await shadow_task
+    except asyncio.CancelledError:
+        return
+
+    maestro_in_scope = decision.outcome != "refuse"
+    logger.info(
+        "nli_shadow_comparison",
+        maestro_outcome=decision.outcome,
+        maestro_route=decision.route,
+        maestro_in_scope=maestro_in_scope,
+        nli_in_scope=shadow.in_scope,
+        nli_top_label=shadow.top_label,
+        nli_score=shadow.score,
+        agreement=maestro_in_scope == shadow.in_scope,
+    )
+
+
+def _continue_shadow_comparison(
+    shadow_task: asyncio.Task, decision: MaestroRoutingDecision
+) -> None:
+    comparison_task = asyncio.create_task(_log_shadow_comparison(shadow_task, decision))
+    _shadow_comparison_tasks.add(comparison_task)
+    comparison_task.add_done_callback(_shadow_comparison_tasks.discard)
+
+
+async def _decide_route(
+    state: ConversationState, text: str, history: str
+) -> MaestroRoutingDecision:
+    """Make one scope + route decision and optionally compare legacy NLI."""
+
+    shadow_task: asyncio.Task | None = None
+    if settings.nli_shadow.enabled:
+        from app.features.chat.scope_guard import build_scope_check_text, check_scope
+
+        shadow_text = build_scope_check_text(
+            state["messages"],
+            last_intent=state.get("intent"),
+        )
+        shadow_task = asyncio.create_task(check_scope(shadow_text))
+
+    try:
+        if settings.chat_model.use_mock:
+            decision = mock_routing_decision(text, history=history)
+        else:
+            try:
+                from app.core.llm import get_chat_model
+                from app.features.chat.prompts import (
+                    get_maestro_routing_human_prompt,
+                    get_maestro_routing_system_prompt,
+                )
+
+                system_prompt = get_maestro_routing_system_prompt().render(routes=route_catalogue())
+                human_prompt = get_maestro_routing_human_prompt().render(
+                    message=text,
+                    history=history or None,
+                )
+                structured_llm = get_chat_model().with_structured_output(MaestroRoutingDecision)
+                raw_decision = await structured_llm.ainvoke(
+                    [SystemMessage(content=system_prompt), HumanMessage(content=human_prompt)]
+                )
+                decision = (
+                    raw_decision
+                    if isinstance(raw_decision, MaestroRoutingDecision)
+                    else MaestroRoutingDecision.model_validate(raw_decision)
+                )
+            except Exception:
+                logger.exception("maestro_routing_failed")
+                decision = _clarification_decision()
+
+        decision = _normalise_decision(cast(MaestroRoutingDecision, decision))
+
+        if shadow_task is not None:
+            # Let an already-fast comparison finish in this event-loop turn so
+            # its telemetry remains deterministic in tests. Slow hosted/local
+            # NLI work continues in the background and never delays the reply.
+            await asyncio.sleep(0)
+            if shadow_task.done():
+                await _log_shadow_comparison(shadow_task, decision)
+            else:
+                _continue_shadow_comparison(shadow_task, decision)
+
+        return decision
+    except asyncio.CancelledError:
+        # The shadow check is independent telemetry. Do not leave it running
+        # after a client disconnect or service shutdown cancels the real turn.
+        if shadow_task is not None and not shadow_task.done():
+            shadow_task.cancel()
+        raise
+
+
+def _decision_state(decision: MaestroRoutingDecision) -> dict:
+    return {
+        "intent": decision.route or "general",
+        "in_scope": decision.outcome != "refuse",
+        "routing_outcome": decision.outcome,
+        "routing_confidence": decision.confidence,
+        "routing_clarification": decision.clarification_question,
+    }
 
 
 async def _planner_context_update(state: ConversationState) -> dict:
@@ -158,9 +206,13 @@ async def maestro_node(state: ConversationState) -> dict:
     # preserve the routing — the new message is an answer to the questionnaire,
     # not a fresh intent signal.
     if state.get("stage") == "planning" and state.get("questions_asked", 0) > 0:
-        return {"intent": "planning", **await _planner_context_update(state)}
+        decision = MaestroRoutingDecision(outcome="route", route="planning", confidence=1.0)
+        return {**_decision_state(decision), **await _planner_context_update(state)}
     if state.get("stage") == "investment_planning":
-        return {"intent": "investment_planning"}
+        decision = MaestroRoutingDecision(
+            outcome="route", route="investment_planning", confidence=1.0
+        )
+        return _decision_state(decision)
 
     last_msg = state["messages"][-1] if state["messages"] else None
     text = ""
@@ -181,8 +233,11 @@ async def maestro_node(state: ConversationState) -> dict:
         if selection:
             answers = dict(state.get("investment_answers") or {})
             answers["instruments"] = selection
+            decision = MaestroRoutingDecision(
+                outcome="route", route="investment_planning", confidence=1.0
+            )
             return {
-                "intent": "investment_planning",
+                **_decision_state(decision),
                 "stage": "investment_planning",
                 "investment_answers": answers,
                 "investment_validation_attempts": 0,
@@ -193,28 +248,13 @@ async def maestro_node(state: ConversationState) -> dict:
 
     history = format_turns(state["messages"][:-1], limit=4)
 
-    if settings.chat_model.use_mock:
-        intent = classify_intent(text, history=history)
-    else:
-        from langchain_core.messages import HumanMessage, SystemMessage
+    decision = await _decide_route(state, text, history)
+    result = _decision_state(decision)
 
-        from app.core.llm import get_chat_model
-        from app.features.chat.prompts import (
-            get_intent_classification_human_prompt,
-            get_intent_classification_system_prompt,
-        )
+    if decision.outcome != "route":
+        return result
 
-        system_prompt = get_intent_classification_system_prompt().render()
-        human_prompt = get_intent_classification_human_prompt().render(
-            message=text, history=history or None
-        )
-        result = await get_chat_model().ainvoke(
-            [SystemMessage(content=system_prompt), HumanMessage(content=human_prompt)]
-        )
-        raw = result.content if isinstance(result.content, str) else str(result.content)
-        intent = _parse_llm_intent(raw, text)
-
-    if intent == "planning":
+    if decision.route == "planning":
         was_first_turn = state.get("planner_context") is None
         extra = await _planner_context_update(state)
         if was_first_turn:
@@ -223,7 +263,7 @@ async def maestro_node(state: ConversationState) -> dict:
             stated_goal = await extract_stated_goal(text)
             if stated_goal:
                 extra["stated_savings_goal"] = stated_goal
-        return {"intent": intent, **extra}
-    if intent == "investment_planning":
-        return {"intent": intent, **await _investment_context_update(state)}
-    return {"intent": intent}
+        return {**result, **extra}
+    if decision.route == "investment_planning":
+        return {**result, **await _investment_context_update(state)}
+    return result

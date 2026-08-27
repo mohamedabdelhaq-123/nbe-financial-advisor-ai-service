@@ -1,21 +1,18 @@
-"""Zero-shot scope guardrail — checks whether a chat message is actually
-about personal finance before it reaches any LLM (see the "unintended use"
-guardrail: this is an allowlist check, not a banned-topics blocklist).
+"""Legacy zero-shot scope classifier retained for shadow evaluation only.
+
+The classifier never gates a chat request and never chooses a workflow.
+Maestro owns both decisions. When NLI shadow mode is enabled, this module's
+result is compared with Maestro for telemetry so the old and new approaches
+can be evaluated on the same traffic without changing user behaviour.
 
 Two backends for the same model (MoritzLaurer/mDeBERTa-v3-base-mnli-xnli,
 multilingual — this app serves Arabic and English), switched via
-ScopeGuardSettings.mode with no other code change:
+NliShadowSettings.mode with no other code change:
 
 - "hosted": HF Inference API. No local weights; sends raw message text to
   Hugging Face. Good for dev/testing.
 - "local": runs in-process (needs `uv sync --group local-scope-guard`).
-  Self-hosted — message text never leaves this service. The intended
-  production mode.
-
-Deliberately a separate model from the chat LLM, not another prompt to it:
-an NLI-family classifier has no instruction-following behavior to talk it
-out of its answer the way a "classify this" prompt to the chat model can be
-argued with — see the design discussion this module came out of.
+Self-hosted — message text never leaves this service.
 """
 
 import asyncio
@@ -49,10 +46,8 @@ CANDIDATE_LABELS = [IN_SCOPE_LABEL, GREETING_LABEL, OUT_OF_SCOPE_LABEL]
 # specifically struggles with these: they carry no finance vocabulary at
 # all, so a bare-text model has no signal to work with — confidently
 # misclassified as "other" even after label tuning (see module history).
-# Matched directly instead, the same way maestro.py's classify_intent()
-# keyword-matches known cases rather than trusting a classifier alone —
-# and skips the classifier call entirely for a match, so these also cost
-# nothing. Deliberately narrow: a small, closed, well-known set of
+# Matched directly and skips the classifier call entirely for a match, so
+# these also cost nothing. Deliberately narrow: a small, closed, well-known set of
 # phrasings, unlike CANDIDATE_LABELS above, which exists precisely
 # because "is this about finance" is too open-ended to enumerate this way.
 _CAPABILITY_PHRASES = (
@@ -79,12 +74,13 @@ class ScopeResult:
 
 
 def _result_from_scores(top_label: str, top_score: float) -> ScopeResult:
-    """The actual pass/fail decision, shared by both backends and tested on
-    its own — a classifier client is just a way of getting (label, score)
-    here. Fails open on low confidence: only a *confident* out-of-scope
-    call blocks the message, so an uncertain classifier doesn't refuse a
-    legitimate question it's merely unsure how to label."""
-    blocked = top_label == OUT_OF_SCOPE_LABEL and top_score >= settings.scope_guard.threshold
+    """Convert backend scores into the legacy result used for comparison.
+
+    Low-confidence classifications remain marked in-scope so shadow telemetry
+    can distinguish a confident disagreement from an uncertain one. This
+    result never allows or blocks a user request.
+    """
+    blocked = top_label == OUT_OF_SCOPE_LABEL and top_score >= settings.nli_shadow.threshold
     return ScopeResult(in_scope=not blocked, top_label=top_label, score=top_score)
 
 
@@ -99,7 +95,7 @@ class HostedScopeClassifier:
     def __init__(self) -> None:
         import httpx
 
-        cfg = settings.scope_guard
+        cfg = settings.nli_shadow
         base_url = cfg.hosted_api_url or (
             f"https://router.huggingface.co/hf-inference/models/{cfg.model_name}"
         )
@@ -132,7 +128,7 @@ class LocalScopeClassifier:
     def __init__(self) -> None:
         from transformers import pipeline
 
-        self._pipeline = pipeline("zero-shot-classification", model=settings.scope_guard.model_name)
+        self._pipeline = pipeline("zero-shot-classification", model=settings.nli_shadow.model_name)
 
     def _classify_sync(self, text: str) -> ScopeResult:
         result = self._pipeline(text, CANDIDATE_LABELS)
@@ -153,7 +149,7 @@ def get_scope_classifier() -> ScopeClassifier:
     same lifecycle as app.core.llm.get_chat_model()."""
     global _classifier
     if _classifier is None:
-        if settings.scope_guard.mode == "local":
+        if settings.nli_shadow.mode == "local":
             _classifier = LocalScopeClassifier()
         else:
             _classifier = HostedScopeClassifier()
@@ -174,7 +170,7 @@ _TASK_INTENTS = frozenset({"analysis", "planning", "investment_planning", "recom
 
 
 def build_scope_check_text(messages: list, last_intent: str | None = None) -> str:
-    """Classifier input: a short, capped snippet of the immediately
+    """Shadow-classifier input: a short, capped snippet of the immediately
     preceding message (context for elliptical follow-ups like "what about
     this month?"), followed by the full current message, last and
     untruncated — so a genuine topic switch still dominates the premise
@@ -183,8 +179,8 @@ def build_scope_check_text(messages: list, last_intent: str | None = None) -> st
     transcripts (unlike an LLM prompt, which handles that fine).
 
     `last_intent` is the intent Maestro assigned on the PREVIOUS turn
-    (`state["intent"]`, still holding its old value here since this node
-    runs before Maestro overwrites it for the current turn). The preceding
+    (`state["intent"]`, still holding its old value when shadow evaluation
+    starts). The preceding
     message is only used as context when that intent was a real task
     agent — see _TASK_INTENTS above."""
     if not messages:
@@ -200,14 +196,12 @@ def build_scope_check_text(messages: list, last_intent: str | None = None) -> st
 
 
 async def check_scope(text: str) -> ScopeResult:
-    """Entry point. Fails open — if the guard is disabled, or the
-    classifier call itself errors (network blip, rate limit, whatever),
-    the message is treated as in-scope rather than the whole chat feature
-    going down because a guardrail's dependency hiccuped. This is a
-    deliberate availability-over-strictness choice: revisit it if the
-    threat model changes."""
-    if not settings.scope_guard.enabled:
-        return ScopeResult(in_scope=True, top_label="(guard disabled)", score=1.0)
+    """Return an open comparison result when shadow telemetry is unavailable.
+
+    The result is never used to allow or block the user.
+    """
+    if not settings.nli_shadow.enabled:
+        return ScopeResult(in_scope=True, top_label="(shadow disabled)", score=1.0)
 
     if _is_known_in_scope_phrase(text):
         return ScopeResult(in_scope=True, top_label="(capability phrase)", score=1.0)
@@ -215,12 +209,7 @@ async def check_scope(text: str) -> ScopeResult:
     try:
         result = await get_scope_classifier().classify(text)
     except Exception:
-        logger.exception("scope_guard_check_failed")
+        logger.exception("nli_shadow_check_failed")
         return ScopeResult(in_scope=True, top_label="(check failed)", score=0.0)
 
-    if not result.in_scope:
-        # Score/label only — never the message text itself, which is the
-        # exact user-supplied content this guard exists to keep out of
-        # places it doesn't need to be (see strip_pii's rationale).
-        logger.warning("scope_guard_blocked", top_label=result.top_label, score=result.score)
     return result
