@@ -11,8 +11,18 @@ from app.features.recommendations.models import (
     AiRecommendationLog,
 )
 from app.features.recommendations.schemas import ProductMatch
+from app.features.recommendations.sync import sync_problem_statements
 
-SIMILARITY_THRESHOLD = 0.5
+# This embedding model produces useful matches below 0.5 for natural questions
+# (for example, a direct savings-account question scores about 0.46 against the
+# seeded catalogue). 0.25 still rejected every non-product control in the live
+# evaluation while retaining short, valid banking requests such as "Can I get a
+# card?".
+SIMILARITY_THRESHOLD = 0.25
+# Once a strong match exists, do not pad the answer with substantially weaker
+# products merely because they clear the absolute floor. This still keeps
+# genuinely comparable products (such as the three loan types) together.
+SIMILARITY_WINDOW = 0.10
 
 _PRODUCT_TITLE_FALLBACK = "Product unavailable"
 
@@ -31,10 +41,13 @@ async def _fetch_product_titles(product_ids: list[uuid.UUID]) -> dict[uuid.UUID,
         from app.backend_db.models import Product
 
         async for session in get_backend_session():
-            result = await session.execute(
-                select(Product.id, Product.title).where(Product.id.in_(product_ids))
-            )
-            return {product_id: title for product_id, title in result.all()}
+            try:
+                result = await session.execute(
+                    select(Product.id, Product.title).where(Product.id.in_(product_ids))
+                )
+                return {product_id: title for product_id, title in result.all()}
+            finally:
+                await session.close()
     except Exception:
         return {}
     return {}
@@ -54,6 +67,11 @@ async def match(
 
     if not query.strip():
         return []
+
+    # The product catalogue belongs to Django, while this service owns the
+    # vector index. Synchronize before searching so seeded/admin-created
+    # products become searchable without a manual JSON seed command.
+    await sync_problem_statements(session, embed_fn=embed_fn)
 
     vectors = await embed_fn([query])
     query_vec = vectors[0] if vectors else []
@@ -77,7 +95,13 @@ async def match(
     result = await session.execute(stmt)
     rows = result.all()
 
-    kept_rows = [row for row in rows if row.score >= SIMILARITY_THRESHOLD]
+    best_score = float(rows[0].score) if rows else 0.0
+    relative_threshold = best_score - SIMILARITY_WINDOW
+    kept_rows = [
+        row
+        for row in rows
+        if float(row.score) >= SIMILARITY_THRESHOLD and float(row.score) >= relative_threshold
+    ]
     titles = await _fetch_product_titles([row.product_id for row in kept_rows])
 
     matches: list[ProductMatch] = []
