@@ -102,9 +102,9 @@ def own_db_url():
                     await conn.execute(sa.text('CREATE EXTENSION IF NOT EXISTS "uuid-ossp"'))
                     # transactions.embedding uses the real `vector` extension (unlike the
                     # OwnBase tables above, which are patched to LargeBinary) so that writes
-                    # through app.backend_db.models.Transaction's pgvector VECTOR(1536) column
+                    # through app.backend_db.models.Transaction's pgvector VECTOR(768) column
                     # round-trip correctly — matching the real backend schema, where this
-                    # column is also `vector(1536)`, not bytea.
+                    # column is also `vector(768)`, not bytea.
                     await conn.execute(sa.text("CREATE EXTENSION IF NOT EXISTS vector"))
                     # Mirrors the real backend's categories table (core/models/categories/
                     # category.py) — transactions.category is a FK onto it now, not a
@@ -158,7 +158,7 @@ def own_db_url():
                             "balance NUMERIC(14,2), "
                             "transaction_type VARCHAR(20), "
                             "extra_fields JSONB, "
-                            "embedding vector(1536), "
+                            "embedding vector(768), "
                             "statement_id UUID"
                             ")"
                         )

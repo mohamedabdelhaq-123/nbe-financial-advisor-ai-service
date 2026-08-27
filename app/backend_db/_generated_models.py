@@ -271,6 +271,9 @@ class Users(BackendBase):
     bank_accounts: Mapped[list["BankAccounts"]] = relationship(
         "BankAccounts", back_populates="user"
     )
+    investment_holdings: Mapped[list["InvestmentHoldings"]] = relationship(
+        "InvestmentHoldings", back_populates="user"
+    )
     users_user_permissions: Mapped[list["UsersUserPermissions"]] = relationship(
         "UsersUserPermissions", back_populates="user"
     )
@@ -279,6 +282,9 @@ class Users(BackendBase):
     )
     recurring_charges: Mapped[list["RecurringCharges"]] = relationship(
         "RecurringCharges", back_populates="user"
+    )
+    saved_investment_scenarios: Mapped[list["SavedInvestmentScenarios"]] = relationship(
+        "SavedInvestmentScenarios", back_populates="user"
     )
     statement_files: Mapped[list["StatementFiles"]] = relationship(
         "StatementFiles", back_populates="user"
@@ -527,6 +533,12 @@ class InvestmentInstruments(BackendBase):
     product_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
 
     product: Mapped["Products"] = relationship("Products", back_populates="investment_instruments")
+    investment_holdings: Mapped[list["InvestmentHoldings"]] = relationship(
+        "InvestmentHoldings", back_populates="instrument"
+    )
+    saved_investment_allocation_purchases: Mapped[list["SavedInvestmentAllocationPurchases"]] = (
+        relationship("SavedInvestmentAllocationPurchases", back_populates="instrument")
+    )
 
 
 class NetWorthSnapshots(BackendBase):
@@ -916,6 +928,55 @@ class BudgetHistory(BackendBase):
     budget: Mapped["Budgets"] = relationship("Budgets", back_populates="budget_history")
 
 
+class InvestmentHoldings(BackendBase):
+    __tablename__ = "investment_holdings"
+    __table_args__ = (
+        CheckConstraint(
+            "average_purchase_price > 0::numeric", name="investment_holding_purchase_price_gt_zero"
+        ),
+        CheckConstraint("fees >= 0::numeric", name="investment_holding_fees_gte_zero"),
+        CheckConstraint("quantity > 0::numeric", name="investment_holding_quantity_gt_zero"),
+        ForeignKeyConstraint(
+            ["instrument_id"],
+            ["investment_instruments.id"],
+            deferrable=True,
+            initially="DEFERRED",
+            name="investment_holdings_instrument_id_e2dc6b6e_fk_investmen",
+        ),
+        ForeignKeyConstraint(
+            ["user_id"],
+            ["users.id"],
+            deferrable=True,
+            initially="DEFERRED",
+            name="investment_holdings_user_id_ccd90115_fk_users_id",
+        ),
+        PrimaryKeyConstraint("id", name="investment_holdings_pkey"),
+        UniqueConstraint(
+            "user_id", "instrument_id", name="investment_holding_user_instrument_unique"
+        ),
+        Index("investment_holdings_instrument_id_e2dc6b6e", "instrument_id"),
+        Index("investment_holdings_user_id_ccd90115", "user_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    quantity: Mapped[decimal.Decimal] = mapped_column(Numeric(24, 8), nullable=False)
+    average_purchase_price: Mapped[decimal.Decimal] = mapped_column(Numeric(20, 4), nullable=False)
+    fees: Mapped[decimal.Decimal] = mapped_column(Numeric(20, 2), nullable=False)
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime(True), nullable=False)
+    updated_at: Mapped[datetime.datetime] = mapped_column(DateTime(True), nullable=False)
+    instrument_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    user_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    purchased_at: Mapped[Optional[datetime.date]] = mapped_column(Date)
+
+    instrument: Mapped["InvestmentInstruments"] = relationship(
+        "InvestmentInstruments", back_populates="investment_holdings"
+    )
+    user: Mapped["Users"] = relationship("Users", back_populates="investment_holdings")
+    saved_investment_allocation_purchases: Mapped[list["SavedInvestmentAllocationPurchases"]] = (
+        relationship("SavedInvestmentAllocationPurchases", back_populates="holding")
+    )
+
+
 class Messages(BackendBase):
     __tablename__ = "messages"
     __table_args__ = (
@@ -943,6 +1004,9 @@ class Messages(BackendBase):
     conversation: Mapped["Conversations"] = relationship("Conversations", back_populates="messages")
     message_references: Mapped[list["MessageReferences"]] = relationship(
         "MessageReferences", back_populates="message"
+    )
+    saved_investment_scenarios: Mapped[Optional["SavedInvestmentScenarios"]] = relationship(
+        "SavedInvestmentScenarios", uselist=False, back_populates="source_message"
     )
 
 
@@ -1080,7 +1144,7 @@ class MonthlySummaries(BackendBase):
     total_inflow: Mapped[Optional[decimal.Decimal]] = mapped_column(Numeric(14, 2))
     category_breakdown_json: Mapped[Optional[dict]] = mapped_column(JSONB)
     top_merchants_json: Mapped[Optional[dict]] = mapped_column(JSONB)
-    embedding: Mapped[Optional[Any]] = mapped_column(VECTOR(1536))
+    embedding: Mapped[Optional[Any]] = mapped_column(VECTOR(768))
     account_id: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid)
 
     account: Mapped[Optional["BankAccounts"]] = relationship(
@@ -1124,6 +1188,49 @@ class RecurringCharges(BackendBase):
         "BankAccounts", back_populates="recurring_charges"
     )
     user: Mapped["Users"] = relationship("Users", back_populates="recurring_charges")
+
+
+class SavedInvestmentScenarios(BackendBase):
+    __tablename__ = "saved_investment_scenarios"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["source_message_id"],
+            ["messages.id"],
+            deferrable=True,
+            initially="DEFERRED",
+            name="saved_investment_sce_source_message_id_ee138696_fk_messages_",
+        ),
+        ForeignKeyConstraint(
+            ["user_id"],
+            ["users.id"],
+            deferrable=True,
+            initially="DEFERRED",
+            name="saved_investment_scenarios_user_id_7d24daa6_fk_users_id",
+        ),
+        PrimaryKeyConstraint("id", name="saved_investment_scenarios_pkey"),
+        UniqueConstraint(
+            "source_message_id", name="saved_investment_scenarios_source_message_id_key"
+        ),
+        Index("idx_saved_scenario_user", "user_id", "status", "saved_at"),
+        Index("saved_investment_scenarios_user_id_7d24daa6", "user_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    title: Mapped[str] = mapped_column(String(120), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False)
+    payload_json: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    saved_at: Mapped[datetime.datetime] = mapped_column(DateTime(True), nullable=False)
+    updated_at: Mapped[datetime.datetime] = mapped_column(DateTime(True), nullable=False)
+    user_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    source_message_id: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid)
+
+    source_message: Mapped[Optional["Messages"]] = relationship(
+        "Messages", back_populates="saved_investment_scenarios"
+    )
+    user: Mapped["Users"] = relationship("Users", back_populates="saved_investment_scenarios")
+    saved_investment_allocation_purchases: Mapped[list["SavedInvestmentAllocationPurchases"]] = (
+        relationship("SavedInvestmentAllocationPurchases", back_populates="scenario")
+    )
 
 
 class StatementFiles(BackendBase):
@@ -1190,6 +1297,63 @@ class StatementFiles(BackendBase):
     )
     transactions: Mapped[list["Transactions"]] = relationship(
         "Transactions", back_populates="statement"
+    )
+
+
+class SavedInvestmentAllocationPurchases(BackendBase):
+    __tablename__ = "saved_investment_allocation_purchases"
+    __table_args__ = (
+        CheckConstraint("fees >= 0::numeric", name="saved_purchase_fees_gte_zero"),
+        CheckConstraint("quantity > 0::numeric", name="saved_purchase_quantity_gt_zero"),
+        CheckConstraint("unit_price > 0::numeric", name="saved_purchase_unit_price_gt_zero"),
+        ForeignKeyConstraint(
+            ["holding_id"],
+            ["investment_holdings.id"],
+            deferrable=True,
+            initially="DEFERRED",
+            name="saved_investment_all_holding_id_b3224398_fk_investmen",
+        ),
+        ForeignKeyConstraint(
+            ["instrument_id"],
+            ["investment_instruments.id"],
+            deferrable=True,
+            initially="DEFERRED",
+            name="saved_investment_all_instrument_id_32878374_fk_investmen",
+        ),
+        ForeignKeyConstraint(
+            ["scenario_id"],
+            ["saved_investment_scenarios.id"],
+            deferrable=True,
+            initially="DEFERRED",
+            name="saved_investment_all_scenario_id_cf5852e7_fk_saved_inv",
+        ),
+        PrimaryKeyConstraint("id", name="saved_investment_allocation_purchases_pkey"),
+        UniqueConstraint(
+            "scenario_id", "instrument_id", name="saved_scenario_instrument_purchase_unique"
+        ),
+        Index("saved_investment_allocation_purchases_holding_id_b3224398", "holding_id"),
+        Index("saved_investment_allocation_purchases_instrument_id_32878374", "instrument_id"),
+        Index("saved_investment_allocation_purchases_scenario_id_cf5852e7", "scenario_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    quantity: Mapped[decimal.Decimal] = mapped_column(Numeric(24, 8), nullable=False)
+    unit_price: Mapped[decimal.Decimal] = mapped_column(Numeric(20, 4), nullable=False)
+    fees: Mapped[decimal.Decimal] = mapped_column(Numeric(20, 2), nullable=False)
+    purchased_at: Mapped[datetime.date] = mapped_column(Date, nullable=False)
+    recorded_at: Mapped[datetime.datetime] = mapped_column(DateTime(True), nullable=False)
+    instrument_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    scenario_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    holding_id: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid)
+
+    holding: Mapped[Optional["InvestmentHoldings"]] = relationship(
+        "InvestmentHoldings", back_populates="saved_investment_allocation_purchases"
+    )
+    instrument: Mapped["InvestmentInstruments"] = relationship(
+        "InvestmentInstruments", back_populates="saved_investment_allocation_purchases"
+    )
+    scenario: Mapped["SavedInvestmentScenarios"] = relationship(
+        "SavedInvestmentScenarios", back_populates="saved_investment_allocation_purchases"
     )
 
 
@@ -1314,7 +1478,7 @@ class Transactions(BackendBase):
     balance: Mapped[Optional[decimal.Decimal]] = mapped_column(Numeric(14, 2))
     transaction_type: Mapped[Optional[str]] = mapped_column(String(20))
     extra_fields: Mapped[Optional[dict]] = mapped_column(JSONB)
-    embedding: Mapped[Optional[Any]] = mapped_column(VECTOR(1536))
+    embedding: Mapped[Optional[Any]] = mapped_column(VECTOR(768))
     statement_id: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid)
     category_id: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid)
 
