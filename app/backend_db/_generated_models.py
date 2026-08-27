@@ -38,6 +38,24 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.backend_db import BackendBase
 
 
+class AdminBlacklistedTokens(BackendBase):
+    __tablename__ = "admin_blacklisted_tokens"
+    __table_args__ = (
+        PrimaryKeyConstraint("id", name="admin_blacklisted_tokens_pkey"),
+        UniqueConstraint("jti", name="admin_blacklisted_tokens_jti_key"),
+        Index(
+            "admin_blacklisted_tokens_jti_4acde951_like",
+            "jti",
+            postgresql_ops={"jti": "varchar_pattern_ops"},
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    jti: Mapped[str] = mapped_column(String(255), nullable=False)
+    blacklisted_at: Mapped[datetime.datetime] = mapped_column(DateTime(True), nullable=False)
+    expires_at: Mapped[datetime.datetime] = mapped_column(DateTime(True), nullable=False)
+
+
 class AdminUsers(BackendBase):
     __tablename__ = "admin_users"
     __table_args__ = (
@@ -179,6 +197,9 @@ class Products(BackendBase):
     features: Mapped[Optional[dict]] = mapped_column(JSONB)
     external_link: Mapped[Optional[str]] = mapped_column(String(500))
 
+    investment_instruments: Mapped["InvestmentInstruments"] = relationship(
+        "InvestmentInstruments", uselist=False, back_populates="product"
+    )
     problem_statements: Mapped[list["ProblemStatements"]] = relationship(
         "ProblemStatements", back_populates="product"
     )
@@ -459,6 +480,53 @@ class Goals(BackendBase):
     user_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
 
     user: Mapped["Users"] = relationship("Users", back_populates="goals")
+
+
+class InvestmentInstruments(BackendBase):
+    __tablename__ = "investment_instruments"
+    __table_args__ = (
+        CheckConstraint(
+            "max_quote_age_seconds > 0", name="investment_instrument_quote_age_gt_zero"
+        ),
+        CheckConstraint(
+            "max_quote_age_seconds >= 0", name="investment_instruments_max_quote_age_seconds_check"
+        ),
+        CheckConstraint(
+            "minimum_increment > 0::numeric", name="investment_instrument_increment_gt_zero"
+        ),
+        ForeignKeyConstraint(
+            ["product_id"],
+            ["products.id"],
+            deferrable=True,
+            initially="DEFERRED",
+            name="investment_instruments_product_id_3508ccf8_fk_products_id",
+        ),
+        PrimaryKeyConstraint("id", name="investment_instruments_pkey"),
+        UniqueConstraint("code", name="investment_instruments_code_key"),
+        UniqueConstraint("product_id", name="investment_instruments_product_id_key"),
+        Index(
+            "investment_instruments_code_2f38c352_like",
+            "code",
+            postgresql_ops={"code": "varchar_pattern_ops"},
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    code: Mapped[str] = mapped_column(String(100), nullable=False)
+    asset_class: Mapped[str] = mapped_column(String(20), nullable=False)
+    provider_symbol: Mapped[str] = mapped_column(String(120), nullable=False)
+    price_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    price_currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    unit: Mapped[str] = mapped_column(String(40), nullable=False)
+    minimum_increment: Mapped[decimal.Decimal] = mapped_column(Numeric(20, 8), nullable=False)
+    fractional_units_supported: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    max_quote_age_seconds: Mapped[int] = mapped_column(Integer, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime(True), nullable=False)
+    updated_at: Mapped[datetime.datetime] = mapped_column(DateTime(True), nullable=False)
+    product_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+
+    product: Mapped["Products"] = relationship("Products", back_populates="investment_instruments")
 
 
 class NetWorthSnapshots(BackendBase):
@@ -870,6 +938,7 @@ class Messages(BackendBase):
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime(True), nullable=False)
     conversation_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
     widget_json: Mapped[Optional[dict]] = mapped_column(JSONB)
+    suggestions_json: Mapped[Optional[dict]] = mapped_column(JSONB)
 
     conversation: Mapped["Conversations"] = relationship("Conversations", back_populates="messages")
     message_references: Mapped[list["MessageReferences"]] = relationship(
@@ -1213,6 +1282,7 @@ class Transactions(BackendBase):
             "transaction_date",
             "amount",
             "merchant_raw",
+            "transaction_type",
             name="unique_ledger_transaction_match",
         ),
         Index("idx_transactions_account", "account_id"),

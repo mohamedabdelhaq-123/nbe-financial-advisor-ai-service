@@ -13,9 +13,27 @@ logger = get_logger(__name__)
 # the illegal/harmful-act routing instruction in intent_classification.jinja2)
 # — which is exactly how "i want a plan to rob a bank" got silently routed
 # back to "planning" by the literal word "plan" in the message.
-_VALID_INTENTS = ("planning", "analysis", "recommendation", "general")
+_VALID_INTENTS = (
+    "investment_planning",
+    "planning",
+    "analysis",
+    "recommendation",
+    "general",
+)
 
 _INTENT_KEYWORDS: dict[str, list[str]] = {
+    "investment_planning": [
+        "invest",
+        "investment",
+        "remaining money",
+        "investable amount",
+        "buy gold",
+        "gold price",
+        "fund price",
+        "fund nav",
+        "exchange rate",
+        "currency price",
+    ],
     "planning": [
         "budget",
         "plan",
@@ -123,17 +141,53 @@ async def _planner_context_update(state: ConversationState) -> dict:
     return {"planner_context": context}
 
 
+async def _investment_context_update(state: ConversationState) -> dict:
+    from app.features.investment_plan.context import derive_investment_context
+
+    context = await derive_investment_context(state["user_id"])
+    return {
+        "investment_context": context.model_dump(mode="json"),
+        "investment_answers": {},
+        "investment_validation_attempts": 0,
+        "investment_validation_reason": None,
+    }
+
+
 async def maestro_node(state: ConversationState) -> dict:
     # If we are already mid-planning (questions asked but plan not yet complete),
     # preserve the routing — the new message is an answer to the questionnaire,
     # not a fresh intent signal.
     if state.get("stage") == "planning" and state.get("questions_asked", 0) > 0:
         return {"intent": "planning", **await _planner_context_update(state)}
+    if state.get("stage") == "investment_planning":
+        return {"intent": "investment_planning"}
 
     last_msg = state["messages"][-1] if state["messages"] else None
     text = ""
     if last_msg and hasattr(last_msg, "content") and isinstance(last_msg.content, str):
         text = last_msg.content
+
+    # A completed scenario stays editable in normal conversation. Naming one
+    # or more displayed catalogue options replaces only the selected
+    # instruments; amount and suitability answers remain unchanged.
+    if state.get("stage") == "investment_plan_complete":
+        from app.features.chat.agents.investment import parse_instrument_selection
+
+        selection = parse_instrument_selection(
+            text,
+            state.get("investment_context"),
+            state.get("investment_answers"),
+        )
+        if selection:
+            answers = dict(state.get("investment_answers") or {})
+            answers["instruments"] = selection
+            return {
+                "intent": "investment_planning",
+                "stage": "investment_planning",
+                "investment_answers": answers,
+                "investment_validation_attempts": 0,
+                "investment_validation_reason": None,
+            }
 
     from app.features.chat.summarize import format_turns
 
@@ -170,4 +224,6 @@ async def maestro_node(state: ConversationState) -> dict:
             if stated_goal:
                 extra["stated_savings_goal"] = stated_goal
         return {"intent": intent, **extra}
+    if intent == "investment_planning":
+        return {"intent": intent, **await _investment_context_update(state)}
     return {"intent": intent}

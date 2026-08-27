@@ -27,6 +27,35 @@ the production equivalent. Both build this service directly (`target: dev` /
 `target: prod`) as part of the one stack, rather than this repo running its
 own separate compose project.
 
+### Optional market pricing
+
+Investment planning supports curated gold, fund, and currency prices through
+an application-owned provider interface. It does not give the LLM arbitrary
+internet or URL access. The capability defaults to disabled unless the
+deployment enables it. Deterministic mock prices remain available for an
+offline seeded-user flow:
+
+```env
+AI_SERVICE_MARKET_DATA__ENABLED=1
+AI_SERVICE_MARKET_DATA__PROVIDER=mock
+```
+
+To disable only the market-pricing capability, set `ENABLED=0`; chat, spending
+analysis, budgeting, recommendations, and ingestion continue normally. For a
+public or internal HTTP service, set `PROVIDER=http`, configure `BASE_URL` and
+the optional `API_KEY`, and implement the normalized `POST {BASE_URL}/v1/quotes`
+contract. The planner and calculator do not change when the endpoint is swapped.
+Production Compose requires an explicit `MARKET_DATA_ENABLED=0` or `1` in
+`deploy/.env` so the deployment cannot accidentally inherit an enablement choice.
+
+The consolidated Docker stack also includes a `market-data-gateway` implementation
+for live development. It normalizes Gold API XAU/USD, NBE USD/EGP, and the
+the delayed EGX30 Index ETF market price into that same contract. Its source base URLs and
+paths are deployment configuration; the AI service only sees
+`MARKET_DATA_BASE_URL=http://market-data-gateway:8004`. The gateway makes no
+source request while pricing is disabled, and AI-service startup does not depend
+on gateway or public-source health.
+
 ### LLM observability (Langfuse)
 
 Every LLM call the service makes (chat, statement normalization, plan

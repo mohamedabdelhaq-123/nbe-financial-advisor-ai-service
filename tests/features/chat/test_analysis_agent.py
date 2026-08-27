@@ -55,6 +55,7 @@ async def test_analysis_node_returns_references(monkeypatch):
     result = await analysis_node(state)
     assert "messages" in result
     assert len(result["messages"]) > 0
+    assert "Store 1" in result["messages"][0].content
 
     # FR-006/FR-007: every reference is a typed Reference with target_type == "transaction".
     refs = result["message_references"]

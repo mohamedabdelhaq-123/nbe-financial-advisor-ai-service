@@ -78,6 +78,29 @@ def wrong_auth_headers() -> dict[str, str]:
     return {"Authorization": "Bearer not-the-real-token"}
 
 
+@pytest.fixture(autouse=True)
+def authorized_conversation_for_unrelated_scenarios(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Keep each scenario focused on the security boundary it targets.
+
+    Conversation ownership has dedicated behavioral and static coverage in
+    ``test_rt_cross_user_access.py``. Other scenarios assume an already
+    authorized conversation so they can reach the output, error, and prompt
+    paths they are designed to attack without requiring a backend database.
+    """
+    if request.node.path.name == "test_rt_cross_user_access.py":
+        return
+
+    async def _authorized(*args: object, **kwargs: object) -> bool:
+        return True
+
+    monkeypatch.setattr(
+        "app.features.chat.service._conversation_belongs_to_user",
+        _authorized,
+    )
+
+
 # ── model input/output capture ────────────────────────────────────────────
 # Every scenario that talks to a chat model — real or the fake double in
 # redteam/runners/fake_llm.py — calls this to record exactly what it sent

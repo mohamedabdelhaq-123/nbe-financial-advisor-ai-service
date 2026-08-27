@@ -20,13 +20,13 @@ actually built, not from a generic attack checklist:
   chosen arguments" risk class, so `scenarios/test_rt_tool_boundary.py`
   targets the boundary that actually exists instead (schema/service-layer
   validation), not a fictional one.
-- **Identity is a request-body field, not a session.** This is an internal,
+- **Identity is supplied by the trusted backend.** This is an internal,
   service-to-service API: one shared Bearer token authenticates "the Django
-  backend," not any individual end user. `user_id`/`conversation_id` are
-  plain fields in the request body, trusted as-is. That makes cross-user
-  isolation the single highest-priority thing to test here — see
-  `scenarios/test_rt_cross_user_access.py` and `SECURITY_AUDIT_REPORT.md`'s
-  SEC-005.
+  backend," not an individual end user. Before opening a checkpoint, the AI
+  service independently verifies that the supplied conversation belongs to
+  the supplied user using its read-only backend mirror. Cross-user isolation
+  remains the highest-priority boundary to test — see
+  `scenarios/test_rt_cross_user_access.py`.
 - **Untrusted data reaches an LLM via two different patterns.** The general
   chat node role-separates instructions from user text
   (`SystemMessage`/`HumanMessage`) and says explicitly not to treat message
@@ -165,7 +165,7 @@ CRITICAL:
 (often already-known-and-tracked) weakness, not a broken test.** Several
 scenarios are written to assert the *secure* behavior for a finding that
 SECURITY_AUDIT_REPORT.md already documents but that hasn't been fixed yet
-(SEC-005, SEC-008, SEC-010). Their docstrings say explicitly "EXPECTED TO
+(SEC-008, SEC-010). Their docstrings say explicitly "EXPECTED TO
 FAIL today" and name the finding. Do not "fix" one of these by loosening
 its assertion — fix the underlying code, or leave it failing and visible.
 A green run of the *whole* suite is not the goal; an *honest* run is.

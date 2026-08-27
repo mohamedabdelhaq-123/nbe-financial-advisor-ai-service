@@ -10,6 +10,7 @@ from app.features.chat.schemas import (
     ChatTurnRequest,
     DoneEvent,
     DonePayload,
+    InvestmentPlanWidget,
     ProductCardWidget,
     Reference,
     TokenEvent,
@@ -105,6 +106,44 @@ def test_widget_union_accepts_both_types():
     assert isinstance(card, ProductCardWidget)
 
 
+def test_widget_union_accepts_investment_plan():
+    widget = _widget_adapter.validate_python(
+        {
+            "type": "investment_plan",
+            "payload": {
+                "confirmed_amount": 1000,
+                "currency": "EGP",
+                "allocations": [
+                    {
+                        "instrument_id": "5a2c1d8e-3f4b-4a2c-9e8f-2a7b6c5d4e3f",
+                        "instrument_code": "gold-24k-gram-egp",
+                        "display_name": "24K Gold (per gram)",
+                        "asset_class": "gold",
+                        "percentage": 100,
+                        "target_amount": 1000,
+                        "unit_price": 4750,
+                        "price_currency": "EGP",
+                        "unit": "gram",
+                        "price_type": "spot",
+                        "minimum_increment": 0.01,
+                        "quantity": 0.21,
+                        "actual_allocated_amount": 997.5,
+                        "unallocated_remainder": 2.5,
+                        "observed_at": "2026-08-26T09:00:00Z",
+                        "source": "deterministic-mock",
+                        "mode": "mock",
+                    }
+                ],
+                "total_allocated": 997.5,
+                "total_remainder": 2.5,
+                "disclaimer": "Illustrative only.",
+                "confirmed": False,
+            },
+        }
+    )
+    assert isinstance(widget, InvestmentPlanWidget)
+
+
 def test_widget_union_rejects_unknown_type():
     with pytest.raises(ValidationError):
         _widget_adapter.validate_python({"type": "mystery_widget", "payload": {}})
@@ -167,9 +206,9 @@ def test_chat_turn_request_accepts_uuid_user_id():
     assert str(request.user_id) == "7a1b2c3d-4e5f-4a7b-8c9d-0e1f2a3b4c5d"
 
 
-def test_widget_union_resolves_all_five_types():
-    """Every member of the union round-trips to its own class. Worth asserting
-    per-type now the union has five members: spending_breakdown and
+def test_widget_union_resolves_remaining_types():
+    """The remaining union members round-trip to their own classes. Worth asserting
+    per-type because spending_breakdown and
     transactions_list both lead with `currency` plus a list, so an untagged
     union could plausibly resolve one into the other."""
     cases = {

@@ -78,7 +78,7 @@ async def analysis_node(state: ConversationState) -> dict:
         }
 
     if settings.chat_model.use_mock:
-        return await _mock_analysis(user_id)
+        return await _mock_analysis(state, user_id)
     return await _agentic_analysis(state, user_id)
 
 
@@ -135,7 +135,75 @@ def _mock_widget(transactions) -> TransactionsListWidget | None:
     )
 
 
-async def _mock_analysis(user_id) -> dict:
+def _mock_breakdown_dates(text: str) -> tuple[str | None, str | None, str | None]:
+    today = datetime.date.today()
+    lowered = text.casefold()
+    if "this month" in lowered or "current month" in lowered:
+        start = today.replace(day=1)
+        return start.isoformat(), today.isoformat(), today.strftime("%B %Y")
+    if "last month" in lowered or "previous month" in lowered:
+        end = today.replace(day=1) - datetime.timedelta(days=1)
+        start = end.replace(day=1)
+        return start.isoformat(), end.isoformat(), end.strftime("%B %Y")
+    return None, None, None
+
+
+async def _mock_spending_breakdown(state: ConversationState, user_id) -> dict | None:
+    last_msg = state["messages"][-1] if state.get("messages") else None
+    text = getattr(last_msg, "content", "")
+    if not isinstance(text, str):
+        return None
+    lowered = text.casefold()
+    if not any(
+        phrase in lowered for phrase in ("breakdown", "by category", "where did my money go")
+    ):
+        return None
+
+    from app.tools.transactions import make_transaction_tools
+    from app.tools.widgets import make_widget_tools
+
+    date_from, date_to, month_label = _mock_breakdown_dates(text)
+    transaction_tools = make_transaction_tools(user_id)
+    widget_tools, sink = make_widget_tools(user_id, transaction_tools)
+    breakdown_tool = next(tool for tool in widget_tools if tool.name == "show_spending_breakdown")
+    result = await breakdown_tool.ainvoke(
+        {
+            "date_from": date_from,
+            "date_to": date_to,
+            "month_label": month_label,
+            "currency": None,
+        }
+    )
+    if not isinstance(result, dict) or not result.get("shown") or not sink:
+        reason = result.get("reason") or result.get("error") if isinstance(result, dict) else None
+        return {
+            "messages": [
+                AIMessage(content=reason or "I couldn't load that spending breakdown just now.")
+            ],
+            "message_references": [],
+            "widget": None,
+        }
+
+    categories = result.get("categories") or []
+    top = categories[0] if categories else None
+    period = result.get("period") or "the selected period"
+    reply = f"Your tracked spending for {period} is {result['total']:.2f} {result['currency']}."
+    if top:
+        reply += (
+            f" Your largest category is {top['name']} at "
+            f"{top['amount']:.2f} {result['currency']}."
+        )
+    return {
+        "messages": [AIMessage(content=reply)],
+        "message_references": [],
+        "widget": sink[-1],
+    }
+
+
+async def _mock_analysis(state: ConversationState, user_id) -> dict:
+    breakdown = await _mock_spending_breakdown(state, user_id)
+    if breakdown is not None:
+        return breakdown
     try:
         from sqlalchemy import select
         from sqlalchemy.orm import selectinload
@@ -149,6 +217,7 @@ async def _mock_analysis(user_id) -> dict:
         # MissingGreenlet — so it must be eager-loaded as part of this query
         # (selectinload), not touched lazily later regardless of session state.
         references: list[Reference] = []
+        transaction_titles: list[str] = []
         widget: TransactionsListWidget | None = None
         async for session in get_backend_session():
             result = await session.execute(
@@ -162,6 +231,12 @@ async def _mock_analysis(user_id) -> dict:
 
             for txn in transactions:
                 references.append(Reference(target_type="transaction", target_id=str(txn.id)))
+                title = (
+                    getattr(txn, "merchant_normalized", None)
+                    or getattr(txn, "merchant_raw", None)
+                    or "Unknown"
+                )
+                transaction_titles.append(str(title)[:100])
 
         if not references:
             return {
@@ -171,12 +246,14 @@ async def _mock_analysis(user_id) -> dict:
                 "message_references": [],
             }
 
-        # Deliberately a one-line summary, not a per-row list: the widget
-        # already shows every row, so repeating them in prose would duplicate
-        # the same data the user just saw in the transactions_list card (see
-        # show_transactions's docstring in app/tools/widgets.py for the same
-        # rule on the real-model path).
+        # Deliberately a one-line summary, not a per-row list, when a widget is
+        # available: it already shows every row. Minimal fixtures and degraded
+        # backend rows may not carry the currency/date fields required to build
+        # that widget; in that case include the bounded merchant titles in the
+        # prose so the response still contains the user's requested data.
         reply = f"Here are your {len(references)} most recent transactions."
+        if widget is None and transaction_titles:
+            reply += " " + "; ".join(transaction_titles)
         return {
             "messages": [AIMessage(content=reply)],
             "message_references": references,

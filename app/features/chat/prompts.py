@@ -35,7 +35,7 @@ def get_intent_classification_system_prompt() -> Template:
     Static — takes no render variables. Caller renders it with no arguments:
     get_intent_classification_system_prompt().render()
     Rendered text constrains the model to exactly: analysis, planning,
-    recommendation, general.
+    investment_planning, recommendation, general.
     """
     return _intent_classification_system_prompt
 

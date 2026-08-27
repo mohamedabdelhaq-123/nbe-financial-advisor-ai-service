@@ -18,6 +18,7 @@ from app.core.config import (
     EmbeddingsSettings,
     LangfuseSettings,
     LoggingSettings,
+    MarketDataSettings,
     MinerUSettings,
     OwnDbSettings,
     Settings,
@@ -55,6 +56,40 @@ def test_mineru_valid_construction_mocked_raises_nothing():
 
 def test_mineru_valid_construction_real_raises_nothing():
     MinerUSettings(use_mock=False, api_url="http://mineru:8000")
+
+
+def test_market_data_disabled_needs_no_endpoint():
+    MarketDataSettings(enabled=False, provider="http", base_url="")
+
+
+def test_market_data_mock_needs_no_endpoint():
+    MarketDataSettings(enabled=True, provider="mock", base_url="")
+
+
+def test_market_data_http_requires_valid_base_url():
+    with pytest.raises(ValidationError, match="AI_SERVICE_MARKET_DATA__BASE_URL"):
+        MarketDataSettings(enabled=True, provider="http", base_url="")
+    with pytest.raises(ValidationError, match="must not contain credentials"):
+        MarketDataSettings(
+            enabled=True,
+            provider="http",
+            base_url="https://user:pass@prices.example/v1?bad=1",
+        )
+
+
+def test_market_data_http_accepts_public_or_internal_endpoint():
+    public = MarketDataSettings(
+        enabled=True,
+        provider="http",
+        base_url="https://prices.example/",
+    )
+    internal = MarketDataSettings(
+        enabled=True,
+        provider="http",
+        base_url="http://market-data:8090",
+    )
+    assert public.base_url == "https://prices.example"
+    assert internal.base_url == "http://market-data:8090"
 
 
 def test_langfuse_valid_construction_when_disabled_raises_nothing():

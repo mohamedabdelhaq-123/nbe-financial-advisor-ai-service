@@ -220,12 +220,17 @@ def real_s3_storage_env(monkeypatch):
     if not (endpoint and bucket and access_key and secret_key):
         pytest.skip("Real AI_SERVICE_STORAGE__S3_* env vars not configured")
 
+    from pydantic import SecretStr
+
     from app.core.config import settings
 
     monkeypatch.setattr(settings.storage, "s3_endpoint_url", endpoint)
     monkeypatch.setattr(settings.storage, "s3_bucket", bucket)
-    monkeypatch.setattr(settings.storage, "s3_access_key", access_key)
-    monkeypatch.setattr(settings.storage, "s3_secret_key", secret_key)
+    # Preserve the runtime settings type. Assigning plain strings here makes
+    # app/core/storage.py fail before the integration test reaches S3 because
+    # production code correctly calls SecretStr.get_secret_value().
+    monkeypatch.setattr(settings.storage, "s3_access_key", SecretStr(access_key))
+    monkeypatch.setattr(settings.storage, "s3_secret_key", SecretStr(secret_key))
     monkeypatch.setattr(
         settings.storage,
         "s3_region",

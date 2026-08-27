@@ -33,6 +33,7 @@ from app.backend_db.models.ping import Ping
 from app.backend_db.models.profile import BankAccount, ConsentRecord, User, UserPreference
 from app.backend_db.models.recommendation import (
     PROBLEM_STATEMENT_EMBEDDING_DIM,
+    InvestmentInstrument,
     ProblemStatement,
     Product,
     RecommendationLog,
@@ -85,6 +86,7 @@ __all__ = [
     "ConsentRecord",
     "BankAccount",
     # recommendation
+    "InvestmentInstrument",
     "Product",
     "ProblemStatement",
     "RecommendationLog",
