@@ -75,6 +75,7 @@ async def _conversation_belongs_to_user(conversation_id: str, user_id: uuid.UUID
 
     return False
 
+
 # Tool names bound in analysis.py's _agentic_analysis — the only node that
 # calls bind_tools(). Against OpenAI itself a tool call always rides in the
 # message's structured tool_calls field with empty `content`, so intermediate
@@ -96,6 +97,7 @@ _TOOL_NAMES = (
     "show_savings_projection",
     "get_transactions",
     "compute_aggregate",
+    "find_similar_transactions",
 )
 _TOOL_TAG_RE = re.compile(
     r"<(?:" + "|".join(_TOOL_NAMES) + r")\b[^>]*?(?:/>|>.*?</(?:" + "|".join(_TOOL_NAMES) + r")>)",
