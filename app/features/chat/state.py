@@ -23,6 +23,10 @@ class ConversationState(TypedDict):
     planner_validation_attempts: int
     planner_context: dict | None
     stated_savings_goal: str | None
+    investment_answers: dict
+    investment_context: dict | None
+    investment_validation_attempts: int
+    investment_validation_reason: str | None
     pending_answer: str | None
     pending_validation_reason: str | None
     message_references: list[Reference]

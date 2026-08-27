@@ -378,6 +378,47 @@ class SavingsSliderWidget(BaseModel):
     payload: SavingsSliderPayload = Field(description="The projection's starting figures.")
 
 
+class InvestmentPlanAllocationPayload(BaseModel):
+    instrument_id: UUID4
+    instrument_code: str
+    display_name: str
+    asset_class: Literal["gold", "fund", "currency"]
+    percentage: float = Field(ge=0, le=100)
+    target_amount: float = Field(ge=0)
+    unit_price: float = Field(gt=0)
+    price_currency: Literal["EGP"]
+    unit: str
+    price_type: Literal["spot", "nav", "market_price", "customer_buy_rate"]
+    minimum_increment: float = Field(gt=0)
+    quantity: float = Field(ge=0)
+    actual_allocated_amount: float = Field(ge=0)
+    unallocated_remainder: float = Field(ge=0)
+    observed_at: datetime.datetime
+    source: str
+    mode: Literal["live", "mock", "user_supplied"]
+    priority: int | None = Field(default=None, ge=1, le=3)
+    match_factors: list[
+        Literal["objective", "risk", "horizon", "liquidity", "closest_available"]
+    ] = Field(default_factory=list, max_length=5)
+
+
+class InvestmentPlanPayload(BaseModel):
+    confirmed_amount: float = Field(gt=0)
+    currency: Literal["EGP"]
+    allocations: list[InvestmentPlanAllocationPayload] = Field(min_length=1, max_length=3)
+    total_allocated: float = Field(ge=0)
+    total_remainder: float = Field(ge=0)
+    disclaimer: str
+    confirmed: bool = False
+
+
+class InvestmentPlanWidget(BaseModel):
+    """An illustrative allocation calculated from validated quote data."""
+
+    type: Literal["investment_plan"] = Field(default="investment_plan")
+    payload: InvestmentPlanPayload
+
+
 # Genuinely tagged on `type` rather than a bare union: SpendingBreakdownPayload and
 # TransactionsListPayload both lead with `currency` plus a list, so left-to-right
 # union validation could plausibly mis-assign one to the other. Tagging makes the
@@ -393,6 +434,7 @@ Widget = Annotated[
     | ProductCardWidget
     | SpendingBreakdownWidget
     | TransactionsListWidget
-    | SavingsSliderWidget,
+    | SavingsSliderWidget
+    | InvestmentPlanWidget,
     Field(discriminator="type"),
 ]

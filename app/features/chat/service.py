@@ -24,7 +24,9 @@ logger = get_logger(__name__)
 # classification string (plan/service.py's validate_answer_llm) that
 # planner_ask later turns into the actual user-facing reprompt — it must
 # never be streamed to the user directly.
-_LEAF_NODES = frozenset({"analysis", "planner_ask", "recommendation", "general"})
+_LEAF_NODES = frozenset(
+    {"analysis", "planner_ask", "investment_plan", "recommendation", "general"}
+)
 
 
 async def stream_chat(app, request: ChatTurnRequest) -> AsyncIterator[str]:
@@ -45,15 +47,51 @@ async def stream_chat(app, request: ChatTurnRequest) -> AsyncIterator[str]:
 
     ``asyncio.CancelledError`` (client disconnect) returns immediately with no
     partial ``done`` and no audit double-write, leaving checkpointer state
-    consistent for the next turn. Mock mode (``USE_MOCK_LLM``) adopts the same
-    envelope as a single ``token`` batch plus one ``done`` (FR-011), so
-    backend/frontend development does not branch on the mode.
+    consistent for the next turn. Generic mock-mode turns adopt the same
+    envelope as a single ``token`` batch plus one ``done`` (FR-011), while the
+    deterministic investment questionnaire still traverses the graph so its
+    offline Docker flow is fully testable.
     """
     from app.core.config import settings
 
     checkpointer = getattr(app.state, "checkpointer", None)
+    graph = None
+    config = {"configurable": {"thread_id": request.conversation_id}}
+    snapshot = None
 
-    if settings.chat_model.use_mock:
+    # Investment planning is deliberately deterministic except for its quote
+    # provider, so it remains fully exercisable when the chat LLM is mocked.
+    # Existing generic mock-chat behaviour stays intact for all other fresh
+    # turns. A pending interrupt also has to resume through the graph because
+    # terse questionnaire answers do not carry an investment keyword.
+    if settings.chat_model.use_mock and checkpointer is not None:
+        from app.features.chat.agents.maestro import classify_intent
+        from app.features.chat.graph import build_graph
+
+        graph = build_graph(checkpointer=checkpointer)
+        snapshot = await graph.aget_state(config)
+        classified_intent = classify_intent(request.message)
+        is_task_turn = classified_intent != "general"
+        is_completed_plan_edit = False
+        if snapshot and snapshot.values.get("stage") == "investment_plan_complete":
+            from app.features.chat.agents.investment import parse_instrument_selection
+
+            is_completed_plan_edit = bool(
+                parse_instrument_selection(
+                    request.message,
+                    snapshot.values.get("investment_context"),
+                    snapshot.values.get("investment_answers"),
+                )
+            )
+        has_pending_question = bool(snapshot and snapshot.interrupts)
+    else:
+        is_task_turn = False
+        is_completed_plan_edit = False
+        has_pending_question = False
+
+    if settings.chat_model.use_mock and not (
+        is_task_turn or is_completed_plan_edit or has_pending_question
+    ):
         # FR-011: mock mode adopts the same envelope (one token batch + one done).
         from app.features.chat.suggestions import generate_suggestions
 
@@ -69,12 +107,12 @@ async def stream_chat(app, request: ChatTurnRequest) -> AsyncIterator[str]:
         yield f"data: {err}\n\n"
         return
 
-    from app.features.chat.graph import build_graph
+    if graph is None:
+        from app.features.chat.graph import build_graph
 
-    graph = build_graph(checkpointer=checkpointer)
-    config = {"configurable": {"thread_id": request.conversation_id}}
-
-    snapshot = await graph.aget_state(config)
+        graph = build_graph(checkpointer=checkpointer)
+    if snapshot is None:
+        snapshot = await graph.aget_state(config)
     prev_values = snapshot.values if snapshot else {}
 
     if snapshot and snapshot.interrupts:
@@ -105,6 +143,12 @@ async def stream_chat(app, request: ChatTurnRequest) -> AsyncIterator[str]:
             "last_question_id": prev_values.get("last_question_id"),
             "planner_validation_attempts": prev_values.get("planner_validation_attempts", 0),
             "planner_context": prev_values.get("planner_context"),
+            "investment_answers": dict(prev_values.get("investment_answers") or {}),
+            "investment_context": prev_values.get("investment_context"),
+            "investment_validation_attempts": prev_values.get(
+                "investment_validation_attempts", 0
+            ),
+            "investment_validation_reason": prev_values.get("investment_validation_reason"),
             "pending_answer": prev_values.get("pending_answer"),
             "pending_validation_reason": prev_values.get("pending_validation_reason"),
             "message_references": [],

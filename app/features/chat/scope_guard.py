@@ -170,7 +170,9 @@ CONTEXT_SNIPPET_CHARS = 150
 # finance-relevant to the classifier without actually being genuine
 # engagement. Trusting it as context let unrelated follow-up messages
 # (e.g. right after a refusal) slip past the guard on borrowed vocabulary.
-_TASK_INTENTS = frozenset({"analysis", "planning", "recommendation"})
+_TASK_INTENTS = frozenset(
+    {"analysis", "planning", "investment_planning", "recommendation"}
+)
 
 
 def build_scope_check_text(messages: list, last_intent: str | None = None) -> str:

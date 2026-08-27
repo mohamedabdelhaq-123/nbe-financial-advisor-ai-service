@@ -11,6 +11,7 @@ since only it has both groups in scope.
 """
 
 from typing import Literal
+from urllib.parse import urlsplit
 
 from pydantic import BaseModel, Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -170,6 +171,44 @@ class MinerUSettings(BaseModel):
         return self
 
 
+class MarketDataSettings(BaseModel):
+    """Optional curated market-price capability.
+
+    This flag controls only market pricing. It is deliberately independent of
+    chat-model connectivity and never accepts a model-supplied URL.
+    """
+
+    enabled: bool = False
+    provider: Literal["mock", "http"] = "mock"
+    base_url: str = ""
+    api_key: SecretStr = SecretStr("")
+    timeout_seconds: float = Field(default=3.0, gt=0, le=30)
+    cache_ttl_seconds: int = Field(default=60, ge=0, le=3600)
+    max_batch_size: int = Field(default=3, ge=1, le=10)
+
+    @model_validator(mode="after")
+    def _validate_http_provider(self) -> "MarketDataSettings":
+        if not self.enabled or self.provider != "http":
+            return self
+        if not self.base_url:
+            raise ValueError(
+                "AI_SERVICE_MARKET_DATA__BASE_URL must be set when market data is "
+                "enabled with the http provider."
+            )
+        parsed = urlsplit(self.base_url)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            raise ValueError(
+                "AI_SERVICE_MARKET_DATA__BASE_URL must be an absolute http(s) URL."
+            )
+        if parsed.username or parsed.password or parsed.query or parsed.fragment:
+            raise ValueError(
+                "AI_SERVICE_MARKET_DATA__BASE_URL must not contain credentials, a query, "
+                "or a fragment."
+            )
+        self.base_url = self.base_url.rstrip("/")
+        return self
+
+
 class ScopeGuardSettings(BaseModel):
     """Zero-shot topic/scope guardrail (app/features/chat/scope_guard.py) —
     gates chat messages to the advisor's own domain before they reach any
@@ -287,6 +326,7 @@ class Settings(BaseSettings):
     backend_db: BackendDbSettings
     storage: StorageSettings
     mineru: MinerUSettings = Field(default_factory=MinerUSettings)
+    market_data: MarketDataSettings = Field(default_factory=MarketDataSettings)
     scope_guard: ScopeGuardSettings = Field(default_factory=ScopeGuardSettings)
     langfuse: LangfuseSettings = Field(default_factory=LangfuseSettings)
     logging: LoggingSettings = Field(default_factory=LoggingSettings)

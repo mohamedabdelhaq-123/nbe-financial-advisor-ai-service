@@ -1,5 +1,8 @@
 """US1 Unit test: Maestro intent classification (mock mode)."""
 
+import uuid
+from decimal import Decimal
+
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 
@@ -18,6 +21,10 @@ from app.features.chat.agents.maestro import _parse_llm_intent, classify_intent,
         ("which credit card should I get", "recommendation"),
         ("what savings account is best", "recommendation"),
         ("recommend a product for me", "recommendation"),
+        ("help me invest my remaining money", "investment_planning"),
+        ("How should I use my remaining money?", "investment_planning"),
+        ("check the latest gold price for an investment plan", "investment_planning"),
+        ("compare fund NAVs before I invest", "investment_planning"),
         ("hello there", "general"),
         ("what can you do", "general"),
         ("thank you", "general"),
@@ -68,7 +75,7 @@ def test_parse_llm_intent_trusts_a_clean_general_reply(raw: str):
     # classify_intent() — a blind keyword scan of the ORIGINAL message, where
     # the literal word "plan" silently overrode the LLM's correct answer
     # back to "planning". A clean "general" reply must be trusted as-is,
-    # exactly like the three task intents already are.
+    # exactly like the task intents already are.
     result = _parse_llm_intent(raw, "i want a plan to rob a bank")
     assert result == "general"
 
@@ -114,6 +121,54 @@ async def test_maestro_node_uses_history_for_elliptical_followup_in_mock_mode():
     }
     result = await maestro_node(state)
     assert result["intent"] == "analysis"
+
+
+@pytest.mark.asyncio
+async def test_completed_investment_plan_accepts_catalogue_selection_change():
+    instrument_id = uuid.uuid4()
+    state = {
+        "messages": [HumanMessage(content="EGX30 Index ETF")],
+        "stage": "investment_plan_complete",
+        "questions_asked": 0,
+        "investment_context": {
+            "instruments": [
+                {
+                    "id": str(instrument_id),
+                    "product_id": str(uuid.uuid4()),
+                    "code": "egx30-index-etf",
+                    "display_name": "EGX30 Index ETF",
+                    "asset_class": "fund",
+                    "provider_symbol": "EGX30ETF_MARKET_PRICE",
+                    "price_type": "market_price",
+                    "price_currency": "EGP",
+                    "unit": "fund_unit",
+                    "minimum_increment": str(Decimal("1")),
+                    "fractional_units_supported": False,
+                    "max_quote_age_seconds": 259200,
+                    "aliases": ["fund", "etf", "egx30"],
+                    "objectives": ["balanced_growth"],
+                    "risk_level": "high",
+                    "horizons": ["long"],
+                    "liquidity_level": "high",
+                }
+            ]
+        },
+        "investment_answers": {
+            "confirmed_amount": "1200.00",
+            "objective": "balanced_growth",
+            "risk": "moderate",
+            "horizon": "medium",
+            "liquidity": "medium",
+            "instruments": [str(uuid.uuid4())],
+        },
+    }
+
+    result = await maestro_node(state)
+
+    assert result["intent"] == "investment_planning"
+    assert result["stage"] == "investment_planning"
+    assert result["investment_answers"]["instruments"] == [str(instrument_id)]
+    assert result["investment_answers"]["confirmed_amount"] == "1200.00"
 
 
 @pytest.mark.parametrize(
