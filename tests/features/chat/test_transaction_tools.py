@@ -10,8 +10,10 @@ an error. `_clean_optional` normalizes that sentinel back to None before it
 reaches the query.
 """
 
+import datetime
+import types
 import uuid
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -155,3 +157,100 @@ async def test_compute_aggregate_omits_is_recurring_filter_when_unset(monkeypatc
 
     sql = str(captured["stmt"].compile(compile_kwargs={"literal_binds": True}))
     assert "is_recurring" not in sql.lower()
+
+
+def _fake_transaction(**overrides):
+    category = types.SimpleNamespace(name=overrides.pop("category_name", "coffee"))
+    defaults = dict(
+        id=uuid.uuid4(),
+        transaction_date=datetime.date(2026, 8, 1),
+        amount=12.5,
+        currency="EGP",
+        transaction_type="debit",
+        merchant_raw="Costa Coffee",
+        category=category,
+    )
+    defaults.update(overrides)
+    return types.SimpleNamespace(**defaults)
+
+
+@pytest.mark.asyncio
+async def test_find_similar_transactions_rejects_empty_query(monkeypatch):
+    embed_mock = AsyncMock()
+    monkeypatch.setattr("app.features.embed.service.embed_texts", embed_mock)
+
+    tools = make_transaction_tools(uuid.uuid4())
+    find_similar = next(t for t in tools if t.name == "find_similar_transactions")
+
+    result = await find_similar.ainvoke({"query": "   "})
+
+    assert "error" in result
+    embed_mock.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_find_similar_transactions_handles_embed_failure(monkeypatch):
+    monkeypatch.setattr(
+        "app.features.embed.service.embed_texts",
+        AsyncMock(side_effect=RuntimeError("embedding provider down")),
+    )
+
+    tools = make_transaction_tools(uuid.uuid4())
+    find_similar = next(t for t in tools if t.name == "find_similar_transactions")
+
+    result = await find_similar.ainvoke({"query": "coffee last week"})
+
+    assert "error" in result
+
+
+@pytest.mark.asyncio
+async def test_find_similar_transactions_filters_null_embeddings_and_caps_top_k(monkeypatch):
+    monkeypatch.setattr(
+        "app.features.embed.service.embed_texts",
+        AsyncMock(return_value=[[0.1, 0.2, 0.3]]),
+    )
+    captured = await _capture_stmt(monkeypatch)
+
+    tools = make_transaction_tools(uuid.uuid4())
+    find_similar = next(t for t in tools if t.name == "find_similar_transactions")
+
+    await find_similar.ainvoke({"query": "coffee last week", "top_k": 100})
+
+    sql = str(captured["stmt"].compile(compile_kwargs={"literal_binds": True}))
+    assert "embedding is not null" in sql.lower()
+    assert "order by" in sql.lower()
+    assert "limit 20" in sql.lower()  # capped, not the requested 100
+
+
+@pytest.mark.asyncio
+async def test_find_similar_transactions_returns_ranked_rows(monkeypatch):
+    monkeypatch.setattr(
+        "app.features.embed.service.embed_texts",
+        AsyncMock(return_value=[[0.1, 0.2, 0.3]]),
+    )
+
+    fake_txn = _fake_transaction()
+
+    async def _fake_get_backend_session():
+        mock_result = MagicMock()
+        mock_result.all.return_value = [(fake_txn, 0.87)]
+
+        async def _execute(stmt):
+            return mock_result
+
+        session = MagicMock()
+        session.execute = _execute
+        yield session
+
+    monkeypatch.setattr("app.backend_db.get_backend_session", _fake_get_backend_session)
+
+    tools = make_transaction_tools(uuid.uuid4())
+    find_similar = next(t for t in tools if t.name == "find_similar_transactions")
+
+    result = await find_similar.ainvoke({"query": "coffee last week"})
+
+    assert result["count"] == 1
+    row = result["transactions"][0]
+    assert row["merchant"] == "Costa Coffee"
+    assert row["category"] == "coffee"
+    assert row["similarity"] == pytest.approx(0.87)
