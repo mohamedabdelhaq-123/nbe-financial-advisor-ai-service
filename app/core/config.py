@@ -211,6 +211,11 @@ class MaestroRoutingSettings(BaseModel):
     """Context-aware routing performed by the chat Maestro itself."""
 
     minimum_confidence: float = Field(default=0.55, ge=0.0, le=1.0)
+    # Empty reuses ChatModelSettings.model_name. Deployments may select a
+    # smaller model that is reliable at strict structured output without
+    # changing the model used to generate advisor replies.
+    model_name: str = ""
+    max_output_tokens: int = Field(default=512, ge=128, le=2048)
 
 
 class NliShadowSettings(BaseModel):

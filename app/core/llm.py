@@ -19,6 +19,7 @@ def get_chat_model(
     max_tokens: int | None = None,
     disable_reasoning: bool = False,
     streaming: bool = False,
+    model_name: str | None = None,
 ) -> ChatOpenAI:
     """Return the configured chat model.
 
@@ -34,6 +35,10 @@ def get_chat_model(
     reasoning model. Per-caller rather than global: a caller doing extraction
     against a fixed schema gains nothing from reasoning but pays its latency,
     while an analysis or planning caller may want it kept.
+
+    `model_name` optionally selects another model at the same configured
+    provider. This lets small structured tasks use a suitable model without
+    coupling them to the advisor reply model.
 
     `streaming` decides whether `.ainvoke()` hits the provider's streaming API.
     It is what makes token-by-token output possible *at all*: LangGraph's
@@ -54,7 +59,7 @@ def get_chat_model(
     """
     return ChatOpenAI(
         base_url=settings.chat_model.openai_base_url,
-        model=settings.chat_model.model_name,
+        model=model_name or settings.chat_model.model_name,
         api_key=settings.chat_model.openai_api_key,
         max_tokens=max_tokens,  # type: ignore[call-arg]  # real pydantic field; no mypy plugin configured to see it
         streaming=streaming,

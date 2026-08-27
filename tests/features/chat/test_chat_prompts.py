@@ -25,6 +25,12 @@ def test_maestro_system_prompt_uses_the_central_route_catalogue():
     assert "clarify:" in rendered
     assert "refuse:" in rendered
     assert "illegal or harmful" in rendered
+    assert "savings account" in rendered
+    assert "must not be refused" in rendered
+    assert "what the advisor can do" in rendered
+    assert "without asking for clarification" in rendered
+    assert "needs help with money or finances" in rendered
+    assert "do not send it to general" in rendered
     assert "untrusted data" in rendered
 
 

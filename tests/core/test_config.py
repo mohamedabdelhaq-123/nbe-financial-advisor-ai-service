@@ -95,9 +95,15 @@ def test_market_data_http_accepts_public_or_internal_endpoint():
 
 
 def test_maestro_routing_confidence_is_bounded():
-    MaestroRoutingSettings(minimum_confidence=0.55)
+    MaestroRoutingSettings(
+        minimum_confidence=0.55,
+        model_name="openai/gpt-4o-mini",
+        max_output_tokens=512,
+    )
     with pytest.raises(ValidationError):
         MaestroRoutingSettings(minimum_confidence=1.1)
+    with pytest.raises(ValidationError):
+        MaestroRoutingSettings(max_output_tokens=64)
 
 
 def test_nli_shadow_disabled_needs_no_external_key():

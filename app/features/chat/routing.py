@@ -74,7 +74,10 @@ ROUTE_SPECS = (
     RouteSpec(
         name="recommendation",
         graph_node="recommendation",
-        description=("Comparing or choosing curated banking products such as accounts and cards."),
+        description=(
+            "Requests to compare, recommend, or choose banking products, including savings "
+            "accounts, current/checking accounts, cards, deposits, and certificates."
+        ),
         mock_phrases=(
             "recommend",
             "product",
@@ -88,8 +91,9 @@ ROUTE_SPECS = (
         name="general",
         graph_node="general",
         description=(
-            "Greetings, capability questions, and personal-finance conversation that does not "
-            "need a specialist workflow or the user's stored data."
+            "Greetings, questions about the advisor's capabilities, and clear general "
+            "personal-finance education questions that do not need a specialist workflow or "
+            "the user's stored data."
         ),
     ),
 )

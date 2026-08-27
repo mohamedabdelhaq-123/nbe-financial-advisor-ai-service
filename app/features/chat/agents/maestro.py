@@ -127,7 +127,14 @@ async def _decide_route(
                     message=text,
                     history=history or None,
                 )
-                structured_llm = get_chat_model().with_structured_output(MaestroRoutingDecision)
+                # Routing needs only a tiny JSON object. Bound output and turn
+                # off optional model reasoning so a provider cannot spend a
+                # long completion budget on this classification step.
+                structured_llm = get_chat_model(
+                    max_tokens=settings.maestro_routing.max_output_tokens,
+                    disable_reasoning=True,
+                    model_name=settings.maestro_routing.model_name or None,
+                ).with_structured_output(MaestroRoutingDecision)
                 raw_decision = await structured_llm.ainvoke(
                     [SystemMessage(content=system_prompt), HumanMessage(content=human_prompt)]
                 )

@@ -128,6 +128,69 @@ async def test_real_maestro_uses_validated_structured_output_for_a_long_message(
 
 
 @pytest.mark.asyncio
+async def test_real_maestro_routes_savings_account_request_to_recommendations(monkeypatch):
+    monkeypatch.setattr(settings.chat_model, "use_mock", False)
+    decision = MaestroRoutingDecision(outcome="route", route="recommendation", confidence=0.98)
+    calls = install_fake_chat_model(monkeypatch, structured_response=decision)
+
+    result = await maestro_node(
+        {
+            "messages": [HumanMessage(content="Which savings account should I choose?")],
+            "stage": "",
+            "questions_asked": 0,
+            "intent": "",
+        }
+    )
+
+    assert result["intent"] == "recommendation"
+    assert result["routing_outcome"] == "route"
+    assert "savings account" in calls[0][1].content.lower()
+
+
+@pytest.mark.asyncio
+async def test_real_maestro_uses_its_configured_model_and_small_output_budget(monkeypatch):
+    monkeypatch.setattr(settings.chat_model, "use_mock", False)
+    monkeypatch.setattr(settings.maestro_routing, "model_name", "routing-model")
+    monkeypatch.setattr(settings.maestro_routing, "max_output_tokens", 384)
+    requested = {}
+
+    class _StructuredModel:
+        def with_structured_output(self, schema):
+            requested["schema"] = schema
+            return self
+
+        async def ainvoke(self, messages):
+            return MaestroRoutingDecision(
+                outcome="route",
+                route="recommendation",
+                confidence=0.98,
+            )
+
+    def _fake_model_factory(**kwargs):
+        requested.update(kwargs)
+        return _StructuredModel()
+
+    monkeypatch.setattr("app.core.llm.get_chat_model", _fake_model_factory)
+
+    result = await maestro_node(
+        {
+            "messages": [HumanMessage(content="Which savings account should I choose?")],
+            "stage": "",
+            "questions_asked": 0,
+            "intent": "",
+        }
+    )
+
+    assert result["intent"] == "recommendation"
+    assert requested == {
+        "max_tokens": 384,
+        "disable_reasoning": True,
+        "model_name": "routing-model",
+        "schema": MaestroRoutingDecision,
+    }
+
+
+@pytest.mark.asyncio
 async def test_real_maestro_sends_recent_context_for_a_short_answer(monkeypatch):
     monkeypatch.setattr(settings.chat_model, "use_mock", False)
     decision = MaestroRoutingDecision(outcome="route", route="investment_planning", confidence=0.96)
@@ -299,7 +362,7 @@ async def test_cancelling_maestro_also_cancels_optional_nli_shadow(monkeypatch):
             await asyncio.Event().wait()
 
     monkeypatch.setattr("app.features.chat.scope_guard.check_scope", _blocking_shadow)
-    monkeypatch.setattr("app.core.llm.get_chat_model", lambda: _BlockingModel())
+    monkeypatch.setattr("app.core.llm.get_chat_model", lambda *args, **kwargs: _BlockingModel())
 
     routing_task = asyncio.create_task(
         maestro_node(
