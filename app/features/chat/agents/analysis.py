@@ -210,9 +210,13 @@ async def _agentic_analysis(state: ConversationState, user_id) -> dict:
         # streaming=True so the grounded answer reaches the user token by token
         # (`analysis` is one of service.py's _LEAF_NODES). bind_tools() carries
         # the setting over to the tool-calling loop as well; the intermediate
-        # tool-call turns stream too, but those chunks carry empty `content`
-        # and service.py already skips empty content, so nothing leaks from
-        # them into the user's reply.
+        # tool-call turns stream too. Against OpenAI itself those chunks carry
+        # empty `content` (the call rides in the structured tool_calls field),
+        # so nothing leaks — but some OpenAI-compatible self-hosted backends
+        # emulate tool-calling as literal XML-ish text in `content`, which can
+        # reach the client as token events before their own parser resolves
+        # it into a real tool call. service.py's _strip_tool_call_tags() is
+        # the defensive backstop for that case (see its docstring).
         base_model = get_chat_model(streaming=True)
         model_with_tools = base_model.bind_tools(tools)
 
