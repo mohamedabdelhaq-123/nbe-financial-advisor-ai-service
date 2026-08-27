@@ -24,9 +24,7 @@ logger = get_logger(__name__)
 # classification string (plan/service.py's validate_answer_llm) that
 # planner_ask later turns into the actual user-facing reprompt — it must
 # never be streamed to the user directly.
-_LEAF_NODES = frozenset(
-    {"analysis", "planner_ask", "investment_plan", "recommendation", "general"}
-)
+_LEAF_NODES = frozenset({"analysis", "planner_ask", "investment_plan", "recommendation", "general"})
 
 
 async def stream_chat(app, request: ChatTurnRequest) -> AsyncIterator[str]:
@@ -145,9 +143,7 @@ async def stream_chat(app, request: ChatTurnRequest) -> AsyncIterator[str]:
             "planner_context": prev_values.get("planner_context"),
             "investment_answers": dict(prev_values.get("investment_answers") or {}),
             "investment_context": prev_values.get("investment_context"),
-            "investment_validation_attempts": prev_values.get(
-                "investment_validation_attempts", 0
-            ),
+            "investment_validation_attempts": prev_values.get("investment_validation_attempts", 0),
             "investment_validation_reason": prev_values.get("investment_validation_reason"),
             "pending_answer": prev_values.get("pending_answer"),
             "pending_validation_reason": prev_values.get("pending_validation_reason"),

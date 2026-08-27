@@ -28,9 +28,7 @@ _AMOUNT_TRANSLATION = str.maketrans(
     "٠١٢٣٤٥٦٧٨٩٫٬",
     "0123456789.,",
 )
-_AMOUNT_PATTERN = re.compile(
-    r"(?<![\d.,])[-+]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?![\d.,kKmM])"
-)
+_AMOUNT_PATTERN = re.compile(r"(?<![\d.,])[-+]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?![\d.,kKmM])")
 _UNIT_LABELS = {
     "gram_24k": "gram of 24K gold",
     "fund_unit": "fund unit",
@@ -40,11 +38,22 @@ _ALL_SELECTIONS = {"all", "all three", "everything", "الكل", "كلهم", "ج
 _CHOICE_ALIASES = {
     "objective": {
         "preserve_value": {
-            "preserve value", "preserve", "protect value", "protect", "safety", "safe",
-            "حفظ القيمة", "حماية",
+            "preserve value",
+            "preserve",
+            "protect value",
+            "protect",
+            "safety",
+            "safe",
+            "حفظ القيمة",
+            "حماية",
         },
         "balanced_growth": {
-            "balanced growth", "steady growth", "growth", "grow", "balanced", "نمو",
+            "balanced growth",
+            "steady growth",
+            "growth",
+            "grow",
+            "balanced",
+            "نمو",
         },
         "income": {"income", "regular income", "cash flow", "دخل"},
     },
@@ -94,8 +103,8 @@ def _selection_options_text(ranked: list[RankedInstrument], answers: dict) -> st
     )
 
 
-def _money_display(value: Decimal) -> str:
-    return f"{value:,.0f}"
+def _money_display(value: Decimal | None) -> str:
+    return "not available" if value is None else f"{value:,.0f}"
 
 
 def _question_text(
@@ -147,15 +156,10 @@ def _question_text(
             "**some flexibility**, or **not soon**?"
         )
 
-    ranked = rank_instruments(
-        context.instruments[: settings.market_data.max_batch_size], answers
-    )
+    ranked = rank_instruments(context.instruments[: settings.market_data.max_batch_size], answers)
     choices = _selection_options_text(ranked, answers or {})
     if reason:
-        return (
-            f"{reason}\n\n{choices}\n\n"
-            "Reply with up to three priority numbers or names."
-        )
+        return f"{reason}\n\n{choices}\n\n" "Reply with up to three priority numbers or names."
     return (
         "Here is your suggested priority order:\n\n"
         f"{choices}\n\n"
@@ -181,9 +185,7 @@ def _parse_natural_choice(question_id: str, cleaned: str) -> str | None:
     for canonical, phrases in _CHOICE_ALIASES[question_id].items():
         for phrase in sorted(phrases, key=len, reverse=True):
             normalized_phrase = _normalize_instrument_alias(phrase)
-            if normalized == normalized_phrase or _alias_occurs(
-                normalized, normalized_phrase
-            ):
+            if normalized == normalized_phrase or _alias_occurs(normalized, normalized_phrase):
                 matches.add(canonical)
                 break
     return matches.pop() if len(matches) == 1 else None
@@ -217,11 +219,7 @@ def _parse_answer(
 
     if question_id in {"risk", "liquidity"}:
         parsed = _parse_natural_choice(question_id, cleaned)
-        return (
-            (parsed, None)
-            if parsed
-            else (None, "I didn't understand that preference.")
-        )
+        return (parsed, None) if parsed else (None, "I didn't understand that preference.")
 
     if question_id == "horizon":
         parsed = _parse_natural_choice(question_id, cleaned)
@@ -229,9 +227,7 @@ def _parse_answer(
 
     if not context.instruments:
         return None, "No curated investment opportunities are currently available."
-    ranked = rank_instruments(
-        context.instruments[: settings.market_data.max_batch_size], answers
-    )
+    ranked = rank_instruments(context.instruments[: settings.market_data.max_batch_size], answers)
     if _normalize_instrument_alias(cleaned) in _ALL_SELECTIONS:
         selected = [item.instrument for item in ranked]
     else:
@@ -267,9 +263,7 @@ def _parse_answer(
                 if len(matches) != 1:
                     return None, f"'{alias}' matches more than one option."
                 matched_ids.add(matches[0].id)
-            selected = [
-                item.instrument for item in ranked if item.instrument.id in matched_ids
-            ]
+            selected = [item.instrument for item in ranked if item.instrument.id in matched_ids]
             if not selected:
                 prefix_ids: set = set()
                 for word in (word for word in normalized.split() if len(word) >= 3):
@@ -282,11 +276,7 @@ def _parse_answer(
                     }
                     if len(candidates) == 1:
                         prefix_ids.update(candidates)
-                selected = [
-                    item.instrument
-                    for item in ranked
-                    if item.instrument.id in prefix_ids
-                ]
+                selected = [item.instrument for item in ranked if item.instrument.id in prefix_ids]
             if not selected:
                 return None, "I couldn't match that to one option."
 
@@ -427,9 +417,7 @@ async def investment_plan_node(state: ConversationState) -> dict:
     by_id = {item.id: item for item in context.instruments}
     selected = [by_id[item] for item in selected_ids if item in by_id]
     ranked_instruments = rank_instruments(context.instruments, answers)
-    priority_by_id = {
-        item.instrument.id: item.priority for item in ranked_instruments
-    }
+    priority_by_id = {item.instrument.id: item.priority for item in ranked_instruments}
     selected.sort(key=lambda item: priority_by_id[item.id])
     quote_result = await fetch_quotes(selected)
     if quote_result.unavailable or len(quote_result.quotes) != len(selected):

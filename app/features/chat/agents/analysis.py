@@ -155,8 +155,7 @@ async def _mock_spending_breakdown(state: ConversationState, user_id) -> dict | 
         return None
     lowered = text.casefold()
     if not any(
-        phrase in lowered
-        for phrase in ("breakdown", "by category", "where did my money go")
+        phrase in lowered for phrase in ("breakdown", "by category", "where did my money go")
     ):
         return None
 
@@ -176,11 +175,7 @@ async def _mock_spending_breakdown(state: ConversationState, user_id) -> dict | 
         }
     )
     if not isinstance(result, dict) or not result.get("shown") or not sink:
-        reason = (
-            result.get("reason") or result.get("error")
-            if isinstance(result, dict)
-            else None
-        )
+        reason = result.get("reason") or result.get("error") if isinstance(result, dict) else None
         return {
             "messages": [
                 AIMessage(content=reason or "I couldn't load that spending breakdown just now.")
@@ -222,6 +217,7 @@ async def _mock_analysis(state: ConversationState, user_id) -> dict:
         # MissingGreenlet — so it must be eager-loaded as part of this query
         # (selectinload), not touched lazily later regardless of session state.
         references: list[Reference] = []
+        transaction_titles: list[str] = []
         widget: TransactionsListWidget | None = None
         async for session in get_backend_session():
             result = await session.execute(
@@ -235,6 +231,12 @@ async def _mock_analysis(state: ConversationState, user_id) -> dict:
 
             for txn in transactions:
                 references.append(Reference(target_type="transaction", target_id=str(txn.id)))
+                title = (
+                    getattr(txn, "merchant_normalized", None)
+                    or getattr(txn, "merchant_raw", None)
+                    or "Unknown"
+                )
+                transaction_titles.append(str(title)[:100])
 
         if not references:
             return {
@@ -244,12 +246,14 @@ async def _mock_analysis(state: ConversationState, user_id) -> dict:
                 "message_references": [],
             }
 
-        # Deliberately a one-line summary, not a per-row list: the widget
-        # already shows every row, so repeating them in prose would duplicate
-        # the same data the user just saw in the transactions_list card (see
-        # show_transactions's docstring in app/tools/widgets.py for the same
-        # rule on the real-model path).
+        # Deliberately a one-line summary, not a per-row list, when a widget is
+        # available: it already shows every row. Minimal fixtures and degraded
+        # backend rows may not carry the currency/date fields required to build
+        # that widget; in that case include the bounded merchant titles in the
+        # prose so the response still contains the user's requested data.
         reply = f"Here are your {len(references)} most recent transactions."
+        if widget is None and transaction_titles:
+            reply += " " + "; ".join(transaction_titles)
         return {
             "messages": [AIMessage(content=reply)],
             "message_references": references,

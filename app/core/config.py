@@ -197,9 +197,7 @@ class MarketDataSettings(BaseModel):
             )
         parsed = urlsplit(self.base_url)
         if parsed.scheme not in {"http", "https"} or not parsed.hostname:
-            raise ValueError(
-                "AI_SERVICE_MARKET_DATA__BASE_URL must be an absolute http(s) URL."
-            )
+            raise ValueError("AI_SERVICE_MARKET_DATA__BASE_URL must be an absolute http(s) URL.")
         if parsed.username or parsed.password or parsed.query or parsed.fragment:
             raise ValueError(
                 "AI_SERVICE_MARKET_DATA__BASE_URL must not contain credentials, a query, "

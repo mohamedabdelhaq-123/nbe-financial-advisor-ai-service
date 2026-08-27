@@ -51,9 +51,9 @@ async def _scope_guard_node(state: ConversationState) -> dict:
     # wouldn't classify confidently either way on their own — same
     # reasoning maestro_node already uses to skip its own classification
     # for these, applied here for the same reason.
-    if (
-        state.get("stage") == "planning" and state.get("questions_asked", 0) > 0
-    ) or state.get("stage") == "investment_planning":
+    if (state.get("stage") == "planning" and state.get("questions_asked", 0) > 0) or state.get(
+        "stage"
+    ) == "investment_planning":
         return {"in_scope": True}
 
     if state.get("stage") == "investment_plan_complete":

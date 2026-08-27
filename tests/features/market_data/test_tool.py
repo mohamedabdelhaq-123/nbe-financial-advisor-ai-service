@@ -27,9 +27,7 @@ async def test_market_quote_tool_enforces_batch_and_unique_ids_before_repository
     repeated = str(uuid.uuid4())
 
     duplicate = await quote_tool.ainvoke({"instrument_ids": [repeated, repeated]})
-    oversized = await quote_tool.ainvoke(
-        {"instrument_ids": [str(uuid.uuid4()) for _ in range(4)]}
-    )
+    oversized = await quote_tool.ainvoke({"instrument_ids": [str(uuid.uuid4()) for _ in range(4)]})
 
     assert duplicate["status"] == "invalid"
     assert duplicate["error"] == "Instrument IDs must be unique."
