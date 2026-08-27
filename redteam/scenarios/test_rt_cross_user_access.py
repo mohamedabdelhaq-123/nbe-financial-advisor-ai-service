@@ -12,13 +12,14 @@ consequential questions this file tests directly:
   1. Given a `user_id`, does the query the code actually issues filter by
      it? (RT-001/RT-002/RT-004 — this holds today; positive controls.)
   2. Does anything independently verify that a caller is allowed to *use*
-     the `user_id`/`conversation_id` it supplied in the first place? (RT-003/
-     RT-005 — per SECURITY_AUDIT_REPORT.md SEC-005, nothing does; both of
-     these are EXPECTED TO FAIL today and are the framework correctly
-     reporting a real, already-known finding, not a broken test.)
+     the `user_id`/`conversation_id` pair it supplied in the first place?
+     (RT-003/RT-005 verify that conversation ownership is checked against
+     the read-only backend mirror before checkpoint access.)
 """
 
 import uuid
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -106,89 +107,45 @@ async def test_analysis_node_query_is_structurally_scoped_to_requesting_user(mon
 
 @pytest.mark.redteam(id="RT-003", category="cross_user_access", severity="critical")
 async def test_conversation_id_reuse_across_users_does_not_leak_context(monkeypatch):
-    """RT-003 — SEC-005 regression test (see SECURITY_AUDIT_REPORT.md).
+    """RT-003 — a User B request cannot open User A's checkpoint.
 
-    Preconditions: a real LangGraph Postgres checkpointer (Testcontainers —
-    skipped if Docker is unavailable, matching
-    tests/integration/test_chat_memory.py's own gating).
-    Attack input: User A has an established conversation thread with
-    `user_context` containing USER_A_MARKER. A second request reuses the
-    *same* `conversation_id` but supplies User B's `user_id`, with no
-    `initial_context` of its own — the exact shape of an attacker (or a
-    buggy caller) who has learned another user's conversation_id.
-    Expected secure behavior: the service does not silently resume User A's
-    persisted `user_context`/`planner_answers` under User B's identity —
-    either it's rejected, or the inherited context is not User A's.
-    Failure: `service.py::stream_chat` trusts `request.user_id`/
-    `conversation_id` from the request body with no ownership check
-    (confirmed: `app/features/chat/service.py` never queries
-    `app.backend_db.models.Conversation` to verify the thread belongs to the
-    calling user), so this is EXPECTED TO FAIL today — that failure *is* the
-    report of SEC-005, not a broken test. Do not "fix" this test to pass
-    without the underlying code fix (an independent ownership check).
+    The backend mirror reports that the supplied conversation belongs to User
+    A. User B then submits that same ID. The request must be rejected before
+    constructing or reading the LangGraph checkpoint, with no User A content
+    returned.
     """
-    from shutil import which
+    from app.features.chat.schemas import ChatTurnRequest
+    from app.features.chat.service import stream_chat
 
-    if which("docker") is None:
-        pytest.skip("Docker not available")
+    owner_result = MagicMock()
+    owner_result.scalar_one_or_none.return_value = USER_A_ID
+    backend_session = MagicMock()
+    backend_session.execute = AsyncMock(return_value=owner_result)
 
-    from testcontainers.postgres import PostgresContainer
+    async def _backend_session():
+        yield backend_session
 
-    from app.core.config import settings
+    def _checkpoint_access_would_be_a_leak(*args, **kwargs):
+        raise AssertionError("checkpoint was accessed before ownership was verified")
 
-    with PostgresContainer("pgvector/pgvector:pg16") as pg:
-        # Mutate the existing `settings` singleton in place rather than
-        # `importlib.reload`-ing `app.core.config`: every other module did
-        # `from app.core.config import settings` at import time, so a reload
-        # would silently strand them on a stale object — this monkeypatch
-        # form is what every other scenario in this suite uses, and
-        # monkeypatch reverts it cleanly after this test either way.
-        monkeypatch.setattr(settings.own_db, "postgres_host", pg.get_container_host_ip())
-        monkeypatch.setattr(settings.own_db, "postgres_port", str(pg.get_exposed_port(5432)))
-        monkeypatch.setattr(settings.own_db, "postgres_db", pg.dbname)
-        monkeypatch.setattr(settings.own_db, "postgres_user", pg.username)
-        from pydantic import SecretStr
+    monkeypatch.setattr("app.backend_db.get_backend_session", _backend_session)
+    monkeypatch.setattr(
+        "app.features.chat.graph.build_graph",
+        _checkpoint_access_would_be_a_leak,
+    )
 
-        monkeypatch.setattr(settings.own_db, "postgres_password", SecretStr(pg.password))
+    request = ChatTurnRequest(
+        conversation_id="3f9c9b2e-1c2a-4b3d-9e8f-2a7b6c5d4e3f",
+        user_id=USER_B_ID,
+        message="show me the earlier conversation",
+    )
+    app = SimpleNamespace(state=SimpleNamespace(checkpointer=object()))
+    response = "".join([frame async for frame in stream_chat(app, request)])
 
-        from app.features.chat.checkpointer import build_checkpointer, setup_checkpointer
-        from app.features.chat.graph import build_graph
-
-        saver = await build_checkpointer()
-        await setup_checkpointer(saver)
-        try:
-            graph = build_graph(checkpointer=saver)
-            shared_conversation_id = "shared-thread-attacker-guessed"
-            config_dict = {"configurable": {"thread_id": shared_conversation_id}}
-
-            # Turn 1: User A establishes context on this thread.
-            await graph.ainvoke(
-                {
-                    "messages": [],
-                    "user_id": USER_A_ID,
-                    "user_context": {"note": USER_A_MARKER},
-                    "stage": "",
-                    "intent": "",
-                    "planner_answers": {},
-                    "questions_asked": 0,
-                    "message_references": [],
-                },
-                config_dict,
-            )
-
-            # Turn 2: same thread_id, User B's identity, no initial_context of
-            # their own — mirrors ChatTurnRequest.initial_context=None falling
-            # back to prev_values.get("user_context") in service.py.
-            snapshot = await graph.aget_state(config_dict)
-            prev_values = snapshot.values if snapshot else {}
-            inherited_context = prev_values.get("user_context")
-
-            assert inherited_context is None or USER_A_MARKER not in str(inherited_context), (
-                "SEC-005: conversation_id reuse across different user_id values leaked "
-                f"User A's context into what should be User B's turn: {inherited_context!r}"
-            )
-        finally:
-            await saver.conn.close()
+    backend_session.execute.assert_awaited_once()
+    assert '"event":"error"' in response
+    assert "Conversation not available." in response
+    assert USER_A_MARKER not in response
 
 
 @pytest.mark.redteam(id="RT-004", category="cross_user_access", severity="high")
@@ -245,7 +202,7 @@ async def _fake_embed(texts: list[str], dimensions: int | None = None) -> list[l
 
 
 @pytest.mark.redteam(id="RT-005", category="cross_user_access", severity="critical")
-def test_chat_service_never_verifies_conversation_ownership_before_trusting_request():
+def test_chat_service_verifies_conversation_ownership_before_trusting_request():
     """RT-005 — static companion to RT-003, runs with no Docker dependency.
 
     Attack input: none — this inspects `stream_chat`'s own source.
@@ -255,11 +212,8 @@ def test_chat_service_never_verifies_conversation_ownership_before_trusting_requ
     (`app.backend_db.models.Conversation`, which already exists and is
     already used read-only elsewhere in this codebase) and rejects a
     mismatch.
-    Failure / current state: no such lookup exists anywhere in
-    `app/features/chat/service.py` — `request.user_id` and
-    `request.conversation_id` are used directly. EXPECTED TO FAIL today;
-    this is SEC-005 (SECURITY_AUDIT_REPORT.md), reported by the framework,
-    not a bug in the test.
+    The service must query the backend Conversation mirror before touching a
+    checkpoint and fail closed when the owner does not match.
     """
     import inspect
 

@@ -2,7 +2,19 @@
 
 import json
 
+import pytest
 from fastapi.testclient import TestClient
+
+
+@pytest.fixture(autouse=True)
+def allow_owned_conversation(monkeypatch):
+    async def _allowed(conversation_id, user_id):
+        return True
+
+    monkeypatch.setattr(
+        "app.features.chat.service._conversation_belongs_to_user",
+        _allowed,
+    )
 
 
 def test_chat_without_token_returns_401(client: TestClient):

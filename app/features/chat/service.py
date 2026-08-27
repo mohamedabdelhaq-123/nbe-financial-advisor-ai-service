@@ -1,6 +1,7 @@
 """Chat streaming service — SSE endpoint implementation."""
 
 import asyncio
+import uuid
 from collections.abc import AsyncIterator
 
 from langchain_core.messages import AIMessage, HumanMessage
@@ -27,6 +28,43 @@ logger = get_logger(__name__)
 _LEAF_NODES = frozenset({"analysis", "planner_ask", "investment_plan", "recommendation", "general"})
 
 
+async def _conversation_belongs_to_user(conversation_id: str, user_id: uuid.UUID) -> bool:
+    """Fail closed unless the backend mirror confirms the conversation owner.
+
+    The internal bearer token authenticates the Django service, not the end
+    user represented by request fields. Checking the owner here prevents a
+    caller that supplies another user's conversation ID from loading that
+    thread's LangGraph checkpoint, messages, questionnaire answers, or cached
+    financial context.
+    """
+    try:
+        parsed_conversation_id = uuid.UUID(conversation_id)
+    except (TypeError, ValueError):
+        logger.warning("conversation_ownership_invalid_id")
+        return False
+
+    try:
+        from sqlalchemy import select
+
+        from app.backend_db import get_backend_session
+        from app.backend_db.models import Conversation
+
+        async for session in get_backend_session():
+            result = await session.execute(
+                select(Conversation.user_id).where(Conversation.id == parsed_conversation_id)
+            )
+            owner_id = result.scalar_one_or_none()
+            return owner_id == user_id
+    except Exception:
+        logger.exception(
+            "conversation_ownership_check_failed",
+            conversation_id=str(parsed_conversation_id),
+        )
+        return False
+
+    return False
+
+
 async def stream_chat(app, request: ChatTurnRequest) -> AsyncIterator[str]:
     """Yield the SSE frames for one chat turn over the shared ``{event, data}`` envelope.
 
@@ -51,6 +89,21 @@ async def stream_chat(app, request: ChatTurnRequest) -> AsyncIterator[str]:
     offline Docker flow is fully testable.
     """
     from app.core.config import settings
+
+    if not await _conversation_belongs_to_user(
+        request.conversation_id,
+        request.user_id,
+    ):
+        logger.warning(
+            "conversation_access_denied",
+            conversation_id=request.conversation_id,
+            user_id=str(request.user_id),
+        )
+        error = ErrorEvent(
+            data=ErrorPayload(message="Conversation not available.")
+        ).model_dump_json()
+        yield f"data: {error}\n\n"
+        return
 
     checkpointer = getattr(app.state, "checkpointer", None)
     graph = None

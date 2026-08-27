@@ -66,6 +66,19 @@ def _request(message="hi"):
     )
 
 
+@pytest.fixture(autouse=True)
+def allow_owned_conversation(monkeypatch):
+    """Streaming tests focus on SSE behavior after authorization succeeds."""
+
+    async def _allowed(conversation_id, user_id):
+        return True
+
+    monkeypatch.setattr(
+        "app.features.chat.service._conversation_belongs_to_user",
+        _allowed,
+    )
+
+
 async def _collect(app, request):
     frames = []
     async for frame in stream_chat(app, request):
@@ -102,6 +115,25 @@ def real_mode(monkeypatch):
 
     monkeypatch.setattr(suggestions_module, "generate_suggestions", _fake_generate_suggestions)
     return _fake_app()
+
+
+@pytest.mark.asyncio
+async def test_unowned_conversation_is_rejected_before_graph_access(monkeypatch):
+    async def _denied(conversation_id, user_id):
+        return False
+
+    monkeypatch.setattr(
+        "app.features.chat.service._conversation_belongs_to_user",
+        _denied,
+    )
+    events = _parse(await _collect(_fake_app(), _request()))
+
+    assert events == [
+        {
+            "event": "error",
+            "data": {"message": "Conversation not available."},
+        }
+    ]
 
 
 # --- T014: incremental streaming + leaf-only filter --------------------------
