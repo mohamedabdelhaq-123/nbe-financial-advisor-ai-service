@@ -75,7 +75,7 @@ async def _clarify_node(state: ConversationState) -> dict:
 
 
 async def _general_node(state: ConversationState) -> dict:
-    from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+    from langchain_core.messages import AIMessage, SystemMessage
 
     from app.core.config import settings
 
@@ -87,11 +87,20 @@ async def _general_node(state: ConversationState) -> dict:
     else:
         from app.core.llm import get_chat_model
 
+        # Full history, same pattern as analysis.py's _agentic_analysis — a
+        # reflective follow-up about a prior turn (e.g. "why did you choose
+        # that?" after a recommendation reply) needs the actual prior
+        # messages to answer from, not just its own latest line in
+        # isolation. Safe to include past tool-call turns unfiltered: this
+        # exact "plain call sees prior AIMessage/ToolMessage tool-call pairs
+        # in its input, tools unbound for this call" shape is already
+        # exercised by analysis.py's own MAX_TOOL_ITERATIONS fallback path.
+        #
         # streaming=True: this node's output goes straight to the user, and
         # `general` is in service.py's _LEAF_NODES, so its tokens are forwarded
         # as they're produced instead of arriving as one chunk at the end.
         result = await get_chat_model(streaming=True).ainvoke(
-            [SystemMessage(content=GENERAL_NODE_SYSTEM_PROMPT), HumanMessage(content=text)]
+            [SystemMessage(content=GENERAL_NODE_SYSTEM_PROMPT), *state["messages"]]
         )
         reply = result.content if isinstance(result.content, str) else str(result.content)
 

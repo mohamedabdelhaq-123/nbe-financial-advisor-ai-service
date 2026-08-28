@@ -108,6 +108,37 @@ async def test_general_node_sends_a_system_prompt_when_not_mocked(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_general_node_sends_full_history_not_just_the_latest_message(monkeypatch):
+    """Regression: a reflective follow-up ("why did you choose that?") needs
+    the actual prior turns to answer from — general must not narrow the
+    conversation down to a single fresh HumanMessage the way it used to."""
+    monkeypatch.setattr(settings.chat_model, "use_mock", False)
+
+    captured = {}
+
+    class _FakeChatModel:
+        async def ainvoke(self, messages):
+            captured["messages"] = messages
+            return SimpleNamespace(content="a grounded, on-topic reply")
+
+    monkeypatch.setattr("app.core.llm.get_chat_model", lambda **kwargs: _FakeChatModel())
+
+    history = [
+        _HumanLike("which savings account should I get?"),
+        _HumanLike("Here are some products that might suit you: High-Yield Savings Account"),
+        _HumanLike("why did you choose this for me?"),
+    ]
+    state = _state(messages=history)
+    result = await _general_node(state)
+
+    sent = captured["messages"]
+    assert len(sent) == 1 + len(history)
+    assert sent[0].content == GENERAL_NODE_SYSTEM_PROMPT
+    assert [m.content for m in sent[1:]] == [m.content for m in history]
+    assert result["messages"][0].content == "a grounded, on-topic reply"
+
+
+@pytest.mark.asyncio
 async def test_general_node_mock_mode_echoes_without_calling_llm(monkeypatch):
     monkeypatch.setattr(settings.chat_model, "use_mock", True)
 
