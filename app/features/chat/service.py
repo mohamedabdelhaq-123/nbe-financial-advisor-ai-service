@@ -10,7 +10,10 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langgraph.types import Command
 
 from app.core.logging import get_logger
+from app.features.chat.routing import ROUTE_SPECS, ROUTES_BY_NAME
 from app.features.chat.schemas import (
+    AgentSelectedEvent,
+    AgentSelectedPayload,
     ChatTurnRequest,
     DoneEvent,
     DonePayload,
@@ -40,6 +43,13 @@ _LEAF_NODES = frozenset(
         "refused",
     }
 )
+
+# Maps a leaf graph node back to its user-facing route name for the
+# `agent_selected` event. Only the 5 real specialists have an entry —
+# `clarify`/`refused` nodes delegate to no specialist, so looking either up
+# here returns None, which is exactly how those two turns get excluded from
+# `agent_selected` with no separate exclusion list to maintain.
+_ROUTE_NAME_BY_GRAPH_NODE = {spec.graph_node: spec.name for spec in ROUTE_SPECS}
 
 
 async def _conversation_belongs_to_user(conversation_id: str, user_id: uuid.UUID) -> bool:
@@ -125,14 +135,25 @@ def _tool_call_frame(call_id: str, tool: str, status: Literal["started", "comple
     return f"data: {payload.model_dump_json()}\n\n"
 
 
+def _agent_selected_frame(agent: str) -> str:
+    """One `agent_selected` SSE frame — see `AgentSelectedEvent`'s docstring
+    for the two emission points (first leaf-node chunk, or the interrupt
+    fallback) that both funnel through this helper."""
+    payload = AgentSelectedEvent(data=AgentSelectedPayload(agent=agent))
+    return f"data: {payload.model_dump_json()}\n\n"
+
+
 async def stream_chat(app, request: ChatTurnRequest) -> AsyncIterator[str]:
     """Yield the SSE frames for one chat turn over the shared ``{event, data}`` envelope.
 
-    Emits zero or more ``token`` events — one per non-empty content chunk from a
-    leaf agent in ``_LEAF_NODES`` (Maestro classification, summary generation,
-    and answer validation are consumed internally and never forwarded),
-    optionally interleaved with best-effort ``tool_call`` events during the
-    ``analysis`` node's tool-calling loop — then exactly one terminal event:
+    Emits at most one ``agent_selected`` event naming the route Maestro chose
+    (absent for ``clarify``/``refused`` turns, which delegate to no
+    specialist), followed by zero or more ``token`` events — one per
+    non-empty content chunk from a leaf agent in ``_LEAF_NODES`` (Maestro
+    classification, summary generation, and answer validation are consumed
+    internally and never forwarded), optionally interleaved with best-effort
+    ``tool_call`` events during the ``analysis`` node's tool-calling loop —
+    then exactly one terminal event:
 
     * ``done`` — assembled from ``graph.aget_state`` after the stream drains,
       carrying the finalized ``content``, the ``widget`` slot (nullable), the
@@ -243,8 +264,17 @@ async def stream_chat(app, request: ChatTurnRequest) -> AsyncIterator[str]:
     try:
         # FR-001/FR-004: stream incremental token events for leaf-agent output only.
         announced_call_ids: set[str] = set()
+        announced_agent = False
         async for chunk, metadata in graph.astream(run_input, config, stream_mode="messages"):
             if metadata.get("langgraph_node") in _LEAF_NODES:
+                if not announced_agent:
+                    announced_agent = True
+                    try:
+                        agent_name = _ROUTE_NAME_BY_GRAPH_NODE.get(metadata.get("langgraph_node"))
+                        if agent_name:
+                            yield _agent_selected_frame(agent_name)
+                    except Exception:
+                        logger.warning("agent_selected_event_emit_failed", exc_info=True)
                 # stream_mode="messages" replays *every* message a node emits,
                 # not just the model's prose — the analysis agent's tool-calling
                 # loop also appends ToolMessages (raw JSON tool results), and
@@ -292,6 +322,21 @@ async def stream_chat(app, request: ChatTurnRequest) -> AsyncIterator[str]:
             # NEXT turn — reading `messages[-1]` here would echo the user's
             # own input back to them instead of the actual question, since
             # nothing has been appended to message history yet this turn.
+            #
+            # A fresh (non-resumed) planner_ask/investment_plan turn calls
+            # interrupt() before any `return`, which LangGraph intercepts as
+            # a control-flow exception — no chunk is ever emitted for that
+            # invocation, so the primary path above never fires. `intent` is
+            # the same state key graph.py's _route_intent() reads to route
+            # in the first place, and already holds a route *name* (not a
+            # graph node), so it's a reliable substitute here.
+            if not announced_agent:
+                try:
+                    agent_name = values.get("intent")
+                    if agent_name and agent_name in ROUTES_BY_NAME:
+                        yield _agent_selected_frame(agent_name)
+                except Exception:
+                    logger.warning("agent_selected_event_emit_failed", exc_info=True)
             content = snapshot.interrupts[0].value.get("text", "")
             if content:
                 yield f"data: {TokenEvent(data=content).model_dump_json()}\n\n"

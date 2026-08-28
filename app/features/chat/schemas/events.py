@@ -76,6 +76,40 @@ class ToolCallEvent(BaseModel):
     data: ToolCallPayload = Field(description="The tool call lifecycle payload.")
 
 
+class AgentSelectedPayload(BaseModel):
+    """The specialist Maestro routed this turn to — carried by a single-shot
+    `agent_selected` event. Never a raw graph-node/internal identifier — the
+    same route name documented in routing.py's ROUTE_SPECS/route_catalogue()."""
+
+    model_config = ConfigDict(json_schema_extra={"examples": [{"agent": "analysis"}]})
+
+    agent: str = Field(
+        description=(
+            "Route name of the specialist selected for this turn (analysis, "
+            "planning, investment_planning, recommendation, general). Never "
+            "emitted for clarify/refuse turns, which delegate to no specialist."
+        )
+    )
+
+
+class AgentSelectedEvent(BaseModel):
+    """At most one per turn — emitted as soon as evidence of Maestro's
+    routing decision exists (the first leaf-node chunk, or the interrupt
+    fallback for a first-entry planner_ask/investment_plan turn), always
+    before any token/tool_call event for that turn. Absent for clarify/
+    refuse turns."""
+
+    model_config = ConfigDict(
+        json_schema_extra={"examples": [{"event": "agent_selected", "data": {"agent": "analysis"}}]}
+    )
+
+    event: Literal["agent_selected"] = Field(
+        default="agent_selected",
+        description="The event type; always `agent_selected` for a routing-decision signal.",
+    )
+    data: AgentSelectedPayload = Field(description="The selected agent's route name.")
+
+
 class DonePayload(BaseModel):
     """The finalized reply carried by the terminal `done` event."""
 
