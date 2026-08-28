@@ -243,6 +243,13 @@ async def stream_chat(app, request: ChatTurnRequest) -> AsyncIterator[str]:
             # Preserve the previous route for optional NLI-shadow context.
             # Maestro overwrites it with the current structured decision.
             "intent": prev_values.get("intent", ""),
+            # The last capability that actually routed — survives clarify/
+            # refuse turns by construction (see state.py) since only this
+            # explicit carry-forward and maestro_node's own writes ever touch
+            # it. Not required for the value to persist (LangGraph's partial
+            # merge already preserves an omitted key against the checkpoint),
+            # but made explicit here to match every other carried field.
+            "last_active_route": prev_values.get("last_active_route"),
             "routing_outcome": "route",
             "routing_confidence": 0.0,
             "routing_clarification": None,

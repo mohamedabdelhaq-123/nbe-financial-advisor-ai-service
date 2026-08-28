@@ -122,10 +122,18 @@ async def _decide_route(
                     get_maestro_routing_system_prompt,
                 )
 
+                # A stale/unknown value (older checkpoint predating this field,
+                # or a since-removed route) degrades to no signal rather than
+                # a misleading prompt or a template render error.
+                previous_route = state.get("last_active_route")
+                if previous_route not in ROUTES_BY_NAME:
+                    previous_route = None
+
                 system_prompt = get_maestro_routing_system_prompt().render(routes=route_catalogue())
                 human_prompt = get_maestro_routing_human_prompt().render(
                     message=text,
                     history=history or None,
+                    last_active_route=previous_route,
                 )
                 # Routing needs only a tiny JSON object. Bound output and turn
                 # off optional model reasoning so a provider cannot spend a
@@ -169,13 +177,20 @@ async def _decide_route(
 
 
 def _decision_state(decision: MaestroRoutingDecision) -> dict:
-    return {
+    result = {
         "intent": decision.route or "general",
         "in_scope": decision.outcome != "refuse",
         "routing_outcome": decision.outcome,
         "routing_confidence": decision.confidence,
         "routing_clarification": decision.clarification_question,
     }
+    if decision.outcome == "route":
+        # Only set on an actual route — absent from a clarify/refuse turn's
+        # returned dict, so LangGraph's partial-update merge leaves the
+        # checkpointed value from before that turn untouched. See state.py's
+        # last_active_route field comment for why.
+        result["last_active_route"] = decision.route
+    return result
 
 
 async def _planner_context_update(state: ConversationState) -> dict:

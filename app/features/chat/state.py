@@ -16,6 +16,17 @@ class ConversationState(TypedDict):
     user_context: dict | None
     stage: str
     intent: str
+    # The route name of the last capability that actually produced a `route`
+    # outcome — unlike `intent` (overwritten to "clarify"/"refused" by those
+    # outcomes, and read by scope_guard.py as last-turn telemetry), this key
+    # is simply absent from a clarify/refuse turn's state update, so it
+    # survives those turns — and the whole interrupt-resume loop, which never
+    # runs maestro_node at all — unchanged. Lets Maestro's classifier weigh
+    # "is this a follow-up about what that agent just said" against "is this
+    # a fresh request for a different specialist" instead of re-routing any
+    # message that happens to share a keyword with another route's
+    # description. See agents/maestro.py's _decision_state().
+    last_active_route: str | None
     in_scope: bool
     routing_outcome: str
     routing_confidence: float
