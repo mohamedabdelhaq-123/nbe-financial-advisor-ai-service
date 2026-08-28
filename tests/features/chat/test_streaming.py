@@ -11,7 +11,7 @@ import json
 from types import SimpleNamespace
 
 import pytest
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
 
 from app.features.chat.schemas import (
     AllocationSliderWidget,
@@ -556,3 +556,123 @@ async def test_transactions_list_widget_serializes_dates_as_iso(real_mode, monke
     assert row["date"] == "2026-07-14"
     assert row["type"] == "expense"
     assert row["id"] == "b3f1c2d4-5e6f-4a7b-8c9d-0e1f2a3b4c5d"
+
+
+# --- tool_call events: best-effort thinking indicator for the analysis node --
+
+
+@pytest.mark.asyncio
+async def test_tool_call_started_and_completed_emitted_before_final_token(real_mode, monkeypatch):
+    graph = _FakeGraph(
+        chunks=[
+            (
+                AIMessage(
+                    content="",
+                    tool_calls=[{"name": "get_transactions", "args": {}, "id": "call_1"}],
+                ),
+                "analysis",
+            ),
+            (
+                ToolMessage(content='{"count": 3}', tool_call_id="call_1", name="get_transactions"),
+                "analysis",
+            ),
+            ("You spent 100 EGP.", "analysis"),
+        ],
+        state_values={"messages": []},
+    )
+    _install_fake_graph(monkeypatch, graph)
+
+    events = _parse(await _collect(real_mode, _request()))
+    tool_calls = [e for e in events if e["event"] == "tool_call"]
+    tokens = [e for e in events if e["event"] == "token"]
+
+    assert tool_calls == [
+        {
+            "event": "tool_call",
+            "data": {"call_id": "call_1", "tool": "get_transactions", "status": "started"},
+        },
+        {
+            "event": "tool_call",
+            "data": {"call_id": "call_1", "tool": "get_transactions", "status": "completed"},
+        },
+    ]
+    # Thinking events precede the reply, not interleaved after it.
+    assert events.index(tool_calls[-1]) < events.index(tokens[0])
+
+
+@pytest.mark.asyncio
+async def test_tool_call_dedup_when_tool_calls_repeat_across_chunks(real_mode, monkeypatch):
+    """A provider may re-expose the same populated tool_calls entry across more
+    than one streamed chunk of the same turn — only one `started` must reach
+    the client, not one per chunk."""
+    same_call = AIMessage(
+        content="", tool_calls=[{"name": "compute_aggregate", "args": {}, "id": "call_1"}]
+    )
+    graph = _FakeGraph(
+        chunks=[(same_call, "analysis"), (same_call, "analysis")],
+        state_values={"messages": []},
+    )
+    _install_fake_graph(monkeypatch, graph)
+
+    events = _parse(await _collect(real_mode, _request()))
+    started = [e for e in events if e["event"] == "tool_call" and e["data"]["status"] == "started"]
+
+    assert len(started) == 1
+
+
+@pytest.mark.asyncio
+async def test_two_simultaneous_tool_calls_are_matched_by_call_id_not_order(real_mode, monkeypatch):
+    """The analysis loop can hand back more than one tool call in a single
+    AIMessage (`for call in tool_calls:`). Completion must pair with the
+    call_id that actually finished, not "whichever started most recently" —
+    here B's tool result arrives before A's, which a last-started heuristic
+    would get wrong."""
+    graph = _FakeGraph(
+        chunks=[
+            (
+                AIMessage(
+                    content="",
+                    tool_calls=[
+                        {"name": "get_transactions", "args": {}, "id": "call_A"},
+                        {"name": "compute_aggregate", "args": {}, "id": "call_B"},
+                    ],
+                ),
+                "analysis",
+            ),
+            # B's result arrives first, out of call order.
+            (
+                ToolMessage(content="{}", tool_call_id="call_B", name="compute_aggregate"),
+                "analysis",
+            ),
+            (ToolMessage(content="{}", tool_call_id="call_A", name="get_transactions"), "analysis"),
+        ],
+        state_values={"messages": []},
+    )
+    _install_fake_graph(monkeypatch, graph)
+
+    events = _parse(await _collect(real_mode, _request()))
+    completed = [
+        e["data"]
+        for e in events
+        if e["event"] == "tool_call" and e["data"]["status"] == "completed"
+    ]
+
+    assert completed == [
+        {"call_id": "call_B", "tool": "compute_aggregate", "status": "completed"},
+        {"call_id": "call_A", "tool": "get_transactions", "status": "completed"},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_tool_message_without_name_emits_no_event(real_mode, monkeypatch):
+    """Defensive: a ToolMessage that somehow lacks `.name` (e.g. constructed by
+    future code that doesn't set it) is silently skipped rather than emitting
+    a malformed event — this is best-effort/informational, never required."""
+    graph = _FakeGraph(
+        chunks=[(ToolMessage(content="{}", tool_call_id="call_1"), "analysis")],
+        state_values={"messages": []},
+    )
+    _install_fake_graph(monkeypatch, graph)
+
+    events = _parse(await _collect(real_mode, _request()))
+    assert [e for e in events if e["event"] == "tool_call"] == []

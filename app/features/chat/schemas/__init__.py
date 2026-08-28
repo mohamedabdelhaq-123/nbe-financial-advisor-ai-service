@@ -10,6 +10,8 @@ from app.features.chat.schemas.events import (
     ErrorEvent,
     ErrorPayload,
     TokenEvent,
+    ToolCallEvent,
+    ToolCallPayload,
 )
 from app.features.chat.schemas.references import Reference, TargetType
 from app.features.chat.schemas.request import ChatTurnRequest
@@ -57,6 +59,8 @@ __all__ = [
     "SpendingBreakdownWidget",
     "TargetType",
     "TokenEvent",
+    "ToolCallEvent",
+    "ToolCallPayload",
     "TransactionListItem",
     "TransactionsListPayload",
     "TransactionsListWidget",

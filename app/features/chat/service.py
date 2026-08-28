@@ -4,8 +4,9 @@ import asyncio
 import re
 import uuid
 from collections.abc import AsyncIterator
+from typing import Literal
 
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langgraph.types import Command
 
 from app.core.logging import get_logger
@@ -16,6 +17,8 @@ from app.features.chat.schemas import (
     ErrorEvent,
     ErrorPayload,
     TokenEvent,
+    ToolCallEvent,
+    ToolCallPayload,
 )
 
 logger = get_logger(__name__)
@@ -114,13 +117,22 @@ def _strip_tool_call_tags(text: str) -> str:
     return _TOOL_TAG_RE.sub("", text)
 
 
+def _tool_call_frame(call_id: str, tool: str, status: Literal["started", "completed"]) -> str:
+    """One `tool_call` SSE frame — see `ToolCallEvent`'s docstring for what this
+    signals (best-effort, analysis node only) and why a client shouldn't
+    depend on it for correctness."""
+    payload = ToolCallEvent(data=ToolCallPayload(call_id=call_id, tool=tool, status=status))
+    return f"data: {payload.model_dump_json()}\n\n"
+
+
 async def stream_chat(app, request: ChatTurnRequest) -> AsyncIterator[str]:
     """Yield the SSE frames for one chat turn over the shared ``{event, data}`` envelope.
 
     Emits zero or more ``token`` events — one per non-empty content chunk from a
     leaf agent in ``_LEAF_NODES`` (Maestro classification, summary generation,
-    and answer validation are consumed internally and never forwarded) — then
-    exactly one terminal event:
+    and answer validation are consumed internally and never forwarded),
+    optionally interleaved with best-effort ``tool_call`` events during the
+    ``analysis`` node's tool-calling loop — then exactly one terminal event:
 
     * ``done`` — assembled from ``graph.aget_state`` after the stream drains,
       carrying the finalized ``content``, the ``widget`` slot (nullable), the
@@ -230,17 +242,38 @@ async def stream_chat(app, request: ChatTurnRequest) -> AsyncIterator[str]:
 
     try:
         # FR-001/FR-004: stream incremental token events for leaf-agent output only.
+        announced_call_ids: set[str] = set()
         async for chunk, metadata in graph.astream(run_input, config, stream_mode="messages"):
             if metadata.get("langgraph_node") in _LEAF_NODES:
                 # stream_mode="messages" replays *every* message a node emits,
                 # not just the model's prose — the analysis agent's tool-calling
                 # loop also appends ToolMessages (raw JSON tool results), and
                 # planner_ask_node re-appends the user's own HumanMessage to
-                # history when a resumed interrupt() turn completes. Only
-                # AIMessage content is the model's actual reply, so anything
-                # else is skipped rather than streamed to the client.
+                # history when a resumed interrupt() turn completes. AIMessage
+                # content is the model's actual reply; ToolMessage content (raw
+                # JSON) is never streamed as a token. Both message types do
+                # carry tool-call lifecycle info, surfaced below as best-effort
+                # `tool_call` events — each wrapped in its own try/except so a
+                # bug in this newer, less-tested path degrades to "no
+                # indicator for this step" rather than aborting an otherwise-
+                # working reply via the outer except below.
+                if isinstance(chunk, ToolMessage):
+                    try:
+                        if chunk.name:
+                            yield _tool_call_frame(chunk.tool_call_id, chunk.name, "completed")
+                    except Exception:
+                        logger.warning("tool_call_event_emit_failed", exc_info=True)
+                    continue
                 if not isinstance(chunk, AIMessage):
                     continue
+                try:
+                    for call in getattr(chunk, "tool_calls", None) or []:
+                        call_id = call.get("id")
+                        if call_id and call_id not in announced_call_ids:
+                            announced_call_ids.add(call_id)
+                            yield _tool_call_frame(call_id, call["name"], "started")
+                except Exception:
+                    logger.warning("tool_call_event_emit_failed", exc_info=True)
                 content = chunk.content
                 if isinstance(content, str) and content:
                     content = _strip_tool_call_tags(content)

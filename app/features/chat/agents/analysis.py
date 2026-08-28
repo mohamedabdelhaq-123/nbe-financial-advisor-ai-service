@@ -353,6 +353,9 @@ async def _agentic_analysis(state: ConversationState, user_id) -> dict:
                 tool_message = ToolMessage(
                     content=json.dumps(tool_result, default=str),
                     tool_call_id=call["id"],
+                    # service.py reads this to emit a "completed" tool_call SSE event
+                    # without needing its own call_id -> name correlation map.
+                    name=call["name"],
                 )
                 working.append(tool_message)
                 produced.append(tool_message)
