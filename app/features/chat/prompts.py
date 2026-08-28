@@ -42,13 +42,18 @@ def get_maestro_routing_human_prompt() -> Template:
     """Return the untrusted conversation portion of the routing prompt.
 
     Caller renders it: get_maestro_routing_human_prompt().render(
-        message=<str>, history=<str|None>
+        message=<str>, history=<str|None>, last_active_route=<str|None>
     )
     `history` is an optional digest of recent prior turns, used to
     disambiguate an elliptical latest message; omit/None when there's no
-    prior context. Split from the system prompt (RT-013) so the untrusted
-    message/history content is role-separated from the task instructions
-    rather than concatenated into one string.
+    prior context. `last_active_route` names the capability that produced
+    the last `route` outcome (None if none yet, or stale/unrecognized), so
+    the classifier can tell a reflective follow-up about a prior reply from
+    a fresh request for a different capability — see state.py's
+    `last_active_route` field and maestro.py's `_decision_state`. Split from
+    the system prompt (RT-013) so the untrusted message/history content is
+    role-separated from the task instructions rather than concatenated into
+    one string.
     """
     return _maestro_routing_human_prompt
 

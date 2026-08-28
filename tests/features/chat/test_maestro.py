@@ -444,6 +444,7 @@ async def test_completed_investment_plan_accepts_catalogue_selection_change():
     assert result["stage"] == "investment_planning"
     assert result["investment_answers"]["instruments"] == [str(instrument_id)]
     assert result["investment_answers"]["confirmed_amount"] == "1200.00"
+    assert result["last_active_route"] == "investment_planning"
 
 
 @pytest.mark.parametrize(
@@ -465,3 +466,155 @@ def test_savings_projection_questions_route_to_analysis_in_mock_mode(message):
 )
 def test_savings_account_questions_route_to_recommendation_in_mock_mode(message):
     assert classify_intent(message) == "recommendation"
+
+
+# --- last_active_route: visibility into the last capability that routed -----
+
+
+@pytest.mark.asyncio
+async def test_route_decision_sets_last_active_route(monkeypatch):
+    monkeypatch.setattr(settings.chat_model, "use_mock", False)
+    decision = MaestroRoutingDecision(outcome="route", route="analysis", confidence=0.94)
+    install_fake_chat_model(monkeypatch, structured_response=decision)
+
+    result = await maestro_node(
+        {
+            "messages": [HumanMessage(content="how much did I spend on food?")],
+            "stage": "",
+            "questions_asked": 0,
+            "intent": "",
+        }
+    )
+
+    assert result["last_active_route"] == "analysis"
+
+
+@pytest.mark.asyncio
+async def test_clarify_decision_does_not_set_last_active_route(monkeypatch):
+    monkeypatch.setattr(settings.chat_model, "use_mock", False)
+    decision = MaestroRoutingDecision(
+        outcome="clarify",
+        confidence=0.5,
+        clarification_question="Do you want to check spending or build a budget?",
+    )
+    install_fake_chat_model(monkeypatch, structured_response=decision)
+
+    result = await maestro_node(
+        {
+            "messages": [HumanMessage(content="help with money")],
+            "stage": "",
+            "questions_asked": 0,
+            "intent": "",
+        }
+    )
+
+    assert result["routing_outcome"] == "clarify"
+    assert "last_active_route" not in result
+
+
+@pytest.mark.asyncio
+async def test_refuse_decision_does_not_set_last_active_route(monkeypatch):
+    monkeypatch.setattr(settings.chat_model, "use_mock", False)
+    decision = MaestroRoutingDecision(outcome="refuse", confidence=0.98)
+    install_fake_chat_model(monkeypatch, structured_response=decision)
+
+    result = await maestro_node(
+        {
+            "messages": [HumanMessage(content="write me a cooking recipe")],
+            "stage": "",
+            "questions_asked": 0,
+            "intent": "",
+        }
+    )
+
+    assert result["routing_outcome"] == "refuse"
+    assert "last_active_route" not in result
+
+
+@pytest.mark.asyncio
+async def test_mid_planning_continuation_sets_last_active_route(monkeypatch):
+    def _unexpected_model():
+        raise AssertionError("active workflow answers must not be reclassified")
+
+    monkeypatch.setattr("app.core.llm.get_chat_model", _unexpected_model)
+
+    async def _fake_planner_context(state):
+        return {}
+
+    monkeypatch.setattr(
+        "app.features.chat.agents.maestro._planner_context_update",
+        _fake_planner_context,
+    )
+
+    result = await maestro_node(
+        {
+            "messages": [HumanMessage(content="2500 EGP")],
+            "stage": "planning",
+            "questions_asked": 1,
+            "intent": "planning",
+            "planner_context": {"stub": True},
+        }
+    )
+
+    assert result["last_active_route"] == "planning"
+
+
+@pytest.mark.asyncio
+async def test_active_investment_questionnaire_sets_last_active_route(monkeypatch):
+    def _unexpected_model():
+        raise AssertionError("active workflow answers must not be reclassified")
+
+    monkeypatch.setattr("app.core.llm.get_chat_model", _unexpected_model)
+    result = await maestro_node(
+        {
+            "messages": [HumanMessage(content="growth")],
+            "stage": "investment_planning",
+            "questions_asked": 0,
+            "intent": "investment_planning",
+        }
+    )
+
+    assert result["last_active_route"] == "investment_planning"
+
+
+@pytest.mark.asyncio
+async def test_real_maestro_receives_last_active_route_in_the_prompt(monkeypatch):
+    monkeypatch.setattr(settings.chat_model, "use_mock", False)
+    decision = MaestroRoutingDecision(outcome="route", route="general", confidence=0.9)
+    calls = install_fake_chat_model(monkeypatch, structured_response=decision)
+
+    result = await maestro_node(
+        {
+            "messages": [HumanMessage(content="why did you choose those assets for me?")],
+            "stage": "",
+            "questions_asked": 0,
+            "intent": "recommendation",
+            "last_active_route": "recommendation",
+        }
+    )
+
+    assert '"recommendation" capability' in calls[0][1].content
+    assert result["last_active_route"] == "general"
+
+
+@pytest.mark.asyncio
+async def test_real_maestro_ignores_stale_last_active_route(monkeypatch):
+    """A checkpoint from before this field existed, or a since-removed route
+    name, degrades to no signal rather than a misleading prompt or a
+    template render error (StrictUndefined would raise if the key were
+    missing entirely from the render call, not merely None)."""
+    monkeypatch.setattr(settings.chat_model, "use_mock", False)
+    decision = MaestroRoutingDecision(outcome="route", route="general", confidence=0.9)
+    calls = install_fake_chat_model(monkeypatch, structured_response=decision)
+
+    await maestro_node(
+        {
+            "messages": [HumanMessage(content="hello")],
+            "stage": "",
+            "questions_asked": 0,
+            "intent": "",
+            "last_active_route": "deprecated_route",
+        }
+    )
+
+    assert "previous turn" not in calls[0][1].content
