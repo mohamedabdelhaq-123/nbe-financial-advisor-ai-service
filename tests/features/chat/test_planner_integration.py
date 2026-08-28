@@ -263,3 +263,26 @@ async def test_opening_message_stated_goal_skips_savings_goal_question(monkeypat
     snap = await graph.aget_state(config)
     assert snap.interrupts[0].value["question_id"] == "dependents"
     assert snap.values.get("planner_answers", {}).get("savings_goal") == "a bike"
+
+
+@pytest.mark.asyncio
+async def test_last_active_route_survives_the_whole_interrupt_loop_unchanged():
+    """maestro_node never runs on a resumed turn (service.py sends
+    Command(resume=...), which skips straight to the paused node) — so
+    last_active_route, only ever written by maestro_node, must be set once
+    when the questionnaire starts and then stay exactly "planning" through
+    every resumed answer, proving the new field doesn't disturb this
+    existing multi-turn flow."""
+    graph, config = await _fresh_graph_and_config()
+
+    await graph.ainvoke(_initial_state("help me budget"), config)
+    snap = await graph.aget_state(config)
+    assert snap.values.get("last_active_route") == "planning"
+
+    for answer in _VALID_ANSWERS_IN_ORDER:
+        await graph.ainvoke(Command(resume=answer), config)
+        snap = await graph.aget_state(config)
+        assert snap.values.get("last_active_route") == "planning"
+
+    assert not snap.interrupts, "questionnaire should be complete, not paused"
+    assert snap.values.get("stage") == "plan_complete"

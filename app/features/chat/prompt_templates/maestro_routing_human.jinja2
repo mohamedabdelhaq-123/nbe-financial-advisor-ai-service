@@ -1,4 +1,6 @@
-{% if history %}Recent conversation:
+{% if last_active_route %}The previous turn was handled by the "{{ last_active_route }}" capability.
+
+{% endif %}{% if history %}Recent conversation:
 {{ history }}
 
 {% endif %}Latest user message: {{ message -}}

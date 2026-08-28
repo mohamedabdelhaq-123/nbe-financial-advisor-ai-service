@@ -38,6 +38,7 @@ def test_maestro_human_prompt_keeps_latest_message_separate():
     rendered = get_maestro_routing_human_prompt().render(
         message="How much did I spend?",
         history=None,
+        last_active_route=None,
     )
     assert rendered == "Latest user message: How much did I spend?"
 
@@ -46,7 +47,44 @@ def test_maestro_human_prompt_includes_recent_context_for_short_answers():
     rendered = get_maestro_routing_human_prompt().render(
         message="growth",
         history="human: How should I invest?\nai: What is your objective?",
+        last_active_route=None,
     )
     assert "Recent conversation:" in rendered
     assert "What is your objective?" in rendered
     assert rendered.endswith("Latest user message: growth")
+
+
+def test_maestro_human_prompt_includes_last_active_route_when_present():
+    rendered = get_maestro_routing_human_prompt().render(
+        message="why did you choose those?",
+        history=None,
+        last_active_route="recommendation",
+    )
+    assert 'The previous turn was handled by the "recommendation" capability.' in rendered
+    assert rendered.endswith("Latest user message: why did you choose those?")
+
+
+def test_maestro_human_prompt_combines_last_active_route_and_history():
+    rendered = get_maestro_routing_human_prompt().render(
+        message="growth",
+        history="human: How should I invest?\nai: What is your objective?",
+        last_active_route="investment_planning",
+    )
+    assert 'The previous turn was handled by the "investment_planning" capability.' in rendered
+    assert "Recent conversation:" in rendered
+    assert "What is your objective?" in rendered
+    assert rendered.endswith("Latest user message: growth")
+    # Blocks render in order: last_active_route, then history, then the message.
+    route_idx = rendered.index("The previous turn")
+    history_idx = rendered.index("Recent conversation:")
+    message_idx = rendered.index("Latest user message:")
+    assert route_idx < history_idx < message_idx
+
+
+def test_maestro_human_prompt_omits_last_active_route_block_when_absent():
+    rendered = get_maestro_routing_human_prompt().render(
+        message="How much did I spend?",
+        history=None,
+        last_active_route=None,
+    )
+    assert "previous turn" not in rendered
