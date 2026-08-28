@@ -207,10 +207,26 @@ class MarketDataSettings(BaseModel):
         return self
 
 
-class ScopeGuardSettings(BaseModel):
-    """Zero-shot topic/scope guardrail (app/features/chat/scope_guard.py) —
-    gates chat messages to the advisor's own domain before they reach any
-    LLM. Two interchangeable backends for the same mDeBERTa-v3-base-mnli-xnli
+class MaestroRoutingSettings(BaseModel):
+    """Context-aware routing performed by the chat Maestro itself."""
+
+    minimum_confidence: float = Field(default=0.55, ge=0.0, le=1.0)
+    # Empty reuses ChatModelSettings.model_name. Deployments may select a
+    # smaller model that is reliable at strict structured output without
+    # changing the model used to generate advisor replies.
+    model_name: str = ""
+    max_output_tokens: int = Field(default=512, ge=128, le=2048)
+
+
+class NliShadowSettings(BaseModel):
+    """Optional zero-shot topic classifier used only for comparison telemetry.
+
+    This model no longer gates chat messages or chooses a workflow. When
+    enabled, its scope result is compared with Maestro's decision and logged
+    without user text, making it possible to evaluate the old classifier
+    safely before removing it completely.
+
+    Two interchangeable backends use the same mDeBERTa-v3-base-mnli-xnli
     model, switched by `mode`, with no code change either way:
 
     - "hosted": calls the HF Inference API. No local weights, no torch —
@@ -221,10 +237,9 @@ class ScopeGuardSettings(BaseModel):
       group, installed separately from the default deps for exactly this
       reason).
 
-    Defaults to disabled — this guardrail is still being validated, so a
-    deployment that sets none of these env vars gets a working service
-    with the check simply turned off, not a crash (contrast MinerUSettings,
-    which requires a real endpoint the moment mocking is off).
+    Defaults to disabled. Enabling hosted mode sends chat text to the
+    configured Hugging Face endpoint, so production should leave it disabled
+    unless that data path is explicitly approved.
     """
 
     enabled: bool = False
@@ -243,13 +258,13 @@ class ScopeGuardSettings(BaseModel):
     hosted_api_key: SecretStr = SecretStr("")
 
     @model_validator(mode="after")
-    def _require_hosted_key_when_enabled(self) -> "ScopeGuardSettings":
+    def _require_hosted_key_when_enabled(self) -> "NliShadowSettings":
         if self.enabled and self.mode == "hosted" and not self.hosted_api_key.get_secret_value():
             raise ValueError(
-                "AI_SERVICE_SCOPE_GUARD__HOSTED_API_KEY must be set when "
-                "AI_SERVICE_SCOPE_GUARD__MODE is 'hosted' (the default) and the guard is "
-                "enabled. Get a free token from https://huggingface.co/settings/tokens, or "
-                "set AI_SERVICE_SCOPE_GUARD__MODE=local to run the model in-process instead "
+                "AI_SERVICE_NLI_SHADOW__HOSTED_API_KEY must be set when "
+                "AI_SERVICE_NLI_SHADOW__MODE is 'hosted' (the default) and shadow mode is "
+                "enabled. Set AI_SERVICE_NLI_SHADOW__MODE=local to run the model in-process "
+                "instead "
                 "(requires `uv sync --group local-scope-guard`)."
             )
         return self
@@ -325,7 +340,8 @@ class Settings(BaseSettings):
     storage: StorageSettings
     mineru: MinerUSettings = Field(default_factory=MinerUSettings)
     market_data: MarketDataSettings = Field(default_factory=MarketDataSettings)
-    scope_guard: ScopeGuardSettings = Field(default_factory=ScopeGuardSettings)
+    maestro_routing: MaestroRoutingSettings = Field(default_factory=MaestroRoutingSettings)
+    nli_shadow: NliShadowSettings = Field(default_factory=NliShadowSettings)
     langfuse: LangfuseSettings = Field(default_factory=LangfuseSettings)
     logging: LoggingSettings = Field(default_factory=LoggingSettings)
 

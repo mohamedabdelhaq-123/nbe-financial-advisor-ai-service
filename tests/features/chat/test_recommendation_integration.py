@@ -59,3 +59,28 @@ async def test_recommendation_node_returns_products(monkeypatch):
     assert str(widget.payload.products[0].product_id) == _PRODUCT_ID_1
     # References are empty — products are no longer duplicated as references.
     assert result["message_references"] == []
+
+
+@pytest.mark.asyncio
+async def test_recommendation_node_asks_for_detail_when_no_product_is_close(monkeypatch):
+    async def _mock_match(*args, **kwargs):
+        return []
+
+    monkeypatch.setattr("app.features.recommendations.service.match", _mock_match)
+    state = {
+        "messages": [HumanMessage(content="Which product?")],
+        "user_id": uuid.UUID("70b8d118-9b58-45ab-a8ad-4af9ce9105df"),
+        "user_context": None,
+        "intent": "recommendation",
+        "stage": "recommendation",
+        "planner_answers": {},
+        "questions_asked": 0,
+        "message_references": [],
+        "widget": None,
+    }
+
+    result = await recommendation_node(state)
+
+    assert "little more" in result["messages"][0].content
+    assert result["message_references"] == []
+    assert "widget" not in result

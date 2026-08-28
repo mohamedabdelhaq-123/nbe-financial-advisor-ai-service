@@ -48,11 +48,14 @@ def test_chat_response_documents_envelope_and_examples(openapi: dict):
     envelope = sse["schema"]
     assert envelope["type"] == "object"
     assert {"event", "data"} <= set(envelope["properties"])
+    assert {"token", "done", "error", "tool_call", "agent_selected"} <= set(
+        envelope["properties"]["event"]["enum"]
+    )
 
-    # All three event frames appear as examples.
+    # All five event frames appear as examples.
     examples = sse["examples"]
-    assert {"token", "done", "error"} <= set(examples)
-    for name in ("token", "done", "error"):
+    assert {"token", "done", "error", "tool_call", "agent_selected"} <= set(examples)
+    for name in ("token", "done", "error", "tool_call", "agent_selected"):
         frame = examples[name]["value"]
         assert frame.startswith("data: ")
         assert '"event"' in frame

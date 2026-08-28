@@ -25,6 +25,11 @@ _DONE_FRAME = (
     "}}\n\n"
 )
 _ERROR_FRAME = 'data: {"event":"error","data":{"message":"Chat not available."}}\n\n'
+_TOOL_CALL_FRAME = (
+    'data: {"event":"tool_call","data":{'
+    '"call_id":"call_abc123","tool":"get_transactions","status":"started"}}\n\n'
+)
+_AGENT_SELECTED_FRAME = 'data: {"event":"agent_selected","data":{"agent":"analysis"}}\n\n'
 
 
 @router.post(
@@ -41,7 +46,16 @@ _ERROR_FRAME = 'data: {"event":"error","data":{"message":"Chat not available."}}
                 "transactions_list / savings_slider / null), `references` (possibly "
                 "empty), and up to 4 `suggestions` (best-effort; MAY be empty). The "
                 "`done` payload carries no message `id` — Django assigns it "
-                "after persistence (FR-003). On a production failure exactly one `error` "
+                "after persistence (FR-003). Zero or more best-effort `tool_call` events "
+                "(`call_id`, `tool`, `status`: started/completed) may interleave with "
+                "`token` events — currently only during the `analysis` node's "
+                "tool-calling loop; absence is normal for turns that don't call a tool, "
+                "and a client must not depend on this for correctness. At most one "
+                "`agent_selected` event (`agent`: the route name Maestro chose — "
+                "analysis/planning/investment_planning/recommendation/general) is "
+                "emitted before any `token`/`tool_call` for the turn; absent for "
+                "clarify/refuse turns, which delegate to no specialist. On a production "
+                "failure exactly one `error` "
                 "event is emitted and the stream closes (no `done` follows; FR-010). Not "
                 "exercisable via 'Try it out' — use a streaming-aware HTTP client. Wire "
                 "contract: specs/009-chat-streaming-contract/contracts/chat-stream.md."
@@ -60,7 +74,13 @@ _ERROR_FRAME = 'data: {"event":"error","data":{"message":"Chat not available."}}
                         "properties": {
                             "event": {
                                 "type": "string",
-                                "enum": ["token", "done", "error"],
+                                "enum": [
+                                    "token",
+                                    "done",
+                                    "error",
+                                    "tool_call",
+                                    "agent_selected",
+                                ],
                                 "description": "The event type.",
                             },
                             "data": {
@@ -68,7 +88,9 @@ _ERROR_FRAME = 'data: {"event":"error","data":{"message":"Chat not available."}}
                                     "For `token`: a string reply fragment. For `done`: a "
                                     "`DonePayload` (content, widget, references, "
                                     "suggestions; no id). For `error`: an `ErrorPayload` "
-                                    "(message)."
+                                    "(message). For `tool_call`: a `ToolCallPayload` "
+                                    "(call_id, tool, status). For `agent_selected`: an "
+                                    "`AgentSelectedPayload` (agent)."
                                 ),
                             },
                         },
@@ -90,6 +112,20 @@ _ERROR_FRAME = 'data: {"event":"error","data":{"message":"Chat not available."}}
                             "summary": "error event — production failure; no done follows (FR-010)",
                             "value": _ERROR_FRAME,
                         },
+                        "tool_call": {
+                            "summary": (
+                                "tool_call event — best-effort tool lifecycle signal, "
+                                "analysis node only"
+                            ),
+                            "value": _TOOL_CALL_FRAME,
+                        },
+                        "agent_selected": {
+                            "summary": (
+                                "agent_selected event — the route Maestro chose for "
+                                "this turn; at most one, before any token/tool_call"
+                            ),
+                            "value": _AGENT_SELECTED_FRAME,
+                        },
                     },
                 }
             },
@@ -101,12 +137,14 @@ async def chat(body: ChatTurnRequest, request: Request):
     """Send one conversation turn to the Maestro orchestrator and stream its reply.
 
     The response is a Server-Sent Events stream over the shared ``{"event","data"}``
-    envelope: incremental ``token`` events (leaf-agent reply only — Maestro
-    classification and summary generation are never forwarded), then exactly one
-    terminal ``done`` carrying the finalized ``content``, a ``widget`` slot,
-    ``references``, and ``suggestions`` (no message ``id``; Django assigns it after
-    persistence) — or one ``error`` on failure. See
-    ``specs/009-chat-streaming-contract/contracts/chat-stream.md``.
+    envelope: at most one ``agent_selected`` event naming the route Maestro chose,
+    then incremental ``token`` events (leaf-agent reply only — Maestro
+    classification and summary generation are never forwarded), optionally
+    interleaved with best-effort ``tool_call`` events during the ``analysis``
+    node's tool-calling loop, then exactly one terminal ``done`` carrying the
+    finalized ``content``, a ``widget`` slot, ``references``, and ``suggestions``
+    (no message ``id``; Django assigns it after persistence) — or one ``error``
+    on failure. See ``specs/009-chat-streaming-contract/contracts/chat-stream.md``.
     """
     from fastapi.responses import StreamingResponse
 

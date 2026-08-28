@@ -11,7 +11,7 @@ import json
 from types import SimpleNamespace
 
 import pytest
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
 
 from app.features.chat.schemas import (
     AllocationSliderWidget,
@@ -556,3 +556,279 @@ async def test_transactions_list_widget_serializes_dates_as_iso(real_mode, monke
     assert row["date"] == "2026-07-14"
     assert row["type"] == "expense"
     assert row["id"] == "b3f1c2d4-5e6f-4a7b-8c9d-0e1f2a3b4c5d"
+
+
+# --- tool_call events: best-effort thinking indicator for the analysis node --
+
+
+@pytest.mark.asyncio
+async def test_tool_call_started_and_completed_emitted_before_final_token(real_mode, monkeypatch):
+    graph = _FakeGraph(
+        chunks=[
+            (
+                AIMessage(
+                    content="",
+                    tool_calls=[{"name": "get_transactions", "args": {}, "id": "call_1"}],
+                ),
+                "analysis",
+            ),
+            (
+                ToolMessage(content='{"count": 3}', tool_call_id="call_1", name="get_transactions"),
+                "analysis",
+            ),
+            ("You spent 100 EGP.", "analysis"),
+        ],
+        state_values={"messages": []},
+    )
+    _install_fake_graph(monkeypatch, graph)
+
+    events = _parse(await _collect(real_mode, _request()))
+    tool_calls = [e for e in events if e["event"] == "tool_call"]
+    tokens = [e for e in events if e["event"] == "token"]
+
+    assert tool_calls == [
+        {
+            "event": "tool_call",
+            "data": {"call_id": "call_1", "tool": "get_transactions", "status": "started"},
+        },
+        {
+            "event": "tool_call",
+            "data": {"call_id": "call_1", "tool": "get_transactions", "status": "completed"},
+        },
+    ]
+    # Thinking events precede the reply, not interleaved after it.
+    assert events.index(tool_calls[-1]) < events.index(tokens[0])
+
+
+@pytest.mark.asyncio
+async def test_tool_call_dedup_when_tool_calls_repeat_across_chunks(real_mode, monkeypatch):
+    """A provider may re-expose the same populated tool_calls entry across more
+    than one streamed chunk of the same turn — only one `started` must reach
+    the client, not one per chunk."""
+    same_call = AIMessage(
+        content="", tool_calls=[{"name": "compute_aggregate", "args": {}, "id": "call_1"}]
+    )
+    graph = _FakeGraph(
+        chunks=[(same_call, "analysis"), (same_call, "analysis")],
+        state_values={"messages": []},
+    )
+    _install_fake_graph(monkeypatch, graph)
+
+    events = _parse(await _collect(real_mode, _request()))
+    started = [e for e in events if e["event"] == "tool_call" and e["data"]["status"] == "started"]
+
+    assert len(started) == 1
+
+
+@pytest.mark.asyncio
+async def test_two_simultaneous_tool_calls_are_matched_by_call_id_not_order(real_mode, monkeypatch):
+    """The analysis loop can hand back more than one tool call in a single
+    AIMessage (`for call in tool_calls:`). Completion must pair with the
+    call_id that actually finished, not "whichever started most recently" —
+    here B's tool result arrives before A's, which a last-started heuristic
+    would get wrong."""
+    graph = _FakeGraph(
+        chunks=[
+            (
+                AIMessage(
+                    content="",
+                    tool_calls=[
+                        {"name": "get_transactions", "args": {}, "id": "call_A"},
+                        {"name": "compute_aggregate", "args": {}, "id": "call_B"},
+                    ],
+                ),
+                "analysis",
+            ),
+            # B's result arrives first, out of call order.
+            (
+                ToolMessage(content="{}", tool_call_id="call_B", name="compute_aggregate"),
+                "analysis",
+            ),
+            (ToolMessage(content="{}", tool_call_id="call_A", name="get_transactions"), "analysis"),
+        ],
+        state_values={"messages": []},
+    )
+    _install_fake_graph(monkeypatch, graph)
+
+    events = _parse(await _collect(real_mode, _request()))
+    completed = [
+        e["data"]
+        for e in events
+        if e["event"] == "tool_call" and e["data"]["status"] == "completed"
+    ]
+
+    assert completed == [
+        {"call_id": "call_B", "tool": "compute_aggregate", "status": "completed"},
+        {"call_id": "call_A", "tool": "get_transactions", "status": "completed"},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_tool_message_without_name_emits_no_event(real_mode, monkeypatch):
+    """Defensive: a ToolMessage that somehow lacks `.name` (e.g. constructed by
+    future code that doesn't set it) is silently skipped rather than emitting
+    a malformed event — this is best-effort/informational, never required."""
+    graph = _FakeGraph(
+        chunks=[(ToolMessage(content="{}", tool_call_id="call_1"), "analysis")],
+        state_values={"messages": []},
+    )
+    _install_fake_graph(monkeypatch, graph)
+
+    events = _parse(await _collect(real_mode, _request()))
+    assert [e for e in events if e["event"] == "tool_call"] == []
+
+
+# --- agent_selected events: which specialist Maestro chose -------------------
+
+
+def test_route_name_by_graph_node_excludes_clarify_and_refused():
+    """Direct contract test: exactly the 5 real specialists are mapped, so
+    `clarify`/`refused` — which delegate to no specialist — resolve to None
+    with no separate exclusion list to maintain."""
+    from app.features.chat.service import _ROUTE_NAME_BY_GRAPH_NODE
+
+    assert len(_ROUTE_NAME_BY_GRAPH_NODE) == 5
+    assert "clarify" not in _ROUTE_NAME_BY_GRAPH_NODE
+    assert "refused" not in _ROUTE_NAME_BY_GRAPH_NODE
+    assert _ROUTE_NAME_BY_GRAPH_NODE["analysis"] == "analysis"
+    assert _ROUTE_NAME_BY_GRAPH_NODE["planner_ask"] == "planning"
+    assert _ROUTE_NAME_BY_GRAPH_NODE["investment_plan"] == "investment_planning"
+    assert _ROUTE_NAME_BY_GRAPH_NODE["recommendation"] == "recommendation"
+    assert _ROUTE_NAME_BY_GRAPH_NODE["general"] == "general"
+
+
+@pytest.mark.asyncio
+async def test_agent_selected_precedes_first_token(real_mode, monkeypatch):
+    graph = _FakeGraph(
+        chunks=[("You ", "analysis"), ("spent 100 EGP.", "analysis")],
+        state_values={"messages": []},
+    )
+    _install_fake_graph(monkeypatch, graph)
+
+    events = _parse(await _collect(real_mode, _request()))
+    agent_selected = [e for e in events if e["event"] == "agent_selected"]
+    tokens = [e for e in events if e["event"] == "token"]
+
+    assert agent_selected == [{"event": "agent_selected", "data": {"agent": "analysis"}}]
+    assert events.index(agent_selected[0]) < events.index(tokens[0])
+
+
+@pytest.mark.asyncio
+async def test_agent_selected_precedes_first_tool_call(real_mode, monkeypatch):
+    graph = _FakeGraph(
+        chunks=[
+            (
+                AIMessage(
+                    content="",
+                    tool_calls=[{"name": "get_transactions", "args": {}, "id": "call_1"}],
+                ),
+                "analysis",
+            ),
+            ("done", "analysis"),
+        ],
+        state_values={"messages": []},
+    )
+    _install_fake_graph(monkeypatch, graph)
+
+    events = _parse(await _collect(real_mode, _request()))
+    agent_selected = [e for e in events if e["event"] == "agent_selected"]
+    tool_calls = [e for e in events if e["event"] == "tool_call"]
+
+    assert agent_selected == [{"event": "agent_selected", "data": {"agent": "analysis"}}]
+    assert events.index(agent_selected[0]) < events.index(tool_calls[0])
+
+
+@pytest.mark.asyncio
+async def test_agent_selected_not_duplicated_across_multiple_chunks(real_mode, monkeypatch):
+    graph = _FakeGraph(
+        chunks=[("part1 ", "general"), ("part2 ", "general"), ("part3", "general")],
+        state_values={"messages": []},
+    )
+    _install_fake_graph(monkeypatch, graph)
+
+    events = _parse(await _collect(real_mode, _request()))
+    agent_selected = [e for e in events if e["event"] == "agent_selected"]
+
+    assert len(agent_selected) == 1
+
+
+@pytest.mark.asyncio
+async def test_agent_selected_via_interrupt_fallback_on_fresh_planning_turn(real_mode, monkeypatch):
+    """Regression for the LangGraph interrupt() gap: a fresh (non-resumed)
+    planner_ask turn calls interrupt() before any `return`, which LangGraph
+    intercepts as a control-flow exception — zero message chunks are ever
+    emitted for that invocation, so the primary detection path never fires.
+    `intent` (the same state key graph.py's _route_intent() reads to route)
+    must still yield the agent_selected event, via the fallback, before the
+    interrupt's own question text is emitted as a token."""
+    graph = _FakeGraph(
+        chunks=[],  # planner_ask_node produces no message chunks while paused
+        state_values={"messages": [], "intent": "planning"},
+        interrupts=(
+            SimpleNamespace(
+                value={"question_id": "income_stability", "text": "Is your income stable?"}
+            ),
+        ),
+    )
+    _install_fake_graph(monkeypatch, graph)
+
+    events = _parse(await _collect(real_mode, _request(message="help me plan a budget")))
+    agent_selected = [e for e in events if e["event"] == "agent_selected"]
+    tokens = [e for e in events if e["event"] == "token"]
+
+    assert agent_selected == [{"event": "agent_selected", "data": {"agent": "planning"}}]
+    assert events.index(agent_selected[0]) < events.index(tokens[0])
+
+
+@pytest.mark.asyncio
+async def test_agent_selected_fallback_skipped_when_primary_path_already_fired(
+    real_mode, monkeypatch
+):
+    """A resumed Command(resume=...) turn does produce chunks before pausing
+    again on the next question — the primary path fires once; the fallback
+    must not fire a second time for the same turn."""
+    graph = _FakeGraph(
+        chunks=[(HumanMessage(content="consistent"), "planner_ask")],
+        state_values={"messages": [], "intent": "planning"},
+        interrupts=(
+            SimpleNamespace(
+                value={"question_id": "next_question", "text": "How much do you save monthly?"}
+            ),
+        ),
+    )
+    _install_fake_graph(monkeypatch, graph)
+
+    events = _parse(await _collect(real_mode, _request(message="consistent")))
+    agent_selected = [e for e in events if e["event"] == "agent_selected"]
+
+    assert len(agent_selected) == 1
+
+
+@pytest.mark.asyncio
+async def test_agent_selected_absent_for_unroutable_fallback_intent(real_mode, monkeypatch):
+    """Guards the fallback path: clarify/refuse turns leave `intent` unset (or
+    stale/invalid), which must never resolve to a bogus agent_selected event."""
+    graph = _FakeGraph(
+        chunks=[],
+        state_values={"messages": [], "intent": ""},
+        interrupts=(SimpleNamespace(value={"question_id": "q", "text": "Could you clarify?"}),),
+    )
+    _install_fake_graph(monkeypatch, graph)
+
+    events = _parse(await _collect(real_mode, _request()))
+    assert [e for e in events if e["event"] == "agent_selected"] == []
+
+
+@pytest.mark.asyncio
+async def test_agent_selected_absent_for_clarify_and_refused_leaf_nodes(real_mode, monkeypatch):
+    """clarify/refused delegate to no specialist — even though both are leaf
+    nodes whose chunks are streamed as tokens, no agent_selected fires."""
+    for node in ("clarify", "refused"):
+        graph = _FakeGraph(
+            chunks=[("Could you clarify what you mean?", node)],
+            state_values={"messages": []},
+        )
+        _install_fake_graph(monkeypatch, graph)
+
+        events = _parse(await _collect(real_mode, _request()))
+        assert [e for e in events if e["event"] == "agent_selected"] == [], node

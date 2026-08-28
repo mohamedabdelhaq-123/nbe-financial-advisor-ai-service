@@ -5,11 +5,15 @@ Re-exports the request DTO and the stream-contract models so existing
 """
 
 from app.features.chat.schemas.events import (
+    AgentSelectedEvent,
+    AgentSelectedPayload,
     DoneEvent,
     DonePayload,
     ErrorEvent,
     ErrorPayload,
     TokenEvent,
+    ToolCallEvent,
+    ToolCallPayload,
 )
 from app.features.chat.schemas.references import Reference, TargetType
 from app.features.chat.schemas.request import ChatTurnRequest
@@ -35,6 +39,8 @@ from app.features.chat.schemas.widgets import (
 )
 
 __all__ = [
+    "AgentSelectedEvent",
+    "AgentSelectedPayload",
     "Allocation",
     "AllocationSliderPayload",
     "AllocationSliderWidget",
@@ -57,6 +63,8 @@ __all__ = [
     "SpendingBreakdownWidget",
     "TargetType",
     "TokenEvent",
+    "ToolCallEvent",
+    "ToolCallPayload",
     "TransactionListItem",
     "TransactionsListPayload",
     "TransactionsListWidget",

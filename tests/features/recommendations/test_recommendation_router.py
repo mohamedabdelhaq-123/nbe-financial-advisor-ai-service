@@ -28,6 +28,10 @@ def test_recommendation_match_200_with_token(client, auth_headers, monkeypatch):
         yield mock_session
 
     monkeypatch.setattr("app.features.recommendations.router.get_own_session", _mock_session_gen)
+    monkeypatch.setattr(
+        "app.features.recommendations.service.sync_problem_statements",
+        AsyncMock(),
+    )
 
     resp = client.post(
         "/internal/recommendations/match",

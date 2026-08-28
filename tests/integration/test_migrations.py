@@ -57,7 +57,7 @@ def test_alembic_upgrade_head_against_real_postgres():
                 FROM information_schema.columns
                 WHERE table_name IN
                     ('ai_audit_log', 'ai_problem_statements', 'ai_recommendation_logs')
-                AND column_name IN ('user_id', 'product_id')
+                AND column_name IN ('user_id', 'product_id', 'source_statement_id')
                 """).fetchall()
 
         # SC-001: every own-DB identifier column the service owns is a native UUID
@@ -66,6 +66,7 @@ def test_alembic_upgrade_head_against_real_postgres():
         assert by_table_column == {
             ("ai_audit_log", "user_id"): "uuid",
             ("ai_problem_statements", "product_id"): "uuid",
+            ("ai_problem_statements", "source_statement_id"): "uuid",
             ("ai_recommendation_logs", "user_id"): "uuid",
             ("ai_recommendation_logs", "product_id"): "uuid",
         }

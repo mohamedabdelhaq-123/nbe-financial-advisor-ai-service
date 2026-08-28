@@ -17,6 +17,9 @@ class ConversationState(TypedDict):
     stage: str
     intent: str
     in_scope: bool
+    routing_outcome: str
+    routing_confidence: float
+    routing_clarification: str | None
     planner_answers: dict
     questions_asked: int
     last_question_id: str | None

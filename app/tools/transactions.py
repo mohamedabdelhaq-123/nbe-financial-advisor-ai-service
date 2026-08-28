@@ -1,6 +1,6 @@
 """Read-only transaction lookup and aggregation tools for the analysis agent.
 
-Both tools are built per-request via `make_transaction_tools(user_id)`, which
+All three tools are built per-request via `make_transaction_tools(user_id)`, which
 closes over the authenticated user_id from `ConversationState` rather than
 exposing it as a tool argument — the LLM chooses filters (category, date
 range, ...), never whose data it reads, so a hallucinated or adversarial
@@ -25,6 +25,15 @@ transfer. The `flow` argument below mirrors that exact mapping so the tool
 answers "how much did I spend" the same way the rest of the product does.
 `transaction_type` remains available for precise single-type filters (e.g.
 "how much did I pay in fees").
+
+`find_similar_transactions` is a third, semantic tool for the case the other
+two can't handle: a vague description with no clean filter ("that coffee
+place last week", "my streaming subscriptions"). It ranks by cosine
+similarity against `Transaction.embedding` — populated from
+`f"{merchant}, {category}, {amount} {currency}, {date}"` by
+`app.features.transactions.service.embed_transactions` — rather than
+filtering on structured columns. Rows with no embedding yet are excluded, not
+treated as non-matches, since the two are different states.
 """
 
 from __future__ import annotations
@@ -39,7 +48,7 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 
-from app.backend_db.models import Category, Transaction
+from app.backend_db.models import TRANSACTION_EMBEDDING_DIM, Category, Transaction
 from app.core.logging import get_logger
 
 logger = get_logger(__name__)
@@ -92,6 +101,10 @@ class TransactionRow(BaseModel):
     transaction_type: str
     merchant: str
     category: str
+
+
+class SimilarTransactionRow(TransactionRow):
+    similarity: float
 
 
 def _parse_date(raw: str | None, field: str) -> datetime.date | None:
@@ -327,4 +340,73 @@ def make_transaction_tools(user_id: uuid.UUID) -> list[BaseTool]:
 
         return {"groups": groups}
 
-    return [get_transactions, compute_aggregate]
+    @tool
+    async def find_similar_transactions(query: str, top_k: int = 5) -> dict:
+        """Find the user's transactions that best match a vague, free-text
+        description — not a structured filter.
+
+        Use this only when the request has no clean category/merchant/date
+        filter for get_transactions, e.g. "that coffee place last week" or
+        "my streaming subscriptions". For anything with a clear filter (a
+        category name, an exact date range, income vs expense), prefer
+        get_transactions instead — it is exact; this is a best-effort ranking.
+
+        Args:
+            query: the vague description to match against, in the user's own words.
+            top_k: max rows to return, ranked by similarity. Capped at 20.
+        """
+        query = query.strip()
+        if not query:
+            return {"error": "query must not be empty."}
+        capped_top_k = max(1, min(top_k, 20))
+
+        try:
+            from app.features.embed.service import embed_texts
+
+            vectors = await embed_texts([query], dimensions=TRANSACTION_EMBEDDING_DIM)
+        except Exception:
+            logger.exception("find_similar_transactions_embed_failed", user_id=str(user_id))
+            return {"error": "Could not process that description."}
+
+        query_vec = vectors[0] if vectors else []
+        if not query_vec:
+            return {"error": "Could not process that description."}
+
+        similarity = 1 - Transaction.embedding.cosine_distance(query_vec)
+        stmt = (
+            select(Transaction, similarity.label("score"))
+            .where(Transaction.user_id == user_id)
+            .where(Transaction.embedding.isnot(None))
+            .options(selectinload(Transaction.category))
+            .order_by(similarity.desc())
+            .limit(capped_top_k)
+        )
+
+        try:
+            from app.backend_db import get_backend_session
+
+            async for session in get_backend_session():
+                result = await session.execute(stmt)
+                rows = result.all()
+        except Exception:
+            logger.exception("find_similar_transactions_tool_failed", user_id=str(user_id))
+            return {"error": "Backend is unavailable."}
+
+        return {
+            "count": len(rows),
+            "transactions": [
+                SimilarTransactionRow(
+                    id=str(txn.id),
+                    date=txn.transaction_date,
+                    amount=float(txn.amount),
+                    currency=txn.currency,
+                    transaction_type=txn.transaction_type or "debit",
+                    merchant=txn.merchant_raw or "unknown",
+                    category=txn.category.name if txn.category else "uncategorized",
+                    similarity=float(score),
+                ).model_dump(mode="json")
+                for txn, score in rows
+            ],
+        }
+
+    return [get_transactions, compute_aggregate, find_similar_transactions]

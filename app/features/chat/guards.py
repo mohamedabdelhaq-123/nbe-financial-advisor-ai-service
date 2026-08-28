@@ -1,12 +1,8 @@
 """Shared guards for agent replies — disclaimer and PII safety."""
 
-# _general_node's (graph.py) instruction-hierarchy guard — the fallback for
-# anything the scope guard (scope_guard.py) let through but maestro couldn't
-# route to a specific agent. Complements, doesn't replace, the scope guard:
-# that one is a separate model with no instruction-following behavior to
-# talk out of its answer; this is the chat LLM's own defense once it's the
-# one generating the reply. Two different failure modes, two different
-# mechanisms — see the design discussion in scope_guard.py's docstring.
+# _general_node's instruction-hierarchy guard. Maestro decides scope before
+# routing here; this prompt is defense in depth for a misroute and controls
+# the model that writes the user-facing general reply.
 GENERAL_NODE_SYSTEM_PROMPT = (
     "You are the NBE Financial Advisor assistant — you help users understand "
     "their spending, plan budgets, compare curated investments, and choose financial products.\n\n"

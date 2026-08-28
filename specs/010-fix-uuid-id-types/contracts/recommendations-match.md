@@ -43,7 +43,7 @@ The standalone recommendation match endpoint takes a natural-language query and 
 | `matches` | `list[ProductMatch]` | Ranked by descending similarity. Possibly empty. |
 | `matches[].product_id` | `UUID4` | Backend `Products.id`. The same UUID the backend uses to identify the product. |
 | `matches[].product_name` | `str` | Real product title, fetched from the backend `Products` table (read-only). Replaces the prior fabricated `"Product {id}"` placeholder. |
-| `matches[].similarity` | `float` | Cosine similarity score in `[0.0, 1.0]`. Matches below the service's `SIMILARITY_THRESHOLD = 0.5` are filtered out before the response is built. |
+| `matches[].similarity` | `float` | Cosine similarity score in `[0.0, 1.0]`. Matches below the service's `SIMILARITY_THRESHOLD = 0.25` are filtered out before the response is built. |
 
 **Breaking change vs. prior behavior**: `product_id` was previously `int`. Callers that parsed it as an integer must now parse it as a UUID string.
 

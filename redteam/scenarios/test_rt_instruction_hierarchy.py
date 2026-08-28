@@ -114,13 +114,13 @@ async def test_general_node_keeps_system_prompt_role_separated_under_attack(
 
 @pytest.mark.redteam(id="RT-013", category="instruction_hierarchy", severity="medium")
 @pytest.mark.asyncio
-async def test_maestro_classification_prompt_is_role_separated(monkeypatch, llm_exchange):
-    """RT-013 — Maestro's intent classifier used to concatenate the user's
+async def test_maestro_routing_prompt_is_role_separated(monkeypatch, llm_exchange):
+    """RT-013 — Maestro's router used to concatenate the user's
     message directly into a plain string prompt (`app/features/chat/agents/
     maestro.py::maestro_node`), the same pattern SEC-008 flagged for the
     analysis/planner agents, applied here to the routing step instead of a
     data-grounded reply. Fixed: `maestro_node`'s real path now renders
-    `intent_classification_system.jinja2`/`intent_classification_human.jinja2`
+    `maestro_routing_system.jinja2`/`maestro_routing_human.jinja2`
     separately and calls `ainvoke([SystemMessage(...), HumanMessage(...)])`.
 
     Preconditions: none.
@@ -134,8 +134,15 @@ async def test_maestro_classification_prompt_is_role_separated(monkeypatch, llm_
     not high/critical, for that reason.
     """
     force_real_llm_path(monkeypatch)
-    mock_completion = "analysis"
-    calls = install_fake_chat_model(monkeypatch, content=mock_completion)
+    from app.features.chat.routing import MaestroRoutingDecision
+
+    mock_completion = "structured analysis route"
+    calls = install_fake_chat_model(
+        monkeypatch,
+        structured_response=MaestroRoutingDecision(
+            outcome="route", route="analysis", confidence=0.99
+        ),
+    )
 
     from app.features.chat.agents.maestro import maestro_node
 

@@ -89,10 +89,10 @@ docker exec -w /app <ai-service-container-name> uv run pytest redteam -q
 ```
 
 This is safe to run against that container even though its `.env` carries
-*real* provider credentials (a real Hugging Face key for the scope guard,
+*real* provider credentials (a real Hugging Face key for NLI shadow mode,
 `AI_SERVICE_CHAT_MODEL__USE_MOCK=0`, etc.) — `redteam/conftest.py` force-sets
 the handful of env vars that control external calls (mock mode, MinerU mock
-mode, scope guard, Langfuse) with plain assignment specifically because
+mode, NLI shadow mode, Langfuse) with plain assignment specifically because
 `os.environ.setdefault(...)` would otherwise lose to those already-exported
 real values. The suite makes zero network calls to any real provider
 regardless of what the container's ambient `.env` configures.

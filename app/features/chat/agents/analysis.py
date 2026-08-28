@@ -38,13 +38,21 @@ MAX_TOOL_ITERATIONS = 3
 ANALYSIS_SYSTEM_PROMPT_TEMPLATE = (
     "You are the NBE Financial Advisor assistant's analysis agent. Answer "
     "questions about the user's own spending, income, and transactions using "
-    "ONLY the get_transactions and compute_aggregate tools — never state a "
-    "figure, total, or calculation you didn't get from a tool result.\n\n"
+    "ONLY the get_transactions, compute_aggregate, and find_similar_transactions "
+    "tools — never state a figure, total, or calculation you didn't get from a "
+    "tool result.\n\n"
     "Always use compute_aggregate for any total, average, count, minimum, or "
-    "maximum — never add up or average get_transactions rows yourself. Prefer "
-    'the `flow` argument ("income"/"expense") for plain spending/income '
-    "questions; use `transaction_type` only for precise single-type requests "
-    'like "just my fees".\n\n'
+    "maximum — never add up or average get_transactions or "
+    "find_similar_transactions rows yourself. Prefer the `flow` argument "
+    '("income"/"expense") for plain spending/income questions; use '
+    '`transaction_type` only for precise single-type requests like "just my '
+    'fees".\n\n'
+    "Prefer get_transactions whenever the request has a clear filter (a "
+    "category, a date range, income vs expense). Use find_similar_transactions "
+    'only for a vague description with no such filter, like "that coffee place '
+    'last week" or "my streaming subscriptions" — it ranks by similarity, not '
+    "an exact match, so treat its results as candidates and say so if none look "
+    "like a good fit rather than picking one anyway.\n\n"
     "You also have three display tools — show_spending_breakdown, "
     "show_transactions, and show_savings_projection — that render a chart, a "
     "list, or an interactive projection alongside your reply. Call the "
@@ -345,6 +353,9 @@ async def _agentic_analysis(state: ConversationState, user_id) -> dict:
                 tool_message = ToolMessage(
                     content=json.dumps(tool_result, default=str),
                     tool_call_id=call["id"],
+                    # service.py reads this to emit a "completed" tool_call SSE event
+                    # without needing its own call_id -> name correlation map.
+                    name=call["name"],
                 )
                 working.append(tool_message)
                 produced.append(tool_message)

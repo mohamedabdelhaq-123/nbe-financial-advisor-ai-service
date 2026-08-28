@@ -26,6 +26,90 @@ class TokenEvent(BaseModel):
     data: str = Field(description="A small fragment of the assistant's reply text.")
 
 
+class ToolCallPayload(BaseModel):
+    """One tool call's lifecycle signal, carried by a `tool_call` event."""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {"call_id": "call_abc123", "tool": "get_transactions", "status": "started"}
+            ]
+        }
+    )
+
+    call_id: str = Field(description="Correlates a `started` signal with its matching `completed`.")
+    tool: str = Field(
+        description=(
+            "Internal tool identifier (e.g. `get_transactions`). Never shown raw to the "
+            "user — a client maps it to a friendly label."
+        )
+    )
+    status: Literal["started", "completed"] = Field(
+        description="Whether the tool call was just made, or has just returned."
+    )
+
+
+class ToolCallEvent(BaseModel):
+    """Zero or more of these may interleave with `token` events, currently only during the
+    `analysis` node's tool-calling loop. Best-effort/informational: absence is normal for
+    turns that don't call a tool, and a client must not depend on this for correctness."""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "event": "tool_call",
+                    "data": {
+                        "call_id": "call_abc123",
+                        "tool": "get_transactions",
+                        "status": "started",
+                    },
+                }
+            ]
+        }
+    )
+
+    event: Literal["tool_call"] = Field(
+        default="tool_call",
+        description="The event type; always `tool_call` for a tool lifecycle signal.",
+    )
+    data: ToolCallPayload = Field(description="The tool call lifecycle payload.")
+
+
+class AgentSelectedPayload(BaseModel):
+    """The specialist Maestro routed this turn to — carried by a single-shot
+    `agent_selected` event. Never a raw graph-node/internal identifier — the
+    same route name documented in routing.py's ROUTE_SPECS/route_catalogue()."""
+
+    model_config = ConfigDict(json_schema_extra={"examples": [{"agent": "analysis"}]})
+
+    agent: str = Field(
+        description=(
+            "Route name of the specialist selected for this turn (analysis, "
+            "planning, investment_planning, recommendation, general). Never "
+            "emitted for clarify/refuse turns, which delegate to no specialist."
+        )
+    )
+
+
+class AgentSelectedEvent(BaseModel):
+    """At most one per turn — emitted as soon as evidence of Maestro's
+    routing decision exists (the first leaf-node chunk, or the interrupt
+    fallback for a first-entry planner_ask/investment_plan turn), always
+    before any token/tool_call event for that turn. Absent for clarify/
+    refuse turns."""
+
+    model_config = ConfigDict(
+        json_schema_extra={"examples": [{"event": "agent_selected", "data": {"agent": "analysis"}}]}
+    )
+
+    event: Literal["agent_selected"] = Field(
+        default="agent_selected",
+        description="The event type; always `agent_selected` for a routing-decision signal.",
+    )
+    data: AgentSelectedPayload = Field(description="The selected agent's route name.")
+
+
 class DonePayload(BaseModel):
     """The finalized reply carried by the terminal `done` event."""
 

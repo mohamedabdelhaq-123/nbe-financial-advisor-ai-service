@@ -34,7 +34,14 @@ async def recommendation_node(state: ConversationState) -> dict:
 
         if not product_matches:
             return {
-                "messages": [AIMessage(content="No matching products found right now.")],
+                "messages": [
+                    AIMessage(
+                        content=(
+                            "I couldn't find a close product match. "
+                            "Tell me a little more about what you need and I'll try again."
+                        )
+                    )
+                ],
                 "message_references": [],
             }
 

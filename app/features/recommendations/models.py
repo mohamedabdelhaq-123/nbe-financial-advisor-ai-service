@@ -19,6 +19,9 @@ class AiProblemStatement(OwnBase):
     __tablename__ = "ai_problem_statements"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    # Stable ID of the backend-owned source row. Nullable preserves support
+    # for manually seeded statements that do not originate in Django.
+    source_statement_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True, unique=True)
     product_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
     statement_text: Mapped[str] = mapped_column(Text, nullable=False)
     embedding: Mapped[list[float] | None] = mapped_column(Vector(768), nullable=True)

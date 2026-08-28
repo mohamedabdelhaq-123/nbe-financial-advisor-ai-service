@@ -1,7 +1,7 @@
 """User-message-shaped attack payloads.
 
 Targets `_general_node`'s system prompt (`GENERAL_NODE_SYSTEM_PROMPT` in
-`app/features/chat/guards.py`) and Maestro's intent classifier — the two
+`app/features/chat/guards.py`) and Maestro's structured router — the two
 places raw chat text reaches an LLM directly. Grouped so a scenario can pull
 "all direct-injection payloads" without also pulling jailbreak-roleplay ones.
 """

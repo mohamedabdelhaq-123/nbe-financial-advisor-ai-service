@@ -1,8 +1,29 @@
+import os
+import subprocess
+import sys
+
 import httpx
 import pytest
 
 from app.market_data_gateway.config import MarketGatewaySettings
 from app.market_data_gateway.main import create_app
+
+
+def test_gateway_import_does_not_require_the_full_ai_service_environment():
+    """The standalone production gateway must not instantiate app.main settings."""
+
+    environment = {
+        key: value for key, value in os.environ.items() if not key.startswith("AI_SERVICE_")
+    }
+    result = subprocess.run(
+        [sys.executable, "-c", "from app.market_data_gateway.main import app"],
+        capture_output=True,
+        check=False,
+        env=environment,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
 
 
 def _settings(api_key: str = "gateway-secret") -> MarketGatewaySettings:
