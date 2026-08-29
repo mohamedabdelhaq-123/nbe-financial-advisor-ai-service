@@ -182,14 +182,21 @@ async def _extract_investment_answers(
     whichever scalar fields are still missing. Returns None on any
     real-provider failure, which falls back to investment_plan_node's
     existing invalid-attempt handling rather than raising and losing the
-    user's turn."""
+    user's turn.
+
+    Tagged with INTERNAL_CALL_TAG: this call's raw structured-output JSON
+    is never the user-facing reply, but investment_plan (unlike maestro) is
+    itself a service.py _LEAF_NODES member — without the tag, this call's
+    output would otherwise be indistinguishable, in the outer
+    stream_mode="messages" stream, from a genuine specialist reply,
+    corrupting both the agent_selected event and the token stream."""
     if settings.chat_model.use_mock:
         return _mock_extract_investment_answers(text, missing_fields, context, answers)
 
     from langchain_core.messages import HumanMessage as LLMHumanMessage
     from langchain_core.messages import SystemMessage
 
-    from app.core.llm import get_chat_model
+    from app.core.llm import INTERNAL_CALL_TAG, get_chat_model
     from app.features.chat.prompts import (
         get_investment_extraction_human_prompt,
         get_investment_extraction_system_prompt,
@@ -202,7 +209,8 @@ async def _extract_investment_answers(
         )
         structured_llm = get_chat_model().with_structured_output(InvestmentAnswerExtraction)
         raw_result = await structured_llm.ainvoke(
-            [SystemMessage(content=system_prompt), LLMHumanMessage(content=human_prompt)]
+            [SystemMessage(content=system_prompt), LLMHumanMessage(content=human_prompt)],
+            config={"tags": [INTERNAL_CALL_TAG]},
         )
         return (
             raw_result

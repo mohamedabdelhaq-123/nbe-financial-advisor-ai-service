@@ -44,9 +44,18 @@ class _FakeGraph:
         self._interrupts = interrupts
 
     async def astream(self, state, config=None, stream_mode="messages", **kwargs):
-        for content, node in self._chunks:
+        for entry in self._chunks:
+            # Accepts either (content, node) or (content, node, tags) — the
+            # 3-tuple form simulates an internally-tagged LLM call (see
+            # app.core.llm.INTERNAL_CALL_TAG) without touching every
+            # existing 2-tuple chunk fixture across this file.
+            content, node, *rest = entry
+            tags = rest[0] if rest else None
             message = content if isinstance(content, BaseMessage) else _FakeChunk(content)
-            yield (message, {"langgraph_node": node})
+            metadata = {"langgraph_node": node}
+            if tags:
+                metadata["tags"] = tags
+            yield (message, metadata)
         if self._raise_in_stream is not None:
             raise self._raise_in_stream("forced failure")
 
@@ -855,6 +864,41 @@ async def test_agent_selected_reflects_the_specialist_that_escapes_a_leaf_node_h
     agent_selected = [e for e in events if e["event"] == "agent_selected"]
 
     assert agent_selected == [{"event": "agent_selected", "data": {"agent": "analysis"}}]
+
+
+@pytest.mark.asyncio
+async def test_internally_tagged_chunk_is_skipped_entirely(real_mode, monkeypatch):
+    """The bug the previous test's fake-graph shape didn't actually catch
+    live: investment_plan_node's internal answer-extraction call is itself
+    an AIMessage chunk tagged "investment_plan" (LangGraph's
+    stream_mode="messages" replays the raw output of *every* LLM call made
+    anywhere in a graph run, not just calls whose surrounding node streams
+    to the user) — so the AIMessage-only restriction alone doesn't exclude
+    it. Tagged with INTERNAL_CALL_TAG (app.core.llm), it must be skipped
+    entirely: no agent_selected, no token, no tool_call — as if it were
+    never in the stream at all."""
+    from app.core.llm import INTERNAL_CALL_TAG
+
+    graph = _FakeGraph(
+        chunks=[
+            (
+                AIMessage(content='{"is_escape":true,"confirmed_amount":null}'),
+                "investment_plan",
+                [INTERNAL_CALL_TAG],
+            ),
+            (HumanMessage(content="forget it, what are my transactions?"), "investment_plan"),
+            ("You spent 100 EGP.", "analysis"),
+        ],
+        state_values={"messages": []},
+    )
+    _install_fake_graph(monkeypatch, graph)
+
+    events = _parse(await _collect(real_mode, _request()))
+    agent_selected = [e for e in events if e["event"] == "agent_selected"]
+    tokens = [e["data"] for e in events if e["event"] == "token"]
+
+    assert agent_selected == [{"event": "agent_selected", "data": {"agent": "analysis"}}]
+    assert "is_escape" not in "".join(tokens)
 
 
 @pytest.mark.asyncio

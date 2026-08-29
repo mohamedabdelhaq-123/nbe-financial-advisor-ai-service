@@ -9,6 +9,7 @@ from typing import Literal
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langgraph.types import Command
 
+from app.core.llm import INTERNAL_CALL_TAG
 from app.core.logging import get_logger
 from app.features.chat.routing import ROUTE_SPECS, ROUTES_BY_NAME
 from app.features.chat.schemas import (
@@ -273,6 +274,21 @@ async def stream_chat(app, request: ChatTurnRequest) -> AsyncIterator[str]:
         announced_call_ids: set[str] = set()
         announced_agent = False
         async for chunk, metadata in graph.astream(run_input, config, stream_mode="messages"):
+            # LangGraph's stream_mode="messages" replays the raw output of
+            # *every* LLM call made anywhere during this graph run — not
+            # just calls whose surrounding node streams to the user.
+            # INTERNAL_CALL_TAG marks a call as a decision/extraction the
+            # model consumes internally (e.g. investment_plan_node's
+            # per-turn answer extraction) — confirmed empirically that,
+            # unlike Maestro's own routing call (harmless only because
+            # "maestro" isn't a _LEAF_NODES member), an internal call made
+            # from a leaf node has no such protection: its raw
+            # structured-output JSON would otherwise stream through
+            # indistinguishable from genuine specialist output, corrupting
+            # both agent_selected and the token stream. Skip it entirely,
+            # before any other handling.
+            if INTERNAL_CALL_TAG in (metadata.get("tags") or []):
+                continue
             if metadata.get("langgraph_node") in _LEAF_NODES:
                 # AIMessage-only: a HumanMessage chunk is never genuine
                 # specialist output — investment_plan_node (and
