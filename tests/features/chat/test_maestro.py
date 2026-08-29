@@ -182,9 +182,12 @@ async def test_real_maestro_uses_its_configured_model_and_small_output_budget(mo
     )
 
     assert result["intent"] == "recommendation"
+    # disable_reasoning is deliberately NOT requested here — see
+    # maestro.py's _decide_route comment: the currently configured model
+    # 400s when told to disable reasoning, so this call omits the kwarg
+    # entirely rather than risk every turn silently degrading to clarify.
     assert requested == {
         "max_tokens": 384,
-        "disable_reasoning": True,
         "model_name": "routing-model",
         "schema": MaestroRoutingDecision,
     }

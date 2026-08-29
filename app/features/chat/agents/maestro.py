@@ -135,12 +135,20 @@ async def _decide_route(
                     history=history or None,
                     last_active_route=previous_route,
                 )
-                # Routing needs only a tiny JSON object. Bound output and turn
-                # off optional model reasoning so a provider cannot spend a
-                # long completion budget on this classification step.
+                # Routing needs only a tiny JSON object, so disable_reasoning
+                # would ideally keep a hybrid-reasoning provider from spending
+                # a long completion budget on this classification step — but
+                # not every configured model supports being told to turn
+                # reasoning off. suggestions.py hit this exact failure first:
+                # the currently configured openai/gpt-oss-20b:nitro (via
+                # OpenRouter) 400s on reasoning_effort "none" ("Reasoning is
+                # mandatory for this endpoint and cannot be disabled"), which
+                # this function's own broad except Exception below quietly
+                # turned into every single turn getting the generic
+                # clarification fallback instead of ever actually routing.
+                # Match suggestions.py's fix: don't request it disabled.
                 structured_llm = get_chat_model(
                     max_tokens=settings.maestro_routing.max_output_tokens,
-                    disable_reasoning=True,
                     model_name=settings.maestro_routing.model_name or None,
                 ).with_structured_output(MaestroRoutingDecision)
                 raw_decision = await structured_llm.ainvoke(
