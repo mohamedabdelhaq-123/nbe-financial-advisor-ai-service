@@ -220,15 +220,24 @@ async def _planner_context_update(state: ConversationState) -> dict:
 
 
 async def _investment_context_update(state: ConversationState) -> dict:
+    """Unlike _planner_context_update, this re-derives investment_context on
+    every entry rather than caching it once — estimated_monthly_surplus is
+    live transaction data that can go stale across a long-running
+    conversation. But the questionnaire's own progress (investment_answers)
+    must NOT be wiped on every entry: re-routing into investment_planning
+    after briefly being elsewhere (e.g. a reflective follow-up that routed
+    to `general`) must not discard answers the user already gave — only a
+    genuinely fresh questionnaire (no answers yet) gets its validation
+    counters reset."""
     from app.features.investment_plan.context import derive_investment_context
 
     context = await derive_investment_context(state["user_id"])
-    return {
-        "investment_context": context.model_dump(mode="json"),
-        "investment_answers": {},
-        "investment_validation_attempts": 0,
-        "investment_validation_reason": None,
-    }
+    result: dict = {"investment_context": context.model_dump(mode="json")}
+    if not state.get("investment_answers"):
+        result["investment_answers"] = {}
+        result["investment_validation_attempts"] = 0
+        result["investment_validation_reason"] = None
+    return result
 
 
 async def maestro_node(state: ConversationState) -> dict:

@@ -450,6 +450,63 @@ async def test_completed_investment_plan_accepts_catalogue_selection_change():
     assert result["last_active_route"] == "investment_planning"
 
 
+@pytest.mark.asyncio
+async def test_investment_answers_survive_a_reroute_away_and_back(monkeypatch):
+    """Regression: re-entering investment_planning after briefly routing
+    elsewhere (e.g. a reflective follow-up that went to `general`) must not
+    wipe answers the user already gave. _investment_context_update still
+    re-derives investment_context every entry (live surplus data), but only
+    resets investment_answers/validation counters on a genuinely fresh
+    questionnaire — i.e. when investment_answers is empty."""
+    monkeypatch.setattr(settings.chat_model, "use_mock", False)
+
+    # derive_investment_context hits the backend DB and the market-data
+    # catalogue; both fail open to empty/defaults (see context.py), so no
+    # mocking is needed to exercise the real _investment_context_update.
+    decision = MaestroRoutingDecision(outcome="route", route="investment_planning", confidence=0.9)
+    install_fake_chat_model(monkeypatch, structured_response=decision)
+
+    # Turn 1: fresh entry — investment_answers starts empty, as expected.
+    state = {
+        "messages": [HumanMessage(content="I want to invest some money")],
+        "user_id": uuid.uuid4(),
+        "stage": "",
+        "questions_asked": 0,
+        "intent": "",
+    }
+    result1 = await maestro_node(state)
+    assert result1["investment_answers"] == {}
+
+    # Simulate the user having answered one question, then routing away
+    # (e.g. a reflective follow-up) and back — stage is no longer
+    # "investment_planning" so this re-enters via the main _decide_route
+    # path (the same one that used to wipe investment_answers), not the
+    # mid-questionnaire shortcut.
+    state_after_answer_and_reroute = {
+        "messages": [HumanMessage(content="why did you suggest that?")],
+        "user_id": state["user_id"],
+        "stage": "",
+        "questions_asked": 0,
+        "intent": "general",
+        "investment_context": result1["investment_context"],
+        "investment_answers": {"confirmed_amount": "1200.00"},
+        "investment_validation_attempts": 1,
+        "investment_validation_reason": "reprompted once",
+    }
+    result2 = await maestro_node(state_after_answer_and_reroute)
+
+    # maestro_node returns only the partial update LangGraph merges onto the
+    # checkpoint — the fix working correctly means investment_answers (and
+    # the validation counters) are simply absent from that delta, leaving
+    # the already-checkpointed answer untouched rather than overwriting it
+    # with an empty dict.
+    assert "investment_answers" not in result2
+    assert "investment_validation_attempts" not in result2
+    assert "investment_validation_reason" not in result2
+    # Context itself still refreshes on every entry (live surplus data).
+    assert "investment_context" in result2
+
+
 @pytest.mark.parametrize(
     "message",
     [
