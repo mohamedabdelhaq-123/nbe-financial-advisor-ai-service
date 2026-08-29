@@ -191,6 +191,34 @@ async def test_escaping_preserves_investment_answers_for_later():
 
 
 @pytest.mark.asyncio
+async def test_escaping_also_works_at_the_instruments_selection_step():
+    """The scalar phase isn't the only place an escape can arrive — a user
+    can just as easily bail once asked to pick instruments. Regression test
+    for a real gap: that step used to have no escape detection at all, so
+    "forget about this" fell straight into _parse_answer's error path and
+    just re-asked the same question instead of handing back to Maestro."""
+    graph, config = await _fresh_graph_and_config()
+    await graph.ainvoke(_initial_state("help me invest my remaining money"), config)
+    for answer in ["5000 EGP", "growth", "aggressive", "long term", "not soon"]:
+        await graph.ainvoke(Command(resume=answer), config)
+
+    snap = await graph.aget_state(config)
+    assert snap.interrupts[0].value["question_id"] == "instruments"
+
+    result = await graph.ainvoke(Command(resume="forget it, what are my transactions"), config)
+    snap = await graph.aget_state(config)
+
+    assert snap.values.get("last_active_route") == "analysis"
+    assert not snap.interrupts
+    messages = result.get("messages") or snap.values.get("messages") or []
+    assert messages, "expected the reclassified specialist to actually reply this turn"
+    # Same PR 1 guard as the scalar-phase escape: nothing already answered
+    # is discarded just because this turn bailed on the instruments step.
+    assert snap.values["investment_answers"].get("confirmed_amount") == "5000.00"
+    assert "instruments" not in snap.values["investment_answers"]
+
+
+@pytest.mark.asyncio
 async def test_three_unrecognized_replies_cancel_without_losing_the_running_budget():
     """MAX_VALIDATION_ATTEMPTS is now shared across the whole batch of
     missing scalar fields, not one specific field — three messages in a row

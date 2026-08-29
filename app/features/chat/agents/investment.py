@@ -32,10 +32,10 @@ MAX_CONFIRMED_AMOUNT = Decimal("1000000000")
 # The five scalar fields extraction can fill from one free-form message.
 # "instruments" (the last _QUESTION_ORDER entry) is deliberately excluded —
 # it depends on the live curated catalogue and stays on the deterministic
-# regex/alias matcher below (_parse_answer), not LLM extraction. Escape
-# detection (see InvestmentAnswerExtraction) is likewise scoped to this
-# scalar phase only for now — the instruments-only phase has no escape path
-# yet, a known, deliberate limitation of this iteration.
+# regex/alias matcher below (_parse_answer), not LLM extraction for the
+# selection itself. Escape detection (see InvestmentAnswerExtraction) does
+# apply at the instruments step too — investment_plan_node calls the same
+# extraction with missing_fields=[] there, using only is_escape.
 _SCALAR_QUESTION_IDS = (
     "confirmed_amount",
     "objective",
@@ -614,10 +614,16 @@ async def investment_plan_node(state: ConversationState) -> dict:
             "investment_validation_reason": None,
         }
 
-    # Only "instruments" can remain here — stays on the deterministic
-    # catalogue-aware matcher (_parse_answer), unchanged from before this
-    # feature: it depends on live curated-instrument data extraction has no
-    # access to, and is deliberately deferred (see _SCALAR_QUESTION_IDS).
+    # Only "instruments" can remain here — selection itself stays on the
+    # deterministic catalogue-aware matcher (_parse_answer), unchanged from
+    # before this feature: it depends on live curated-instrument data
+    # extraction has no access to. Escape detection, however, applies here
+    # too (missing_fields=[] — nothing scalar left to extract, only
+    # is_escape matters): without it, "forget about this" / "what are my
+    # transactions" sent at this final step would fall straight into
+    # _parse_answer's error path and just loop the same question instead of
+    # handing back to Maestro, the exact gap _SCALAR_QUESTION_IDS's comment
+    # used to flag as deferred.
     question_id = missing[0] if missing else None
     if question_id is not None:
         raw = interrupt(
@@ -626,6 +632,14 @@ async def investment_plan_node(state: ConversationState) -> dict:
                 "text": _question_text(question_id, context, reason, answers),
             }
         )
+        extraction = await _extract_investment_answers(str(raw), [], context, answers)
+        if extraction is not None and extraction.is_escape:
+            return {
+                "messages": [HumanMessage(content=str(raw))],
+                "stage": "investment_plan_escaped",
+                "investment_validation_attempts": 0,
+                "investment_validation_reason": None,
+            }
         parsed, error = _parse_answer(question_id, str(raw), context, answers)
         if error:
             attempts += 1
