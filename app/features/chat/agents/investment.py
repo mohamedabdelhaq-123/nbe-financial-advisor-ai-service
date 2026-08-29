@@ -351,6 +351,18 @@ def _validate_extracted_amount(value: float) -> Decimal | None:
     return amount.quantize(Decimal("0.01"))
 
 
+# Short labels for the numbered list a multi-field question renders as —
+# purely cosmetic, never parsed: the resumed answer is matched against
+# _CHOICE_ALIASES/_AMOUNT_PATTERN, never against this display text.
+_SCALAR_FIELD_LABELS = {
+    "confirmed_amount": "Amount",
+    "objective": "Goal",
+    "risk": "Risk",
+    "horizon": "Horizon",
+    "liquidity": "Liquidity",
+}
+
+
 def _consolidated_question_text(
     missing_scalar_ids: list[str],
     context: InvestmentContext,
@@ -359,15 +371,23 @@ def _consolidated_question_text(
 ) -> str:
     """Builds one question covering every still-missing scalar field —
     reusing _question_text's existing per-field phrasing (including the
-    surplus-aware amount framing) rather than duplicating it, joined into
-    one message when more than one field remains. `reason` (set only when
-    the previous turn's message stated none of the missing fields at all —
-    see investment_plan_node) applies to the whole batch rather than one
-    specific field, since a consolidated question doesn't attribute failure
-    to a single field."""
+    surplus-aware amount framing) rather than duplicating it. `reason` (set
+    only when the previous turn's message stated none of the missing fields
+    at all — see investment_plan_node) applies to the whole batch rather
+    than one specific field, since a consolidated question doesn't
+    attribute failure to a single field.
+
+    A single missing field reads fine as one plain sentence, so that case
+    is left untouched. Two or more read as an undifferentiated wall of
+    paragraphs when just concatenated — each one numbered and given a bold
+    one-word label turns it into a scannable list instead."""
     if len(missing_scalar_ids) == 1:
         return _question_text(missing_scalar_ids[0], context, reason, answers)
-    parts = [_question_text(field_id, context, None, answers) for field_id in missing_scalar_ids]
+    parts = [
+        f"**{index}. {_SCALAR_FIELD_LABELS[field_id]}**\n"
+        f"{_question_text(field_id, context, None, answers)}"
+        for index, field_id in enumerate(missing_scalar_ids, start=1)
+    ]
     body = "\n\n".join(parts)
     if reason:
         return f"{reason}\n\n{body}"
@@ -480,29 +500,36 @@ def _recommended_reason_text(ranked: RankedInstrument, answers: dict) -> str:
 
 
 def _less_fit_reason_text(ranked: RankedInstrument, answers: dict) -> str:
+    """Lowercase, no trailing period — always read inline after a "less fit:"
+    lead-in in the bullet list below, never as its own standalone sentence."""
     reasons = _mismatch_reasons(ranked, answers)
     if not reasons:
-        return "A lower overall fit than the recommended option, based on the same catalogue data."
-    text = _join_natural(reasons[:2])
-    return f"{text[0].upper()}{text[1:]}."
+        return "a lower overall fit than the recommended option, based on the same catalogue data"
+    return _join_natural(reasons[:2])
 
 
 def _selection_options_text(ranked: list[RankedInstrument], answers: dict) -> str:
-    """Claude-Code-style options list: the top-ranked option is labeled
-    Recommended with the full, factual case for it; every other option
-    states — just as factually — which of the user's own stated preferences
-    it doesn't match, rather than repeating generic positive framing for
-    options that aren't actually the best fit."""
-    parts = []
-    for index, item in enumerate(ranked):
-        label = f"**Priority {item.priority} — {item.instrument.display_name}**"
-        if index == 0:
-            label += " (Recommended)"
-            body = _recommended_reason_text(item, answers)
-        else:
-            body = f"Less fit: {_less_fit_reason_text(item, answers)}"
-        parts.append(f"{label}\n{body}")
-    return "\n\n".join(parts)
+    """The top-ranked option gets its own bold, fully-explained block —
+    the single Recommended choice, with the full factual case for it.
+    Every other option is demoted to one compact bullet each: a name and
+    the specific stated preferences it doesn't match, rather than a
+    same-sized block that visually competes with the actual recommendation."""
+    if not ranked:
+        return ""
+    top, *rest = ranked
+    lines = [
+        f"**Recommended: {top.instrument.display_name}** (Priority {top.priority})",
+        _recommended_reason_text(top, answers),
+    ]
+    if rest:
+        lines.append("")
+        lines.append("Other options:")
+        lines.extend(
+            f"- **{item.instrument.display_name}** (Priority {item.priority}) — "
+            f"less fit: {_less_fit_reason_text(item, answers)}"
+            for item in rest
+        )
+    return "\n".join(lines)
 
 
 def _money_display(value: Decimal | None) -> str:
@@ -567,7 +594,7 @@ def _question_text(
     if reason:
         return f"{reason}\n\n{choices}\n\n{call_to_action}"
     return (
-        "Here is your suggested priority order:\n\n"
+        "Here's what fits your preferences best:\n\n"
         f"{choices}\n\n"
         f"This is based on your preferences, not predicted returns. {call_to_action}"
     )

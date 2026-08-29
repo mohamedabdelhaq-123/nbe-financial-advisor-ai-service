@@ -289,28 +289,28 @@ def test_selection_prompt_recommends_the_top_fit_and_explains_why_others_are_les
 
     prompt = _question_text("instruments", context, None, answers)
 
-    assert "suggested priority order" in prompt
     assert "gold-instrument" not in prompt
     assert "simple names" not in prompt
-    assert "\n\n**Priority 2" in prompt
 
     # Exactly one option is marked Recommended, and it's the top-ranked
     # one — fund matches all four criteria for this answer set (see
-    # test_ranking_changes_with_questionnaire_answers).
-    assert prompt.count("(Recommended)") == 1
-    assert "**Priority 1 — Fund instrument** (Recommended)" in prompt
+    # test_ranking_changes_with_questionnaire_answers). It gets its own
+    # bold, fully-explained block, not folded into the options list.
+    assert prompt.count("Recommended:") == 1
+    assert "**Recommended: Fund instrument** (Priority 1)" in prompt
     assert "Matches your balanced growth goal" in prompt
     assert "your high risk tolerance" in prompt
     assert "your long-term horizon" in prompt
     assert "your high liquidity need" in prompt
 
-    # The other two are explained by which of the user's own stated
-    # preferences they don't match — facts read off the catalogue fixture
-    # (gold: moderate risk, medium liquidity; currency: preserve_value,
-    # moderate risk), not a repeat of the positive framing above.
-    assert "**Priority 2 — Gold instrument**" in prompt
-    assert "**Priority 3 — Currency instrument**" in prompt
-    assert prompt.count("Less fit:") == 2
+    # The other two are demoted to one compact bullet each, explained by
+    # which of the user's own stated preferences they don't match — facts
+    # read off the catalogue fixture (gold: moderate risk, medium
+    # liquidity; currency: preserve_value, moderate risk), not a repeat of
+    # the positive framing above.
+    assert "Other options:" in prompt
+    assert "- **Gold instrument** (Priority 2) — less fit:" in prompt
+    assert "- **Currency instrument** (Priority 3) — less fit:" in prompt
     assert "carries moderate risk, not your high risk tolerance" in prompt.casefold()
     assert "offers medium liquidity, not your high liquidity need" in prompt.casefold()
     assert "targets preserving value, not your balanced growth goal" in prompt.casefold()
