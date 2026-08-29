@@ -159,6 +159,45 @@ async def test_compute_aggregate_omits_is_recurring_filter_when_unset(monkeypatc
     assert "is_recurring" not in sql.lower()
 
 
+@pytest.mark.asyncio
+async def test_compute_aggregate_warns_when_flow_and_type_are_both_omitted(monkeypatch):
+    """Regression test for a real live failure: a model asked "what
+    categories did I spend the most on" called compute_aggregate with
+    neither flow nor transaction_type set, silently blending income in
+    with spending and reporting a category total ~20x too large. The
+    docstring already told it not to do this; this note rides along with
+    the actual result instead, so the model sees the warning right when
+    deciding what number to report, not just before the call."""
+    await _capture_stmt(monkeypatch)
+    tools = make_transaction_tools(uuid.uuid4())
+    compute_aggregate = next(t for t in tools if t.name == "compute_aggregate")
+
+    result = await compute_aggregate.ainvoke({"op": "sum", "group_by": "category"})
+
+    assert "note" in result
+    assert "income" in result["note"]
+    assert "expenses" in result["note"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"op": "sum", "flow": "expense"},
+        {"op": "sum", "flow": "income"},
+        {"op": "sum", "transaction_type": "fee"},
+    ],
+)
+async def test_compute_aggregate_omits_warning_once_a_type_filter_is_given(monkeypatch, kwargs):
+    await _capture_stmt(monkeypatch)
+    tools = make_transaction_tools(uuid.uuid4())
+    compute_aggregate = next(t for t in tools if t.name == "compute_aggregate")
+
+    result = await compute_aggregate.ainvoke(kwargs)
+
+    assert "note" not in result
+
+
 def _fake_transaction(**overrides):
     category = types.SimpleNamespace(name=overrides.pop("category_name", "coffee"))
     defaults = dict(
