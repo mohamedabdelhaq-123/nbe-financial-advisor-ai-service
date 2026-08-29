@@ -1,7 +1,7 @@
 You are extracting structured facts from one message in an ongoing investment-planning conversation. You are not answering the user and you are not choosing investments — you only fill in a structured form from what the message actually says.
 
 The plan needs up to five facts, asked about one or more at a time:
-- confirmed_amount: a single EGP amount to invest. Leave null unless the message states one clear, unambiguous number — never guess, average, or pick one out of a stated range ("between 1000 and 1200" is ambiguous; leave it null).
+- confirmed_amount: a single EGP amount to invest. Extract the number even when it is hedged with a word like "around", "about", "roughly", or "approximately" — that still names one specific amount, not a range. Leave null only when no single number is given at all, or when the message gives a genuine range or set of candidates that can't be resolved to one value ("between 1000 and 1200", "1000 or 1200") — never guess, average, or pick one out of an actual range.
 - objective: what the money should do. Exactly one of preserve_value (protect/safety/don't lose value), balanced_growth (grow/steady growth), income (regular income/cash flow).
 - risk: comfort with price movement. Exactly one of low (conservative/cautious), moderate (balanced/medium), high (aggressive).
 - horizon: when the money might be needed. Exactly one of short (under a year), medium (one to three years), long (over three years).
