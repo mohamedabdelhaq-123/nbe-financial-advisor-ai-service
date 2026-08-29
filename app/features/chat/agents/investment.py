@@ -309,8 +309,17 @@ async def _extract_instrument_selection(
         human_prompt = get_instrument_selection_human_prompt().render(
             message=text,
             options=[
-                {"priority": item.priority, "display_name": item.instrument.display_name}
-                for item in ranked
+                {
+                    "priority": item.priority,
+                    "display_name": item.instrument.display_name,
+                    # Mirrors _selection_options_text's own "(Recommended)"
+                    # label on the top-ranked option — without it, a reply
+                    # like "the recommended one" has nothing in this prompt
+                    # to resolve against, since the model was never told
+                    # which option the user actually saw marked that way.
+                    "is_recommended": index == 0,
+                }
+                for index, item in enumerate(ranked)
             ],
         )
         structured_llm = get_chat_model().with_structured_output(InstrumentSelectionExtraction)
