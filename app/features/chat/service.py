@@ -274,7 +274,20 @@ async def stream_chat(app, request: ChatTurnRequest) -> AsyncIterator[str]:
         announced_agent = False
         async for chunk, metadata in graph.astream(run_input, config, stream_mode="messages"):
             if metadata.get("langgraph_node") in _LEAF_NODES:
-                if not announced_agent:
+                # AIMessage-only: a HumanMessage chunk is never genuine
+                # specialist output — investment_plan_node (and
+                # planner_ask_node) echo the user's own resumed answer back
+                # as a HumanMessage on every interrupt-cycle continuation,
+                # including the escape path that hands the turn to Maestro
+                # for a fresh routing decision (see graph.py's
+                # investment_plan -> maestro edge). Counting that echo here
+                # would announce the wrong agent for an escaped turn, since
+                # the real answering node's chunks arrive later in the same
+                # turn. A HumanMessage-only turn (an ordinary reprompt, or
+                # any interrupt-cycle continuation) still gets a correct
+                # agent_selected — just via the fallback below, which reads
+                # `intent` once the stream drains, instead of from here.
+                if not announced_agent and isinstance(chunk, AIMessage):
                     announced_agent = True
                     try:
                         agent_name = _ROUTE_NAME_BY_GRAPH_NODE.get(metadata.get("langgraph_node"))

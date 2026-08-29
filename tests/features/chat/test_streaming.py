@@ -784,11 +784,12 @@ async def test_agent_selected_via_interrupt_fallback_on_fresh_planning_turn(real
 async def test_agent_selected_fallback_skipped_when_primary_path_already_fired(
     real_mode, monkeypatch
 ):
-    """A resumed Command(resume=...) turn does produce chunks before pausing
-    again on the next question — the primary path fires once; the fallback
-    must not fire a second time for the same turn."""
+    """A resumed Command(resume=...) turn that produces genuine AIMessage
+    output before pausing again on the next question fires the primary
+    path once; the fallback must not fire a second time for the same
+    turn."""
     graph = _FakeGraph(
-        chunks=[(HumanMessage(content="consistent"), "planner_ask")],
+        chunks=[("Got it, growth it is.", "planner_ask")],
         state_values={"messages": [], "intent": "planning"},
         interrupts=(
             SimpleNamespace(
@@ -802,6 +803,58 @@ async def test_agent_selected_fallback_skipped_when_primary_path_already_fired(
     agent_selected = [e for e in events if e["event"] == "agent_selected"]
 
     assert len(agent_selected) == 1
+
+
+@pytest.mark.asyncio
+async def test_agent_selected_ignores_a_human_message_echo_relies_on_fallback(
+    real_mode, monkeypatch
+):
+    """A turn whose only chunk is a HumanMessage — the shape
+    investment_plan_node/planner_ask_node actually return on an ordinary
+    interrupt-cycle continuation (echoing the user's own resumed answer,
+    not a genuine reply) — must not announce that node as the turn's agent.
+    It still gets a correct agent_selected, just via the interrupt fallback
+    once the stream drains, since intent is unaffected by that echo."""
+    graph = _FakeGraph(
+        chunks=[(HumanMessage(content="5000 EGP"), "investment_plan")],
+        state_values={"messages": [], "intent": "investment_planning"},
+        interrupts=(
+            SimpleNamespace(
+                value={"question_id": "investment_scalars", "text": "What should this money do?"}
+            ),
+        ),
+    )
+    _install_fake_graph(monkeypatch, graph)
+
+    events = _parse(await _collect(real_mode, _request(message="5000 EGP")))
+    agent_selected = [e for e in events if e["event"] == "agent_selected"]
+
+    assert agent_selected == [{"event": "agent_selected", "data": {"agent": "investment_planning"}}]
+
+
+@pytest.mark.asyncio
+async def test_agent_selected_reflects_the_specialist_that_escapes_a_leaf_node_hands_off_to(
+    real_mode, monkeypatch
+):
+    """Regression for the investment-planner escape edge (graph.py's
+    investment_plan -> maestro edge): a turn where investment_plan_node
+    echoes the user's message (HumanMessage, no real answer) and then, in
+    the SAME turn, hands off to a different leaf node that actually
+    replies — agent_selected must reflect the node that really answered,
+    not the leaf node the turn started in."""
+    graph = _FakeGraph(
+        chunks=[
+            (HumanMessage(content="forget it, what are my transactions?"), "investment_plan"),
+            ("You spent 100 EGP.", "analysis"),
+        ],
+        state_values={"messages": []},
+    )
+    _install_fake_graph(monkeypatch, graph)
+
+    events = _parse(await _collect(real_mode, _request()))
+    agent_selected = [e for e in events if e["event"] == "agent_selected"]
+
+    assert agent_selected == [{"event": "agent_selected", "data": {"agent": "analysis"}}]
 
 
 @pytest.mark.asyncio
