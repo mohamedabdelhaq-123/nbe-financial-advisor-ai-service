@@ -13,6 +13,23 @@ from langchain_openai import ChatOpenAI
 
 from app.core.config import settings
 
+# Pass as config={"tags": [INTERNAL_CALL_TAG]} on any .ainvoke()/.astream()
+# call whose result is a decision/extraction the model consumes internally,
+# never the user-facing reply — e.g. Maestro's own routing classification,
+# or investment_plan_node's per-turn answer extraction. LangGraph's
+# stream_mode="messages" replays the raw output of *every* LLM call made
+# anywhere during a graph run, not just calls whose surrounding node is
+# itself streaming to the user — confirmed empirically: an internal call
+# made from a node that is NOT in service.py's _LEAF_NODES (e.g. "maestro")
+# is harmless purely by accident, since that node name gets filtered out
+# entirely; the same call made from a leaf node (e.g. "investment_plan",
+# which also has genuine user-facing output) has no such protection and its
+# raw structured-output JSON would otherwise stream through as if it were
+# real specialist output — both mislabeling agent_selected and leaking into
+# the token stream. service.py checks for this tag before doing anything
+# else with a chunk.
+INTERNAL_CALL_TAG = "internal-llm-call"
+
 
 @lru_cache(maxsize=None)
 def get_chat_model(

@@ -7,8 +7,14 @@ import pytest
 from app.core.config import settings
 from app.features.chat.agents import investment as investment_module
 from app.features.chat.agents.investment import (
+    InstrumentSelectionExtraction,
+    InvestmentAnswerExtraction,
+    _consolidated_question_text,
+    _mock_extract_instrument_selection,
+    _mock_extract_investment_answers,
     _parse_answer,
     _question_text,
+    _validate_extracted_amount,
     investment_plan_node,
 )
 from app.features.investment_plan.ranking import rank_instruments
@@ -271,7 +277,7 @@ def test_instrument_selection_accepts_unique_catalogue_prefix_egx():
     assert selected == [str(fund.id)]
 
 
-def test_selection_prompt_shows_explained_priority_without_internal_codes():
+def test_selection_prompt_recommends_the_top_fit_and_explains_why_others_are_less_fit():
     instruments = [_instrument("gold"), _instrument("fund"), _instrument("currency")]
     context = InvestmentContext(instruments=instruments)
     answers = {
@@ -283,13 +289,33 @@ def test_selection_prompt_shows_explained_priority_without_internal_codes():
 
     prompt = _question_text("instruments", context, None, answers)
 
-    assert "suggested priority order" in prompt
-    assert "**Priority 1 — Fund instrument**" in prompt
-    assert "high risk" in prompt
     assert "gold-instrument" not in prompt
     assert "simple names" not in prompt
-    assert "priority numbers or names" in prompt
-    assert "\n\n**Priority 2" in prompt
+
+    # Exactly one option is marked Recommended, and it's the top-ranked
+    # one — fund matches all four criteria for this answer set (see
+    # test_ranking_changes_with_questionnaire_answers). It gets its own
+    # bold, fully-explained block, not folded into the options list.
+    assert prompt.count("Recommended:") == 1
+    assert "**Recommended: Fund instrument** (Priority 1)" in prompt
+    assert "Matches your balanced growth goal" in prompt
+    assert "your high risk tolerance" in prompt
+    assert "your long-term horizon" in prompt
+    assert "your high liquidity need" in prompt
+
+    # The other two are demoted to one compact bullet each, explained by
+    # which of the user's own stated preferences they don't match — facts
+    # read off the catalogue fixture (gold: moderate risk, medium
+    # liquidity; currency: preserve_value, moderate risk), not a repeat of
+    # the positive framing above.
+    assert "Other options:" in prompt
+    assert "- **Gold instrument** (Priority 2) — less fit:" in prompt
+    assert "- **Currency instrument** (Priority 3) — less fit:" in prompt
+    assert "carries moderate risk, not your high risk tolerance" in prompt.casefold()
+    assert "offers medium liquidity, not your high liquidity need" in prompt.casefold()
+    assert "targets preserving value, not your balanced growth goal" in prompt.casefold()
+
+    assert "Reply with the recommended option" in prompt
 
 
 def test_ranking_changes_with_questionnaire_answers():
@@ -379,3 +405,138 @@ async def test_complete_flow_returns_reproducible_widget(monkeypatch):
     assert all(item.match_factors for item in widget.payload.allocations)
     assert "No trade has been executed" in result["messages"][0].content
     assert "Priority 1" in result["messages"][0].content
+
+
+# --- extraction: multi-field answers from one message, and the escape signal ---
+
+
+def test_validate_extracted_amount_accepts_and_quantizes():
+    assert _validate_extracted_amount(1200.5) == Decimal("1200.50")
+
+
+@pytest.mark.parametrize("value", [0, -50, float(10**10), float("nan"), float("inf")])
+def test_validate_extracted_amount_rejects_out_of_range_or_non_finite(value):
+    assert _validate_extracted_amount(value) is None
+
+
+def test_mock_extraction_fills_only_the_field_the_message_supports():
+    result = _mock_extract_investment_answers(
+        "5000 EGP", ["confirmed_amount", "objective"], InvestmentContext(), {}
+    )
+    assert result.confirmed_amount == 5000.0
+    assert result.objective is None
+    assert result.is_escape is False
+
+
+def test_mock_extraction_fills_several_fields_from_one_dense_message():
+    # "growth" and "long term" are each unambiguous to exactly one field's
+    # alias set — unlike e.g. "moderate"/"medium", which both liquidity and
+    # risk recognize, so a combined phrase using those would read as
+    # ambiguous to this regex-based mock approximation (a real LLM
+    # extraction call wouldn't have that limitation).
+    result = _mock_extract_investment_answers(
+        "growth, long term",
+        ["objective", "risk", "horizon", "liquidity"],
+        InvestmentContext(),
+        {},
+    )
+    assert result.objective == "balanced_growth"
+    assert result.horizon == "long"
+    assert result.risk is None
+    assert result.liquidity is None
+    assert result.is_escape is False
+
+
+@pytest.mark.parametrize("message", ["let's forget about this", "actually, never mind"])
+def test_mock_extraction_flags_escape_when_nothing_matches_and_message_reads_like_one(message):
+    result = _mock_extract_investment_answers(message, ["objective"], InvestmentContext(), {})
+    assert result.is_escape is True
+    assert result.objective is None
+
+
+def test_mock_extraction_is_not_an_escape_when_nothing_matches_but_no_escape_keyword():
+    result = _mock_extract_investment_answers(
+        "purple elephant", ["objective"], InvestmentContext(), {}
+    )
+    assert result.is_escape is False
+    assert result.objective is None
+
+
+def test_consolidated_question_text_delegates_for_a_single_missing_field():
+    context = InvestmentContext()
+    single = _consolidated_question_text(["risk"], context, None, {})
+    assert single == _question_text("risk", context, None, {})
+
+
+def test_consolidated_question_text_joins_several_missing_fields():
+    context = InvestmentContext()
+    combined = _consolidated_question_text(["objective", "risk"], context, None, {})
+    assert "A few things to plan this:" in combined
+    assert _question_text("objective", context, None, {}) in combined
+    assert _question_text("risk", context, None, {}) in combined
+
+
+def test_consolidated_question_text_uses_reason_as_a_batch_prefix():
+    context = InvestmentContext()
+    combined = _consolidated_question_text(
+        ["objective", "risk"], context, "I couldn't confirm any of that — could you try again?", {}
+    )
+    assert combined.startswith("I couldn't confirm any of that — could you try again?")
+
+
+def test_investment_answer_extraction_rejects_unknown_fields():
+    with pytest.raises(Exception):
+        InvestmentAnswerExtraction(is_escape=False, made_up_field="x")
+
+
+# --- instrument-selection extraction: the LLM fallback used once the
+# deterministic matcher fails to resolve a message ---
+
+
+def test_instrument_selection_extraction_rejects_unknown_fields():
+    with pytest.raises(Exception):
+        InstrumentSelectionExtraction(is_escape=False, made_up_field="x")
+
+
+def test_mock_instrument_selection_resolves_a_natural_description_to_its_priority():
+    instruments = [_instrument("gold"), _instrument("fund"), _instrument("currency")]
+    context = InvestmentContext(instruments=instruments)
+    answers = {
+        "objective": "balanced_growth",
+        "risk": "high",
+        "horizon": "long",
+        "liquidity": "high",
+    }
+    ranked = rank_instruments(instruments, answers)
+
+    # "the gold one" isn't a priority number, but it's still resolvable by
+    # the same deterministic matcher the mock substitute reuses (matches
+    # gold's own alias word) — proving the mock fallback correctly reports
+    # a priority number rather than the underlying instrument id.
+    result = _mock_extract_instrument_selection("the gold one", ranked, context, answers)
+
+    gold_priority = next(item.priority for item in ranked if item.instrument.asset_class == "gold")
+    assert result.is_escape is False
+    assert result.selected_priorities == [gold_priority]
+
+
+def test_mock_instrument_selection_flags_escape_when_nothing_matches_and_message_reads_like_one():
+    instruments = [_instrument("gold"), _instrument("fund"), _instrument("currency")]
+    context = InvestmentContext(instruments=instruments)
+    ranked = rank_instruments(instruments, {})
+
+    result = _mock_extract_instrument_selection("actually, forget it", ranked, context, {})
+
+    assert result.is_escape is True
+    assert result.selected_priorities == []
+
+
+def test_mock_instrument_selection_is_not_an_escape_when_nothing_matches_but_no_escape_keyword():
+    instruments = [_instrument("gold"), _instrument("fund"), _instrument("currency")]
+    context = InvestmentContext(instruments=instruments)
+    ranked = rank_instruments(instruments, {})
+
+    result = _mock_extract_instrument_selection("purple elephant", ranked, context, {})
+
+    assert result.is_escape is False
+    assert result.selected_priorities == []

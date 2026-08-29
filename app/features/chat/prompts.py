@@ -19,6 +19,14 @@ _maestro_routing_system_prompt = _env.get_template("maestro_routing_system.jinja
 _maestro_routing_human_prompt = _env.get_template("maestro_routing_human.jinja2")
 _suggestions_system_prompt = _env.get_template("suggestions_system.jinja2")
 _suggestions_human_prompt = _env.get_template("suggestions_human.jinja2")
+_investment_extraction_system_prompt = _env.get_template("investment_extraction_system.jinja2")
+_investment_extraction_human_prompt = _env.get_template("investment_extraction_human.jinja2")
+_instrument_selection_system_prompt = _env.get_template(
+    "investment_instrument_selection_system.jinja2"
+)
+_instrument_selection_human_prompt = _env.get_template(
+    "investment_instrument_selection_human.jinja2"
+)
 
 
 def get_summary_prompt() -> Template:
@@ -78,3 +86,55 @@ def get_suggestions_human_prompt() -> Template:
     one string.
     """
     return _suggestions_human_prompt
+
+
+def get_investment_extraction_system_prompt() -> Template:
+    """Return the investment-answer-extraction SystemMessage template.
+
+    Static — takes no render variables. Caller renders it with no arguments:
+    get_investment_extraction_system_prompt().render()
+    """
+    return _investment_extraction_system_prompt
+
+
+def get_investment_extraction_human_prompt() -> Template:
+    """Return the untrusted conversation portion of the investment-answer-
+    extraction prompt.
+
+    Caller renders it: get_investment_extraction_human_prompt().render(
+        message=<str>, missing_fields=<list[str]>
+    )
+    `missing_fields` names whichever of confirmed_amount/objective/risk/
+    horizon/liquidity are not yet answered, so the model knows what this
+    turn is actually trying to fill — see agents/investment.py's
+    InvestmentAnswerExtraction. Split from the system prompt (RT-013) so the
+    untrusted message content is role-separated from the task instructions
+    rather than concatenated into one string.
+    """
+    return _investment_extraction_human_prompt
+
+
+def get_instrument_selection_system_prompt() -> Template:
+    """Return the instrument-selection-matching SystemMessage template.
+
+    Static — takes no render variables. Caller renders it with no arguments:
+    get_instrument_selection_system_prompt().render()
+    """
+    return _instrument_selection_system_prompt
+
+
+def get_instrument_selection_human_prompt() -> Template:
+    """Return the untrusted conversation portion of the instrument-selection
+    matching prompt.
+
+    Caller renders it: get_instrument_selection_human_prompt().render(
+        message=<str>, options=<list[{"priority": int, "display_name": str}]>
+    )
+    `options` is the same numbered priority list already shown to the user
+    this turn (see agents/investment.py's _selection_options_text) — the
+    model only maps the message to one of these numbers, never to a raw
+    catalogue id it was never shown. Split from the system prompt (RT-013)
+    so the untrusted message content is role-separated from the task
+    instructions rather than concatenated into one string.
+    """
+    return _instrument_selection_human_prompt

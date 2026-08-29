@@ -1,0 +1,4 @@
+Options:
+{% for option in options %}{{ option.priority }}. {{ option.display_name }}{% if option.is_recommended %} (Recommended){% endif %}
+{% endfor %}
+Latest message: {{ message -}}

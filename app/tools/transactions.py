@@ -338,7 +338,23 @@ def make_transaction_tools(user_id: uuid.UUID) -> list[BaseTool]:
                 entry["month"] = dims[1].strftime("%Y-%m") if dims[1] else None
             groups.append(entry)
 
-        return {"groups": groups}
+        payload: dict = {"groups": groups}
+        if flow is None and transaction_type is None:
+            # The docstring already tells the model to prefer flow for
+            # spending/income questions, but that's a pre-call instruction
+            # competing with everything else in context — confirmed live
+            # that a model can still omit both and blend income in with
+            # spending, reporting a category total many times too large.
+            # This note rides along with the actual number being reported,
+            # right when the model is about to state it, which is a much
+            # harder signal to miss than the docstring alone.
+            payload["note"] = (
+                "This total blends every transaction type together — income, "
+                "expenses, fees, and transfers — because neither flow nor "
+                "transaction_type was given. For a spending-only or income-only "
+                'figure, call again with flow="expense" or flow="income".'
+            )
+        return payload
 
     @tool
     async def find_similar_transactions(query: str, top_k: int = 5) -> dict:

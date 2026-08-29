@@ -5,11 +5,14 @@ from __future__ import annotations
 import re
 import uuid
 from decimal import Decimal, InvalidOperation
+from typing import Literal
 
 from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.types import interrupt
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.config import settings
+from app.core.logging import get_logger
 from app.features.chat.guards import with_disclaimer
 from app.features.chat.schemas import (
     InvestmentPlanAllocationPayload,
@@ -20,10 +23,31 @@ from app.features.chat.state import ConversationState
 from app.features.investment_plan.calculator import calculate_equal_weight_scenario
 from app.features.investment_plan.ranking import RankedInstrument, rank_instruments
 from app.features.investment_plan.schemas import InvestmentContext, PricedInstrument
+from app.features.market_data.schemas import CuratedInstrument
 from app.features.market_data.service import fetch_quotes
+
+logger = get_logger(__name__)
 
 MAX_VALIDATION_ATTEMPTS = 3
 MAX_CONFIRMED_AMOUNT = Decimal("1000000000")
+# The five scalar fields extraction can fill from one free-form message.
+# "instruments" (the last _QUESTION_ORDER entry) is deliberately excluded —
+# it depends on the live curated catalogue, so it stays on the deterministic
+# regex/alias matcher below (_parse_answer) as the first, fast path: exact
+# priority numbers and catalogue names/aliases resolve instantly with no LLM
+# call. Only when that fails does investment_plan_node fall back to
+# InstrumentSelectionExtraction (see below) — one LLM call that both
+# resolves natural-language selections ("the gold one", "the recommended
+# option") against the numbered list already shown, and detects an escape
+# ("forget about this") — cheaper than the always-on scalar-phase extraction
+# since most replies here are just a number or a name and never need it.
+_SCALAR_QUESTION_IDS = (
+    "confirmed_amount",
+    "objective",
+    "risk",
+    "horizon",
+    "liquidity",
+)
 _AMOUNT_TRANSLATION = str.maketrans(
     "٠١٢٣٤٥٦٧٨٩٫٬",
     "0123456789.,",
@@ -83,24 +107,429 @@ _QUESTION_ORDER = (
 )
 
 
-def _match_reason_text(ranked: RankedInstrument, answers: dict) -> str:
+class InvestmentAnswerExtraction(BaseModel):
+    """Structured extraction of investment-planning answers from one
+    free-form message, given which of _SCALAR_QUESTION_IDS are still
+    missing. All five scalar fields are optional — a message may state
+    zero, one, or several at once (e.g. an amount and an implied horizon in
+    the same sentence) — investment_plan_node only ever merges in whichever
+    of them are still missing, so a value for an already-answered field is
+    simply ignored rather than overwriting it.
+
+    is_escape signals the message doesn't attempt to state any of the five
+    fields at all, and instead reads as a request to abandon or redirect
+    the conversation (e.g. "let's forget about this", "what are my
+    transactions") — investment_plan_node hands control back to Maestro for
+    exactly this turn instead of force-fitting the message as an invalid
+    answer. See graph.py's investment_plan -> maestro edge.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    is_escape: bool = Field(
+        description=(
+            "True if the message does not state any of the fields below and "
+            "instead reads as a request to abandon or redirect the "
+            "conversation, rather than an attempt to answer."
+        )
+    )
+    confirmed_amount: float | None = Field(
+        default=None,
+        description=(
+            "A single unambiguous EGP amount stated in the message. Null if "
+            "no amount is stated, or the amount is ambiguous (e.g. a range)."
+        ),
+    )
+    objective: Literal["preserve_value", "balanced_growth", "income"] | None = Field(
+        default=None, description="What the money should do for the user, or null."
+    )
+    risk: Literal["low", "moderate", "high"] | None = Field(
+        default=None, description="Comfort with price movement, or null."
+    )
+    horizon: Literal["short", "medium", "long"] | None = Field(
+        default=None, description="When the money might be needed, or null."
+    )
+    liquidity: Literal["low", "medium", "high"] | None = Field(
+        default=None, description="How quickly access might be needed, or null."
+    )
+
+
+# Mock mode has no real model to call, but unlike plan/service.py's
+# extract_stated_goal (a strictly-additive convenience that's fine to be
+# inert offline), extraction is now the *only* path that ever fills a
+# scalar answer — an inert mock branch would make investment planning's
+# scalar phase entirely non-functional offline/in CI, not just untested.
+# So mock mode reuses _parse_answer's existing, already-proven per-field
+# regex/alias matching independently against each still-missing field
+# instead of calling a model — the deterministic offline substitute for
+# "does this message support this field", one field at a time, same as a
+# real extraction call would judge each field.
+_MOCK_ESCAPE_KEYWORDS = ("forget", "cancel", "never mind", "nevermind", "stop this")
+
+
+def _mock_extract_investment_answers(
+    text: str, missing_fields: list[str], context: InvestmentContext, answers: dict
+) -> InvestmentAnswerExtraction:
+    fields: dict[str, float | str] = {}
+    for field_id in missing_fields:
+        parsed, error = _parse_answer(field_id, text, context, answers)
+        if error is not None or parsed is None:
+            continue
+        fields[field_id] = float(parsed) if field_id == "confirmed_amount" else parsed
+    is_escape = not fields and any(keyword in text.casefold() for keyword in _MOCK_ESCAPE_KEYWORDS)
+    return InvestmentAnswerExtraction(is_escape=is_escape, **fields)  # type: ignore[arg-type]
+
+
+async def _extract_investment_answers(
+    text: str, missing_fields: list[str], context: InvestmentContext, answers: dict
+) -> InvestmentAnswerExtraction | None:
+    """Runs the structured extraction call for one resumed message against
+    whichever scalar fields are still missing. Returns None on any
+    real-provider failure, which falls back to investment_plan_node's
+    existing invalid-attempt handling rather than raising and losing the
+    user's turn.
+
+    Tagged with INTERNAL_CALL_TAG: this call's raw structured-output JSON
+    is never the user-facing reply, but investment_plan (unlike maestro) is
+    itself a service.py _LEAF_NODES member — without the tag, this call's
+    output would otherwise be indistinguishable, in the outer
+    stream_mode="messages" stream, from a genuine specialist reply,
+    corrupting both the agent_selected event and the token stream."""
+    if settings.chat_model.use_mock:
+        return _mock_extract_investment_answers(text, missing_fields, context, answers)
+
+    from langchain_core.messages import HumanMessage as LLMHumanMessage
+    from langchain_core.messages import SystemMessage
+
+    from app.core.llm import INTERNAL_CALL_TAG, get_chat_model
+    from app.features.chat.prompts import (
+        get_investment_extraction_human_prompt,
+        get_investment_extraction_system_prompt,
+    )
+
+    try:
+        system_prompt = get_investment_extraction_system_prompt().render()
+        human_prompt = get_investment_extraction_human_prompt().render(
+            message=text, missing_fields=missing_fields
+        )
+        structured_llm = get_chat_model().with_structured_output(InvestmentAnswerExtraction)
+        raw_result = await structured_llm.ainvoke(
+            [SystemMessage(content=system_prompt), LLMHumanMessage(content=human_prompt)],
+            config={"tags": [INTERNAL_CALL_TAG]},
+        )
+        return (
+            raw_result
+            if isinstance(raw_result, InvestmentAnswerExtraction)
+            else InvestmentAnswerExtraction.model_validate(raw_result)
+        )
+    except Exception:
+        logger.exception("investment_answer_extraction_failed")
+        return None
+
+
+class InstrumentSelectionExtraction(BaseModel):
+    """Structured match of one resumed message against the numbered list of
+    instrument options already shown this turn (see _selection_options_text)
+    — the fallback path used only once the fast deterministic matcher
+    (_parse_answer's "instruments" branch: exact priority numbers, catalogue
+    names/aliases) fails to match anything.
+
+    selected_priorities names option numbers from that same numbered list,
+    never a raw catalogue id — the model was only ever shown numbers and
+    names, so it can only refer back to what it saw.
+
+    is_escape mirrors InvestmentAnswerExtraction's semantics: true when the
+    message doesn't attempt to select an option at all and instead reads as
+    a request to abandon or redirect the conversation.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    is_escape: bool = Field(
+        description=(
+            "True if the message does not select any of the numbered options "
+            "and instead reads as a request to abandon or redirect the "
+            "conversation, rather than an attempt to choose."
+        )
+    )
+    selected_priorities: list[int] = Field(
+        default_factory=list,
+        description=(
+            "Priority numbers from the shown list that the message selects, in "
+            "the order mentioned. Empty if the message doesn't clearly select "
+            "any shown option."
+        ),
+    )
+
+
+def _mock_extract_instrument_selection(
+    text: str, ranked: list[RankedInstrument], context: InvestmentContext, answers: dict
+) -> InstrumentSelectionExtraction:
+    """Mock-mode substitute — reuses _parse_answer's already-proven
+    deterministic matcher (same one the real fast path already tried and
+    failed with) rather than a second bespoke offline matcher; only reached
+    in tests via a phrasing that path can't resolve either, same as the
+    real fallback is only reached after the same failure."""
+    parsed, error = _parse_answer("instruments", text, context, answers)
+    if error is None and parsed:
+        priority_by_id = {str(item.instrument.id): item.priority for item in ranked}
+        priorities = [priority_by_id[item] for item in parsed if item in priority_by_id]
+        return InstrumentSelectionExtraction(is_escape=False, selected_priorities=priorities)
+    is_escape = any(keyword in text.casefold() for keyword in _MOCK_ESCAPE_KEYWORDS)
+    return InstrumentSelectionExtraction(is_escape=is_escape, selected_priorities=[])
+
+
+async def _extract_instrument_selection(
+    text: str, ranked: list[RankedInstrument], context: InvestmentContext, answers: dict
+) -> InstrumentSelectionExtraction | None:
+    """Runs the structured instrument-selection-matching call for one
+    resumed message that the deterministic matcher couldn't resolve.
+    Returns None on any real-provider failure, which falls back to
+    investment_plan_node's existing invalid-attempt handling.
+
+    Tagged with INTERNAL_CALL_TAG for the same reason as
+    _extract_investment_answers — investment_plan is a service.py
+    _LEAF_NODES member, so an untagged call's raw output would otherwise be
+    indistinguishable from a genuine specialist reply in the outer
+    stream_mode="messages" stream."""
+    if settings.chat_model.use_mock:
+        return _mock_extract_instrument_selection(text, ranked, context, answers)
+
+    from langchain_core.messages import HumanMessage as LLMHumanMessage
+    from langchain_core.messages import SystemMessage
+
+    from app.core.llm import INTERNAL_CALL_TAG, get_chat_model
+    from app.features.chat.prompts import (
+        get_instrument_selection_human_prompt,
+        get_instrument_selection_system_prompt,
+    )
+
+    try:
+        system_prompt = get_instrument_selection_system_prompt().render()
+        human_prompt = get_instrument_selection_human_prompt().render(
+            message=text,
+            options=[
+                {
+                    "priority": item.priority,
+                    "display_name": item.instrument.display_name,
+                    # Mirrors _selection_options_text's own "(Recommended)"
+                    # label on the top-ranked option — without it, a reply
+                    # like "the recommended one" has nothing in this prompt
+                    # to resolve against, since the model was never told
+                    # which option the user actually saw marked that way.
+                    "is_recommended": index == 0,
+                }
+                for index, item in enumerate(ranked)
+            ],
+        )
+        structured_llm = get_chat_model().with_structured_output(InstrumentSelectionExtraction)
+        raw_result = await structured_llm.ainvoke(
+            [SystemMessage(content=system_prompt), LLMHumanMessage(content=human_prompt)],
+            config={"tags": [INTERNAL_CALL_TAG]},
+        )
+        return (
+            raw_result
+            if isinstance(raw_result, InstrumentSelectionExtraction)
+            else InstrumentSelectionExtraction.model_validate(raw_result)
+        )
+    except Exception:
+        logger.exception("instrument_selection_extraction_failed")
+        return None
+
+
+def _validate_extracted_amount(value: float) -> Decimal | None:
+    """Applies the same bounds this field always enforced (see
+    _parse_answer's confirmed_amount branch) to an LLM-extracted value — an
+    out-of-range or non-finite extraction is treated as not having been
+    extracted at all, rather than silently accepted or erroring the turn."""
+    try:
+        amount = Decimal(str(value))
+    except (InvalidOperation, ValueError):
+        return None
+    if not amount.is_finite() or amount <= 0 or amount > MAX_CONFIRMED_AMOUNT:
+        return None
+    return amount.quantize(Decimal("0.01"))
+
+
+# Short labels for the numbered list a multi-field question renders as —
+# purely cosmetic, never parsed: the resumed answer is matched against
+# _CHOICE_ALIASES/_AMOUNT_PATTERN, never against this display text.
+_SCALAR_FIELD_LABELS = {
+    "confirmed_amount": "Amount",
+    "objective": "Goal",
+    "risk": "Risk",
+    "horizon": "Horizon",
+    "liquidity": "Liquidity",
+}
+
+
+def _consolidated_question_text(
+    missing_scalar_ids: list[str],
+    context: InvestmentContext,
+    reason: str | None,
+    answers: dict,
+) -> str:
+    """Builds one question covering every still-missing scalar field —
+    reusing _question_text's existing per-field phrasing (including the
+    surplus-aware amount framing) rather than duplicating it. `reason` (set
+    only when the previous turn's message stated none of the missing fields
+    at all — see investment_plan_node) applies to the whole batch rather
+    than one specific field, since a consolidated question doesn't
+    attribute failure to a single field.
+
+    A single missing field reads fine as one plain sentence, so that case
+    is left untouched. Two or more read as an undifferentiated wall of
+    paragraphs when just concatenated — each one numbered and given a bold
+    one-word label turns it into a scannable list instead."""
+    if len(missing_scalar_ids) == 1:
+        return _question_text(missing_scalar_ids[0], context, reason, answers)
+    parts = [
+        f"**{index}. {_SCALAR_FIELD_LABELS[field_id]}**\n"
+        f"{_question_text(field_id, context, None, answers)}"
+        for index, field_id in enumerate(missing_scalar_ids, start=1)
+    ]
+    body = "\n\n".join(parts)
+    if reason:
+        return f"{reason}\n\n{body}"
+    return f"A few things to plan this:\n\n{body}"
+
+
+# The four suitability criteria in the same order questions ask them —
+# shared by both the positive ("matches") and mismatch ("less fit")
+# reasoning below so the two stay in sync.
+_MATCH_FIELD_ORDER = ("objective", "risk", "horizon", "liquidity")
+_OBJECTIVE_DISPLAY = {
+    "preserve_value": "preserving value",
+    "balanced_growth": "balanced growth",
+    "income": "income",
+}
+_HORIZON_DISPLAY = {
+    "short": "a short-term horizon",
+    "medium": "a medium-term horizon",
+    "long": "a long-term horizon",
+}
+
+
+def _join_natural(parts: list[str]) -> str:
+    if not parts:
+        return ""
+    if len(parts) == 1:
+        return parts[0]
+    if len(parts) == 2:
+        return f"{parts[0]} and {parts[1]}"
+    return ", ".join(parts[:-1]) + f", and {parts[-1]}"
+
+
+def _positive_phrases(ranked: RankedInstrument, answers: dict) -> list[str]:
+    """Facts about which of the user's stated preferences this instrument
+    exactly matches, driven entirely by rank_instruments' own match_factors
+    — never a separate judgment call."""
     objective = str(answers.get("objective", "")).replace("_", " ")
-    phrases = {
+    phrase_by_factor = {
         "objective": f"your {objective} goal",
-        "risk": f"{answers.get('risk', '')} risk",
-        "horizon": f"a {answers.get('horizon', '')}-term horizon",
-        "liquidity": f"{answers.get('liquidity', '')} liquidity",
-        "closest_available": "a lower fit for your current preferences",
+        "risk": f"your {answers.get('risk', '')} risk tolerance",
+        "horizon": f"your {answers.get('horizon', '')}-term horizon",
+        "liquidity": f"your {answers.get('liquidity', '')} liquidity need",
     }
-    return " and ".join(phrases[factor] for factor in ranked.match_factors[:2])
+    return [
+        phrase_by_factor[factor] for factor in _MATCH_FIELD_ORDER if factor in ranked.match_factors
+    ]
+
+
+def _instrument_objectives_display(instrument: CuratedInstrument) -> str:
+    labels = [_OBJECTIVE_DISPLAY.get(item, item) for item in instrument.objectives]
+    return _join_natural(labels) if labels else "no stated objective"
+
+
+def _instrument_horizons_display(instrument: CuratedInstrument) -> str:
+    labels = [_HORIZON_DISPLAY.get(item, item) for item in instrument.horizons]
+    return _join_natural(labels) if labels else "no stated horizon"
+
+
+def _mismatch_reasons(ranked: RankedInstrument, answers: dict) -> list[str]:
+    """Facts about which of the user's stated preferences this instrument
+    does NOT match, read directly off the catalogue's own suitability
+    metadata (never invented) — only for a criterion the user actually
+    answered and the catalogue actually states a value for, so a field with
+    no stated preference or missing catalogue metadata is silently skipped
+    rather than guessed at."""
+    instrument = ranked.instrument
+    reasons = []
+    objective = answers.get("objective")
+    if objective and "objective" not in ranked.match_factors and instrument.objectives:
+        reasons.append(
+            f"targets {_instrument_objectives_display(instrument)}, not your "
+            f"{_OBJECTIVE_DISPLAY.get(str(objective), str(objective))} goal"
+        )
+    risk = answers.get("risk")
+    if risk and "risk" not in ranked.match_factors and instrument.risk_level:
+        reasons.append(f"carries {instrument.risk_level} risk, not your {risk} risk tolerance")
+    horizon = answers.get("horizon")
+    if horizon and "horizon" not in ranked.match_factors and instrument.horizons:
+        reasons.append(
+            f"suits {_instrument_horizons_display(instrument)}, not your {horizon}-term goal"
+        )
+    liquidity = answers.get("liquidity")
+    if liquidity and "liquidity" not in ranked.match_factors and instrument.liquidity_level:
+        reasons.append(
+            f"offers {instrument.liquidity_level} liquidity, not your {liquidity} liquidity need"
+        )
+    return reasons
+
+
+def _match_reason_text(ranked: RankedInstrument, answers: dict) -> str:
+    """Positive-only reasoning for the final allocation summary, where every
+    listed instrument is one the user already chose — there's nothing to
+    compare it against, so only why it fits is relevant."""
+    if ranked.match_factors == ("closest_available",):
+        return "The closest available match to your stated preferences."
+    phrases = _positive_phrases(ranked, answers)
+    return f"Matches {_join_natural(phrases)}." if phrases else "Matches your stated preferences."
+
+
+def _recommended_reason_text(ranked: RankedInstrument, answers: dict) -> str:
+    if ranked.match_factors == ("closest_available",):
+        return (
+            "No catalogue option closely matches every preference you gave — this is the "
+            "closest available choice."
+        )
+    phrases = _positive_phrases(ranked, answers)
+    if not phrases:
+        return "The best overall fit among the available options."
+    return f"Matches {_join_natural(phrases)}."
+
+
+def _less_fit_reason_text(ranked: RankedInstrument, answers: dict) -> str:
+    """Lowercase, no trailing period — always read inline after a "less fit:"
+    lead-in in the bullet list below, never as its own standalone sentence."""
+    reasons = _mismatch_reasons(ranked, answers)
+    if not reasons:
+        return "a lower overall fit than the recommended option, based on the same catalogue data"
+    return _join_natural(reasons[:2])
 
 
 def _selection_options_text(ranked: list[RankedInstrument], answers: dict) -> str:
-    return "\n\n".join(
-        f"**Priority {item.priority} — {item.instrument.display_name}**\n"
-        f"Why: {_match_reason_text(item, answers)}"
-        for item in ranked
-    )
+    """The top-ranked option gets its own bold, fully-explained block —
+    the single Recommended choice, with the full factual case for it.
+    Every other option is demoted to one compact bullet each: a name and
+    the specific stated preferences it doesn't match, rather than a
+    same-sized block that visually competes with the actual recommendation."""
+    if not ranked:
+        return ""
+    top, *rest = ranked
+    lines = [
+        f"**Recommended: {top.instrument.display_name}** (Priority {top.priority})",
+        _recommended_reason_text(top, answers),
+    ]
+    if rest:
+        lines.append("")
+        lines.append("Other options:")
+        lines.extend(
+            f"- **{item.instrument.display_name}** (Priority {item.priority}) — "
+            f"less fit: {_less_fit_reason_text(item, answers)}"
+            for item in rest
+        )
+    return "\n".join(lines)
 
 
 def _money_display(value: Decimal | None) -> str:
@@ -158,13 +587,16 @@ def _question_text(
 
     ranked = rank_instruments(context.instruments[: settings.market_data.max_batch_size], answers)
     choices = _selection_options_text(ranked, answers or {})
+    call_to_action = (
+        "Reply with the recommended option, another priority number or name, or describe "
+        "which one you'd like — up to three."
+    )
     if reason:
-        return f"{reason}\n\n{choices}\n\n" "Reply with up to three priority numbers or names."
+        return f"{reason}\n\n{choices}\n\n{call_to_action}"
     return (
-        "Here is your suggested priority order:\n\n"
+        "Here's what fits your preferences best:\n\n"
         f"{choices}\n\n"
-        "This is based on your preferences, not predicted returns. Which should we use? "
-        "Reply with up to three priority numbers or names."
+        f"This is based on your preferences, not predicted returns. {call_to_action}"
     )
 
 
@@ -359,7 +791,96 @@ async def investment_plan_node(state: ConversationState) -> dict:
     attempts = state.get("investment_validation_attempts", 0)
     reason = state.get("investment_validation_reason")
 
-    question_id = next((item for item in _QUESTION_ORDER if item not in answers), None)
+    missing = [item for item in _QUESTION_ORDER if item not in answers]
+    scalar_missing = [item for item in missing if item != "instruments"]
+
+    if scalar_missing:
+        raw = interrupt(
+            {
+                "question_id": "investment_scalars",
+                "text": _consolidated_question_text(scalar_missing, context, reason, answers),
+            }
+        )
+        extraction = await _extract_investment_answers(str(raw), scalar_missing, context, answers)
+
+        if extraction is not None and extraction.is_escape:
+            # Hand this turn back to Maestro instead of force-fitting the
+            # message as an invalid answer — see graph.py's
+            # investment_plan -> maestro edge. investment_answers is
+            # deliberately untouched: coming back to investment planning
+            # later (PR 1's guard) resumes right where this left off.
+            return {
+                "messages": [HumanMessage(content=str(raw))],
+                "stage": "investment_plan_escaped",
+                "investment_validation_attempts": 0,
+                "investment_validation_reason": None,
+            }
+
+        filled_any = False
+        if extraction is not None:
+            for field_id in scalar_missing:
+                value = getattr(extraction, field_id)
+                if value is None:
+                    continue
+                if field_id == "confirmed_amount":
+                    decimal_value = _validate_extracted_amount(value)
+                    if decimal_value is None:
+                        continue
+                    answers[field_id] = str(decimal_value)
+                else:
+                    answers[field_id] = value
+                filled_any = True
+
+        if not filled_any:
+            # Not an escape, and nothing this turn's message stated matched
+            # any still-missing field — same MAX_VALIDATION_ATTEMPTS budget
+            # as before, but now shared across the whole batch of missing
+            # fields rather than one specific field: any turn that makes
+            # partial progress (filled_any=True) resets it, so a user who
+            # keeps supplying *something* useful never gets cut off.
+            attempts += 1
+            if attempts >= MAX_VALIDATION_ATTEMPTS:
+                return {
+                    "messages": [
+                        AIMessage(
+                            content=(
+                                "I couldn't confirm that part of the investment scenario, so I "
+                                "stopped without requesting prices or creating an allocation."
+                            )
+                        )
+                    ],
+                    "stage": "investment_plan_cancelled",
+                    "investment_validation_attempts": 0,
+                    "investment_validation_reason": None,
+                }
+            return {
+                "messages": [HumanMessage(content=str(raw))],
+                "stage": "investment_planning",
+                "investment_validation_attempts": attempts,
+                "investment_validation_reason": (
+                    "I couldn't confirm any of that — could you try again?"
+                ),
+            }
+
+        return {
+            "messages": [HumanMessage(content=str(raw))],
+            "investment_answers": answers,
+            "stage": "investment_planning",
+            "investment_validation_attempts": 0,
+            "investment_validation_reason": None,
+        }
+
+    # Only "instruments" can remain here. _parse_answer's deterministic
+    # catalogue-aware matcher runs first — exact priority numbers and
+    # catalogue names/aliases resolve instantly, no LLM call, unchanged from
+    # before this feature. Only on a match failure does this fall back to
+    # InstrumentSelectionExtraction, which both resolves a natural-language
+    # selection ("the gold one", "the recommended option") against the same
+    # numbered list already shown, and detects an escape ("forget about
+    # this", "what are my transactions") — without it, either of those would
+    # otherwise just loop the same question instead of resolving the pick or
+    # handing back to Maestro.
+    question_id = missing[0] if missing else None
     if question_id is not None:
         raw = interrupt(
             {
@@ -368,6 +889,32 @@ async def investment_plan_node(state: ConversationState) -> dict:
             }
         )
         parsed, error = _parse_answer(question_id, str(raw), context, answers)
+        if error and question_id == "instruments":
+            ranked = rank_instruments(
+                context.instruments[: settings.market_data.max_batch_size], answers
+            )
+            instrument_extraction = await _extract_instrument_selection(
+                str(raw), ranked, context, answers
+            )
+            if instrument_extraction is not None and instrument_extraction.is_escape:
+                return {
+                    "messages": [HumanMessage(content=str(raw))],
+                    "stage": "investment_plan_escaped",
+                    "investment_validation_attempts": 0,
+                    "investment_validation_reason": None,
+                }
+            if instrument_extraction is not None and instrument_extraction.selected_priorities:
+                instrument_by_priority = {item.priority: item.instrument for item in ranked}
+                selected_instrument_ids: list[str] = []
+                for priority in instrument_extraction.selected_priorities:
+                    instrument = instrument_by_priority.get(priority)
+                    if instrument is not None and str(instrument.id) not in selected_instrument_ids:
+                        selected_instrument_ids.append(str(instrument.id))
+                if (
+                    selected_instrument_ids
+                    and len(selected_instrument_ids) <= settings.market_data.max_batch_size
+                ):
+                    parsed, error = selected_instrument_ids, None
         if error:
             attempts += 1
             if attempts >= MAX_VALIDATION_ATTEMPTS:

@@ -44,9 +44,18 @@ class _FakeGraph:
         self._interrupts = interrupts
 
     async def astream(self, state, config=None, stream_mode="messages", **kwargs):
-        for content, node in self._chunks:
+        for entry in self._chunks:
+            # Accepts either (content, node) or (content, node, tags) — the
+            # 3-tuple form simulates an internally-tagged LLM call (see
+            # app.core.llm.INTERNAL_CALL_TAG) without touching every
+            # existing 2-tuple chunk fixture across this file.
+            content, node, *rest = entry
+            tags = rest[0] if rest else None
             message = content if isinstance(content, BaseMessage) else _FakeChunk(content)
-            yield (message, {"langgraph_node": node})
+            metadata = {"langgraph_node": node}
+            if tags:
+                metadata["tags"] = tags
+            yield (message, metadata)
         if self._raise_in_stream is not None:
             raise self._raise_in_stream("forced failure")
 
@@ -784,11 +793,12 @@ async def test_agent_selected_via_interrupt_fallback_on_fresh_planning_turn(real
 async def test_agent_selected_fallback_skipped_when_primary_path_already_fired(
     real_mode, monkeypatch
 ):
-    """A resumed Command(resume=...) turn does produce chunks before pausing
-    again on the next question — the primary path fires once; the fallback
-    must not fire a second time for the same turn."""
+    """A resumed Command(resume=...) turn that produces genuine AIMessage
+    output before pausing again on the next question fires the primary
+    path once; the fallback must not fire a second time for the same
+    turn."""
     graph = _FakeGraph(
-        chunks=[(HumanMessage(content="consistent"), "planner_ask")],
+        chunks=[("Got it, growth it is.", "planner_ask")],
         state_values={"messages": [], "intent": "planning"},
         interrupts=(
             SimpleNamespace(
@@ -802,6 +812,93 @@ async def test_agent_selected_fallback_skipped_when_primary_path_already_fired(
     agent_selected = [e for e in events if e["event"] == "agent_selected"]
 
     assert len(agent_selected) == 1
+
+
+@pytest.mark.asyncio
+async def test_agent_selected_ignores_a_human_message_echo_relies_on_fallback(
+    real_mode, monkeypatch
+):
+    """A turn whose only chunk is a HumanMessage — the shape
+    investment_plan_node/planner_ask_node actually return on an ordinary
+    interrupt-cycle continuation (echoing the user's own resumed answer,
+    not a genuine reply) — must not announce that node as the turn's agent.
+    It still gets a correct agent_selected, just via the interrupt fallback
+    once the stream drains, since intent is unaffected by that echo."""
+    graph = _FakeGraph(
+        chunks=[(HumanMessage(content="5000 EGP"), "investment_plan")],
+        state_values={"messages": [], "intent": "investment_planning"},
+        interrupts=(
+            SimpleNamespace(
+                value={"question_id": "investment_scalars", "text": "What should this money do?"}
+            ),
+        ),
+    )
+    _install_fake_graph(monkeypatch, graph)
+
+    events = _parse(await _collect(real_mode, _request(message="5000 EGP")))
+    agent_selected = [e for e in events if e["event"] == "agent_selected"]
+
+    assert agent_selected == [{"event": "agent_selected", "data": {"agent": "investment_planning"}}]
+
+
+@pytest.mark.asyncio
+async def test_agent_selected_reflects_the_specialist_that_escapes_a_leaf_node_hands_off_to(
+    real_mode, monkeypatch
+):
+    """Regression for the investment-planner escape edge (graph.py's
+    investment_plan -> maestro edge): a turn where investment_plan_node
+    echoes the user's message (HumanMessage, no real answer) and then, in
+    the SAME turn, hands off to a different leaf node that actually
+    replies — agent_selected must reflect the node that really answered,
+    not the leaf node the turn started in."""
+    graph = _FakeGraph(
+        chunks=[
+            (HumanMessage(content="forget it, what are my transactions?"), "investment_plan"),
+            ("You spent 100 EGP.", "analysis"),
+        ],
+        state_values={"messages": []},
+    )
+    _install_fake_graph(monkeypatch, graph)
+
+    events = _parse(await _collect(real_mode, _request()))
+    agent_selected = [e for e in events if e["event"] == "agent_selected"]
+
+    assert agent_selected == [{"event": "agent_selected", "data": {"agent": "analysis"}}]
+
+
+@pytest.mark.asyncio
+async def test_internally_tagged_chunk_is_skipped_entirely(real_mode, monkeypatch):
+    """The bug the previous test's fake-graph shape didn't actually catch
+    live: investment_plan_node's internal answer-extraction call is itself
+    an AIMessage chunk tagged "investment_plan" (LangGraph's
+    stream_mode="messages" replays the raw output of *every* LLM call made
+    anywhere in a graph run, not just calls whose surrounding node streams
+    to the user) — so the AIMessage-only restriction alone doesn't exclude
+    it. Tagged with INTERNAL_CALL_TAG (app.core.llm), it must be skipped
+    entirely: no agent_selected, no token, no tool_call — as if it were
+    never in the stream at all."""
+    from app.core.llm import INTERNAL_CALL_TAG
+
+    graph = _FakeGraph(
+        chunks=[
+            (
+                AIMessage(content='{"is_escape":true,"confirmed_amount":null}'),
+                "investment_plan",
+                [INTERNAL_CALL_TAG],
+            ),
+            (HumanMessage(content="forget it, what are my transactions?"), "investment_plan"),
+            ("You spent 100 EGP.", "analysis"),
+        ],
+        state_values={"messages": []},
+    )
+    _install_fake_graph(monkeypatch, graph)
+
+    events = _parse(await _collect(real_mode, _request()))
+    agent_selected = [e for e in events if e["event"] == "agent_selected"]
+    tokens = [e["data"] for e in events if e["event"] == "token"]
+
+    assert agent_selected == [{"event": "agent_selected", "data": {"agent": "analysis"}}]
+    assert "is_escape" not in "".join(tokens)
 
 
 @pytest.mark.asyncio

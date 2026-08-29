@@ -31,6 +31,14 @@ def _route_planner_ask(state: ConversationState) -> str:
 
 
 def _route_investment_plan(state: ConversationState) -> str:
+    # "escaped": the resumed message didn't attempt to answer anything
+    # investment_plan_node asked (agents/investment.py's
+    # InvestmentAnswerExtraction.is_escape) — hand this same turn to
+    # Maestro for a fresh routing decision instead of ending the turn on a
+    # forced non-answer. investment_answers is untouched either way, so
+    # re-entering investment_planning later resumes where this left off.
+    if state.get("stage") == "investment_plan_escaped":
+        return "escaped"
     return (
         "done"
         if state.get("stage")
@@ -144,7 +152,7 @@ def build_graph(checkpointer=None):
     graph.add_conditional_edges(
         "investment_plan",
         _route_investment_plan,
-        {"continue": "investment_plan", "done": END},
+        {"continue": "investment_plan", "done": END, "escaped": "maestro"},
     )
     graph.add_edge("analysis", END)
     graph.add_edge("recommendation", END)
