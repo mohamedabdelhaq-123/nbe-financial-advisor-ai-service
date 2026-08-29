@@ -16,6 +16,7 @@ existing per-field regex/alias matching rather than being inert offline.
 """
 
 import uuid
+from decimal import Decimal
 
 import pytest
 from langchain_core.messages import HumanMessage
@@ -23,6 +24,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.types import Command
 
 from app.features.chat.graph import build_graph
+from app.features.market_data.schemas import CuratedInstrument
 
 # Any of these is a legitimate reclassification target for a redirect-style
 # escape message with no capability-specific keywords — mock mode's
@@ -214,6 +216,72 @@ async def test_escaping_also_works_at_the_instruments_selection_step():
     assert messages, "expected the reclassified specialist to actually reply this turn"
     # Same PR 1 guard as the scalar-phase escape: nothing already answered
     # is discarded just because this turn bailed on the instruments step.
+    assert snap.values["investment_answers"].get("confirmed_amount") == "5000.00"
+    assert "instruments" not in snap.values["investment_answers"]
+
+
+def _curated_instrument(code: str, display_name: str) -> CuratedInstrument:
+    return CuratedInstrument(
+        id=uuid.uuid4(),
+        product_id=uuid.uuid4(),
+        code=code,
+        display_name=display_name,
+        asset_class="fund",
+        provider_symbol=f"{code.upper()}_SYMBOL",
+        price_type="market_price",
+        price_currency="EGP",
+        unit="fund_unit",
+        minimum_increment=Decimal("1"),
+        fractional_units_supported=False,
+        max_quote_age_seconds=3600,
+        aliases=[code],
+        objectives=["balanced_growth"],
+        risk_level="moderate",
+        horizons=["long"],
+        liquidity_level="high",
+    )
+
+
+@pytest.mark.asyncio
+async def test_escaping_at_the_instruments_step_still_works_with_a_real_catalogue(monkeypatch):
+    """test_escaping_also_works_at_the_instruments_selection_step proves the
+    escape edge exists, but with an empty catalogue _parse_answer always
+    errors regardless of the message — so that test can't tell whether the
+    LLM fallback (InstrumentSelectionExtraction) is actually what's firing,
+    versus some other code path only reachable because the catalogue is
+    empty. This test overrides the catalogue with real options so
+    _parse_answer only errors on messages that actually don't match one,
+    confirming the fallback's escape detection holds up once instrument
+    matching itself has real candidates to (fail to) match against."""
+    instruments = [
+        _curated_instrument("egx30", "EGX30 Index ETF"),
+        _curated_instrument("gold", "24K Gold"),
+    ]
+
+    async def _real_curated_instruments():
+        return instruments
+
+    monkeypatch.setattr(
+        "app.features.investment_plan.context.list_curated_instruments",
+        _real_curated_instruments,
+    )
+
+    graph, config = await _fresh_graph_and_config()
+    await graph.ainvoke(_initial_state("help me invest my remaining money"), config)
+    for answer in ["5000 EGP", "growth", "aggressive", "long term", "not soon"]:
+        await graph.ainvoke(Command(resume=answer), config)
+
+    snap = await graph.aget_state(config)
+    assert snap.interrupts[0].value["question_id"] == "instruments"
+    # Sanity check this run actually has real options to fail to match —
+    # otherwise this test would be no different from the empty-catalogue one.
+    assert "EGX30" in snap.interrupts[0].value["text"]
+
+    await graph.ainvoke(Command(resume="forget it, what are my transactions"), config)
+    snap = await graph.aget_state(config)
+
+    assert snap.values.get("last_active_route") == "analysis"
+    assert not snap.interrupts
     assert snap.values["investment_answers"].get("confirmed_amount") == "5000.00"
     assert "instruments" not in snap.values["investment_answers"]
 

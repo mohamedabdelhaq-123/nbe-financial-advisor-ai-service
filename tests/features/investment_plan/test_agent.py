@@ -7,8 +7,10 @@ import pytest
 from app.core.config import settings
 from app.features.chat.agents import investment as investment_module
 from app.features.chat.agents.investment import (
+    InstrumentSelectionExtraction,
     InvestmentAnswerExtraction,
     _consolidated_question_text,
+    _mock_extract_instrument_selection,
     _mock_extract_investment_answers,
     _parse_answer,
     _question_text,
@@ -275,7 +277,7 @@ def test_instrument_selection_accepts_unique_catalogue_prefix_egx():
     assert selected == [str(fund.id)]
 
 
-def test_selection_prompt_shows_explained_priority_without_internal_codes():
+def test_selection_prompt_recommends_the_top_fit_and_explains_why_others_are_less_fit():
     instruments = [_instrument("gold"), _instrument("fund"), _instrument("currency")]
     context = InvestmentContext(instruments=instruments)
     answers = {
@@ -288,12 +290,32 @@ def test_selection_prompt_shows_explained_priority_without_internal_codes():
     prompt = _question_text("instruments", context, None, answers)
 
     assert "suggested priority order" in prompt
-    assert "**Priority 1 — Fund instrument**" in prompt
-    assert "high risk" in prompt
     assert "gold-instrument" not in prompt
     assert "simple names" not in prompt
-    assert "priority numbers or names" in prompt
     assert "\n\n**Priority 2" in prompt
+
+    # Exactly one option is marked Recommended, and it's the top-ranked
+    # one — fund matches all four criteria for this answer set (see
+    # test_ranking_changes_with_questionnaire_answers).
+    assert prompt.count("(Recommended)") == 1
+    assert "**Priority 1 — Fund instrument** (Recommended)" in prompt
+    assert "Matches your balanced growth goal" in prompt
+    assert "your high risk tolerance" in prompt
+    assert "your long-term horizon" in prompt
+    assert "your high liquidity need" in prompt
+
+    # The other two are explained by which of the user's own stated
+    # preferences they don't match — facts read off the catalogue fixture
+    # (gold: moderate risk, medium liquidity; currency: preserve_value,
+    # moderate risk), not a repeat of the positive framing above.
+    assert "**Priority 2 — Gold instrument**" in prompt
+    assert "**Priority 3 — Currency instrument**" in prompt
+    assert prompt.count("Less fit:") == 2
+    assert "carries moderate risk, not your high risk tolerance" in prompt.casefold()
+    assert "offers medium liquidity, not your high liquidity need" in prompt.casefold()
+    assert "targets preserving value, not your balanced growth goal" in prompt.casefold()
+
+    assert "Reply with the recommended option" in prompt
 
 
 def test_ranking_changes_with_questionnaire_answers():
@@ -465,3 +487,56 @@ def test_consolidated_question_text_uses_reason_as_a_batch_prefix():
 def test_investment_answer_extraction_rejects_unknown_fields():
     with pytest.raises(Exception):
         InvestmentAnswerExtraction(is_escape=False, made_up_field="x")
+
+
+# --- instrument-selection extraction: the LLM fallback used once the
+# deterministic matcher fails to resolve a message ---
+
+
+def test_instrument_selection_extraction_rejects_unknown_fields():
+    with pytest.raises(Exception):
+        InstrumentSelectionExtraction(is_escape=False, made_up_field="x")
+
+
+def test_mock_instrument_selection_resolves_a_natural_description_to_its_priority():
+    instruments = [_instrument("gold"), _instrument("fund"), _instrument("currency")]
+    context = InvestmentContext(instruments=instruments)
+    answers = {
+        "objective": "balanced_growth",
+        "risk": "high",
+        "horizon": "long",
+        "liquidity": "high",
+    }
+    ranked = rank_instruments(instruments, answers)
+
+    # "the gold one" isn't a priority number, but it's still resolvable by
+    # the same deterministic matcher the mock substitute reuses (matches
+    # gold's own alias word) — proving the mock fallback correctly reports
+    # a priority number rather than the underlying instrument id.
+    result = _mock_extract_instrument_selection("the gold one", ranked, context, answers)
+
+    gold_priority = next(item.priority for item in ranked if item.instrument.asset_class == "gold")
+    assert result.is_escape is False
+    assert result.selected_priorities == [gold_priority]
+
+
+def test_mock_instrument_selection_flags_escape_when_nothing_matches_and_message_reads_like_one():
+    instruments = [_instrument("gold"), _instrument("fund"), _instrument("currency")]
+    context = InvestmentContext(instruments=instruments)
+    ranked = rank_instruments(instruments, {})
+
+    result = _mock_extract_instrument_selection("actually, forget it", ranked, context, {})
+
+    assert result.is_escape is True
+    assert result.selected_priorities == []
+
+
+def test_mock_instrument_selection_is_not_an_escape_when_nothing_matches_but_no_escape_keyword():
+    instruments = [_instrument("gold"), _instrument("fund"), _instrument("currency")]
+    context = InvestmentContext(instruments=instruments)
+    ranked = rank_instruments(instruments, {})
+
+    result = _mock_extract_instrument_selection("purple elephant", ranked, context, {})
+
+    assert result.is_escape is False
+    assert result.selected_priorities == []

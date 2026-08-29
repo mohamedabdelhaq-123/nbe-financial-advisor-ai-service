@@ -23,6 +23,7 @@ from app.features.chat.state import ConversationState
 from app.features.investment_plan.calculator import calculate_equal_weight_scenario
 from app.features.investment_plan.ranking import RankedInstrument, rank_instruments
 from app.features.investment_plan.schemas import InvestmentContext, PricedInstrument
+from app.features.market_data.schemas import CuratedInstrument
 from app.features.market_data.service import fetch_quotes
 
 logger = get_logger(__name__)
@@ -31,11 +32,15 @@ MAX_VALIDATION_ATTEMPTS = 3
 MAX_CONFIRMED_AMOUNT = Decimal("1000000000")
 # The five scalar fields extraction can fill from one free-form message.
 # "instruments" (the last _QUESTION_ORDER entry) is deliberately excluded —
-# it depends on the live curated catalogue and stays on the deterministic
-# regex/alias matcher below (_parse_answer), not LLM extraction for the
-# selection itself. Escape detection (see InvestmentAnswerExtraction) does
-# apply at the instruments step too — investment_plan_node calls the same
-# extraction with missing_fields=[] there, using only is_escape.
+# it depends on the live curated catalogue, so it stays on the deterministic
+# regex/alias matcher below (_parse_answer) as the first, fast path: exact
+# priority numbers and catalogue names/aliases resolve instantly with no LLM
+# call. Only when that fails does investment_plan_node fall back to
+# InstrumentSelectionExtraction (see below) — one LLM call that both
+# resolves natural-language selections ("the gold one", "the recommended
+# option") against the numbered list already shown, and detects an escape
+# ("forget about this") — cheaper than the always-on scalar-phase extraction
+# since most replies here are just a number or a name and never need it.
 _SCALAR_QUESTION_IDS = (
     "confirmed_amount",
     "objective",
@@ -222,6 +227,107 @@ async def _extract_investment_answers(
         return None
 
 
+class InstrumentSelectionExtraction(BaseModel):
+    """Structured match of one resumed message against the numbered list of
+    instrument options already shown this turn (see _selection_options_text)
+    — the fallback path used only once the fast deterministic matcher
+    (_parse_answer's "instruments" branch: exact priority numbers, catalogue
+    names/aliases) fails to match anything.
+
+    selected_priorities names option numbers from that same numbered list,
+    never a raw catalogue id — the model was only ever shown numbers and
+    names, so it can only refer back to what it saw.
+
+    is_escape mirrors InvestmentAnswerExtraction's semantics: true when the
+    message doesn't attempt to select an option at all and instead reads as
+    a request to abandon or redirect the conversation.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    is_escape: bool = Field(
+        description=(
+            "True if the message does not select any of the numbered options "
+            "and instead reads as a request to abandon or redirect the "
+            "conversation, rather than an attempt to choose."
+        )
+    )
+    selected_priorities: list[int] = Field(
+        default_factory=list,
+        description=(
+            "Priority numbers from the shown list that the message selects, in "
+            "the order mentioned. Empty if the message doesn't clearly select "
+            "any shown option."
+        ),
+    )
+
+
+def _mock_extract_instrument_selection(
+    text: str, ranked: list[RankedInstrument], context: InvestmentContext, answers: dict
+) -> InstrumentSelectionExtraction:
+    """Mock-mode substitute — reuses _parse_answer's already-proven
+    deterministic matcher (same one the real fast path already tried and
+    failed with) rather than a second bespoke offline matcher; only reached
+    in tests via a phrasing that path can't resolve either, same as the
+    real fallback is only reached after the same failure."""
+    parsed, error = _parse_answer("instruments", text, context, answers)
+    if error is None and parsed:
+        priority_by_id = {str(item.instrument.id): item.priority for item in ranked}
+        priorities = [priority_by_id[item] for item in parsed if item in priority_by_id]
+        return InstrumentSelectionExtraction(is_escape=False, selected_priorities=priorities)
+    is_escape = any(keyword in text.casefold() for keyword in _MOCK_ESCAPE_KEYWORDS)
+    return InstrumentSelectionExtraction(is_escape=is_escape, selected_priorities=[])
+
+
+async def _extract_instrument_selection(
+    text: str, ranked: list[RankedInstrument], context: InvestmentContext, answers: dict
+) -> InstrumentSelectionExtraction | None:
+    """Runs the structured instrument-selection-matching call for one
+    resumed message that the deterministic matcher couldn't resolve.
+    Returns None on any real-provider failure, which falls back to
+    investment_plan_node's existing invalid-attempt handling.
+
+    Tagged with INTERNAL_CALL_TAG for the same reason as
+    _extract_investment_answers — investment_plan is a service.py
+    _LEAF_NODES member, so an untagged call's raw output would otherwise be
+    indistinguishable from a genuine specialist reply in the outer
+    stream_mode="messages" stream."""
+    if settings.chat_model.use_mock:
+        return _mock_extract_instrument_selection(text, ranked, context, answers)
+
+    from langchain_core.messages import HumanMessage as LLMHumanMessage
+    from langchain_core.messages import SystemMessage
+
+    from app.core.llm import INTERNAL_CALL_TAG, get_chat_model
+    from app.features.chat.prompts import (
+        get_instrument_selection_human_prompt,
+        get_instrument_selection_system_prompt,
+    )
+
+    try:
+        system_prompt = get_instrument_selection_system_prompt().render()
+        human_prompt = get_instrument_selection_human_prompt().render(
+            message=text,
+            options=[
+                {"priority": item.priority, "display_name": item.instrument.display_name}
+                for item in ranked
+            ],
+        )
+        structured_llm = get_chat_model().with_structured_output(InstrumentSelectionExtraction)
+        raw_result = await structured_llm.ainvoke(
+            [SystemMessage(content=system_prompt), LLMHumanMessage(content=human_prompt)],
+            config={"tags": [INTERNAL_CALL_TAG]},
+        )
+        return (
+            raw_result
+            if isinstance(raw_result, InstrumentSelectionExtraction)
+            else InstrumentSelectionExtraction.model_validate(raw_result)
+        )
+    except Exception:
+        logger.exception("instrument_selection_extraction_failed")
+        return None
+
+
 def _validate_extracted_amount(value: float) -> Decimal | None:
     """Applies the same bounds this field always enforced (see
     _parse_answer's confirmed_amount branch) to an LLM-extracted value — an
@@ -259,24 +365,135 @@ def _consolidated_question_text(
     return f"A few things to plan this:\n\n{body}"
 
 
-def _match_reason_text(ranked: RankedInstrument, answers: dict) -> str:
+# The four suitability criteria in the same order questions ask them —
+# shared by both the positive ("matches") and mismatch ("less fit")
+# reasoning below so the two stay in sync.
+_MATCH_FIELD_ORDER = ("objective", "risk", "horizon", "liquidity")
+_OBJECTIVE_DISPLAY = {
+    "preserve_value": "preserving value",
+    "balanced_growth": "balanced growth",
+    "income": "income",
+}
+_HORIZON_DISPLAY = {
+    "short": "a short-term horizon",
+    "medium": "a medium-term horizon",
+    "long": "a long-term horizon",
+}
+
+
+def _join_natural(parts: list[str]) -> str:
+    if not parts:
+        return ""
+    if len(parts) == 1:
+        return parts[0]
+    if len(parts) == 2:
+        return f"{parts[0]} and {parts[1]}"
+    return ", ".join(parts[:-1]) + f", and {parts[-1]}"
+
+
+def _positive_phrases(ranked: RankedInstrument, answers: dict) -> list[str]:
+    """Facts about which of the user's stated preferences this instrument
+    exactly matches, driven entirely by rank_instruments' own match_factors
+    — never a separate judgment call."""
     objective = str(answers.get("objective", "")).replace("_", " ")
-    phrases = {
+    phrase_by_factor = {
         "objective": f"your {objective} goal",
-        "risk": f"{answers.get('risk', '')} risk",
-        "horizon": f"a {answers.get('horizon', '')}-term horizon",
-        "liquidity": f"{answers.get('liquidity', '')} liquidity",
-        "closest_available": "a lower fit for your current preferences",
+        "risk": f"your {answers.get('risk', '')} risk tolerance",
+        "horizon": f"your {answers.get('horizon', '')}-term horizon",
+        "liquidity": f"your {answers.get('liquidity', '')} liquidity need",
     }
-    return " and ".join(phrases[factor] for factor in ranked.match_factors[:2])
+    return [
+        phrase_by_factor[factor] for factor in _MATCH_FIELD_ORDER if factor in ranked.match_factors
+    ]
+
+
+def _instrument_objectives_display(instrument: CuratedInstrument) -> str:
+    labels = [_OBJECTIVE_DISPLAY.get(item, item) for item in instrument.objectives]
+    return _join_natural(labels) if labels else "no stated objective"
+
+
+def _instrument_horizons_display(instrument: CuratedInstrument) -> str:
+    labels = [_HORIZON_DISPLAY.get(item, item) for item in instrument.horizons]
+    return _join_natural(labels) if labels else "no stated horizon"
+
+
+def _mismatch_reasons(ranked: RankedInstrument, answers: dict) -> list[str]:
+    """Facts about which of the user's stated preferences this instrument
+    does NOT match, read directly off the catalogue's own suitability
+    metadata (never invented) — only for a criterion the user actually
+    answered and the catalogue actually states a value for, so a field with
+    no stated preference or missing catalogue metadata is silently skipped
+    rather than guessed at."""
+    instrument = ranked.instrument
+    reasons = []
+    objective = answers.get("objective")
+    if objective and "objective" not in ranked.match_factors and instrument.objectives:
+        reasons.append(
+            f"targets {_instrument_objectives_display(instrument)}, not your "
+            f"{_OBJECTIVE_DISPLAY.get(str(objective), str(objective))} goal"
+        )
+    risk = answers.get("risk")
+    if risk and "risk" not in ranked.match_factors and instrument.risk_level:
+        reasons.append(f"carries {instrument.risk_level} risk, not your {risk} risk tolerance")
+    horizon = answers.get("horizon")
+    if horizon and "horizon" not in ranked.match_factors and instrument.horizons:
+        reasons.append(
+            f"suits {_instrument_horizons_display(instrument)}, not your {horizon}-term goal"
+        )
+    liquidity = answers.get("liquidity")
+    if liquidity and "liquidity" not in ranked.match_factors and instrument.liquidity_level:
+        reasons.append(
+            f"offers {instrument.liquidity_level} liquidity, not your {liquidity} liquidity need"
+        )
+    return reasons
+
+
+def _match_reason_text(ranked: RankedInstrument, answers: dict) -> str:
+    """Positive-only reasoning for the final allocation summary, where every
+    listed instrument is one the user already chose — there's nothing to
+    compare it against, so only why it fits is relevant."""
+    if ranked.match_factors == ("closest_available",):
+        return "The closest available match to your stated preferences."
+    phrases = _positive_phrases(ranked, answers)
+    return f"Matches {_join_natural(phrases)}." if phrases else "Matches your stated preferences."
+
+
+def _recommended_reason_text(ranked: RankedInstrument, answers: dict) -> str:
+    if ranked.match_factors == ("closest_available",):
+        return (
+            "No catalogue option closely matches every preference you gave — this is the "
+            "closest available choice."
+        )
+    phrases = _positive_phrases(ranked, answers)
+    if not phrases:
+        return "The best overall fit among the available options."
+    return f"Matches {_join_natural(phrases)}."
+
+
+def _less_fit_reason_text(ranked: RankedInstrument, answers: dict) -> str:
+    reasons = _mismatch_reasons(ranked, answers)
+    if not reasons:
+        return "A lower overall fit than the recommended option, based on the same catalogue data."
+    text = _join_natural(reasons[:2])
+    return f"{text[0].upper()}{text[1:]}."
 
 
 def _selection_options_text(ranked: list[RankedInstrument], answers: dict) -> str:
-    return "\n\n".join(
-        f"**Priority {item.priority} — {item.instrument.display_name}**\n"
-        f"Why: {_match_reason_text(item, answers)}"
-        for item in ranked
-    )
+    """Claude-Code-style options list: the top-ranked option is labeled
+    Recommended with the full, factual case for it; every other option
+    states — just as factually — which of the user's own stated preferences
+    it doesn't match, rather than repeating generic positive framing for
+    options that aren't actually the best fit."""
+    parts = []
+    for index, item in enumerate(ranked):
+        label = f"**Priority {item.priority} — {item.instrument.display_name}**"
+        if index == 0:
+            label += " (Recommended)"
+            body = _recommended_reason_text(item, answers)
+        else:
+            body = f"Less fit: {_less_fit_reason_text(item, answers)}"
+        parts.append(f"{label}\n{body}")
+    return "\n\n".join(parts)
 
 
 def _money_display(value: Decimal | None) -> str:
@@ -334,13 +551,16 @@ def _question_text(
 
     ranked = rank_instruments(context.instruments[: settings.market_data.max_batch_size], answers)
     choices = _selection_options_text(ranked, answers or {})
+    call_to_action = (
+        "Reply with the recommended option, another priority number or name, or describe "
+        "which one you'd like — up to three."
+    )
     if reason:
-        return f"{reason}\n\n{choices}\n\n" "Reply with up to three priority numbers or names."
+        return f"{reason}\n\n{choices}\n\n{call_to_action}"
     return (
         "Here is your suggested priority order:\n\n"
         f"{choices}\n\n"
-        "This is based on your preferences, not predicted returns. Which should we use? "
-        "Reply with up to three priority numbers or names."
+        f"This is based on your preferences, not predicted returns. {call_to_action}"
     )
 
 
@@ -614,16 +834,16 @@ async def investment_plan_node(state: ConversationState) -> dict:
             "investment_validation_reason": None,
         }
 
-    # Only "instruments" can remain here — selection itself stays on the
-    # deterministic catalogue-aware matcher (_parse_answer), unchanged from
-    # before this feature: it depends on live curated-instrument data
-    # extraction has no access to. Escape detection, however, applies here
-    # too (missing_fields=[] — nothing scalar left to extract, only
-    # is_escape matters): without it, "forget about this" / "what are my
-    # transactions" sent at this final step would fall straight into
-    # _parse_answer's error path and just loop the same question instead of
-    # handing back to Maestro, the exact gap _SCALAR_QUESTION_IDS's comment
-    # used to flag as deferred.
+    # Only "instruments" can remain here. _parse_answer's deterministic
+    # catalogue-aware matcher runs first — exact priority numbers and
+    # catalogue names/aliases resolve instantly, no LLM call, unchanged from
+    # before this feature. Only on a match failure does this fall back to
+    # InstrumentSelectionExtraction, which both resolves a natural-language
+    # selection ("the gold one", "the recommended option") against the same
+    # numbered list already shown, and detects an escape ("forget about
+    # this", "what are my transactions") — without it, either of those would
+    # otherwise just loop the same question instead of resolving the pick or
+    # handing back to Maestro.
     question_id = missing[0] if missing else None
     if question_id is not None:
         raw = interrupt(
@@ -632,15 +852,33 @@ async def investment_plan_node(state: ConversationState) -> dict:
                 "text": _question_text(question_id, context, reason, answers),
             }
         )
-        extraction = await _extract_investment_answers(str(raw), [], context, answers)
-        if extraction is not None and extraction.is_escape:
-            return {
-                "messages": [HumanMessage(content=str(raw))],
-                "stage": "investment_plan_escaped",
-                "investment_validation_attempts": 0,
-                "investment_validation_reason": None,
-            }
         parsed, error = _parse_answer(question_id, str(raw), context, answers)
+        if error and question_id == "instruments":
+            ranked = rank_instruments(
+                context.instruments[: settings.market_data.max_batch_size], answers
+            )
+            instrument_extraction = await _extract_instrument_selection(
+                str(raw), ranked, context, answers
+            )
+            if instrument_extraction is not None and instrument_extraction.is_escape:
+                return {
+                    "messages": [HumanMessage(content=str(raw))],
+                    "stage": "investment_plan_escaped",
+                    "investment_validation_attempts": 0,
+                    "investment_validation_reason": None,
+                }
+            if instrument_extraction is not None and instrument_extraction.selected_priorities:
+                instrument_by_priority = {item.priority: item.instrument for item in ranked}
+                selected_instrument_ids: list[str] = []
+                for priority in instrument_extraction.selected_priorities:
+                    instrument = instrument_by_priority.get(priority)
+                    if instrument is not None and str(instrument.id) not in selected_instrument_ids:
+                        selected_instrument_ids.append(str(instrument.id))
+                if (
+                    selected_instrument_ids
+                    and len(selected_instrument_ids) <= settings.market_data.max_batch_size
+                ):
+                    parsed, error = selected_instrument_ids, None
         if error:
             attempts += 1
             if attempts >= MAX_VALIDATION_ATTEMPTS:
