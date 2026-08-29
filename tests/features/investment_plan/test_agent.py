@@ -7,8 +7,12 @@ import pytest
 from app.core.config import settings
 from app.features.chat.agents import investment as investment_module
 from app.features.chat.agents.investment import (
+    InvestmentAnswerExtraction,
+    _consolidated_question_text,
+    _mock_extract_investment_answers,
     _parse_answer,
     _question_text,
+    _validate_extracted_amount,
     investment_plan_node,
 )
 from app.features.investment_plan.ranking import rank_instruments
@@ -379,3 +383,85 @@ async def test_complete_flow_returns_reproducible_widget(monkeypatch):
     assert all(item.match_factors for item in widget.payload.allocations)
     assert "No trade has been executed" in result["messages"][0].content
     assert "Priority 1" in result["messages"][0].content
+
+
+# --- extraction: multi-field answers from one message, and the escape signal ---
+
+
+def test_validate_extracted_amount_accepts_and_quantizes():
+    assert _validate_extracted_amount(1200.5) == Decimal("1200.50")
+
+
+@pytest.mark.parametrize("value", [0, -50, float(10**10), float("nan"), float("inf")])
+def test_validate_extracted_amount_rejects_out_of_range_or_non_finite(value):
+    assert _validate_extracted_amount(value) is None
+
+
+def test_mock_extraction_fills_only_the_field_the_message_supports():
+    result = _mock_extract_investment_answers(
+        "5000 EGP", ["confirmed_amount", "objective"], InvestmentContext(), {}
+    )
+    assert result.confirmed_amount == 5000.0
+    assert result.objective is None
+    assert result.is_escape is False
+
+
+def test_mock_extraction_fills_several_fields_from_one_dense_message():
+    # "growth" and "long term" are each unambiguous to exactly one field's
+    # alias set — unlike e.g. "moderate"/"medium", which both liquidity and
+    # risk recognize, so a combined phrase using those would read as
+    # ambiguous to this regex-based mock approximation (a real LLM
+    # extraction call wouldn't have that limitation).
+    result = _mock_extract_investment_answers(
+        "growth, long term",
+        ["objective", "risk", "horizon", "liquidity"],
+        InvestmentContext(),
+        {},
+    )
+    assert result.objective == "balanced_growth"
+    assert result.horizon == "long"
+    assert result.risk is None
+    assert result.liquidity is None
+    assert result.is_escape is False
+
+
+@pytest.mark.parametrize("message", ["let's forget about this", "actually, never mind"])
+def test_mock_extraction_flags_escape_when_nothing_matches_and_message_reads_like_one(message):
+    result = _mock_extract_investment_answers(message, ["objective"], InvestmentContext(), {})
+    assert result.is_escape is True
+    assert result.objective is None
+
+
+def test_mock_extraction_is_not_an_escape_when_nothing_matches_but_no_escape_keyword():
+    result = _mock_extract_investment_answers(
+        "purple elephant", ["objective"], InvestmentContext(), {}
+    )
+    assert result.is_escape is False
+    assert result.objective is None
+
+
+def test_consolidated_question_text_delegates_for_a_single_missing_field():
+    context = InvestmentContext()
+    single = _consolidated_question_text(["risk"], context, None, {})
+    assert single == _question_text("risk", context, None, {})
+
+
+def test_consolidated_question_text_joins_several_missing_fields():
+    context = InvestmentContext()
+    combined = _consolidated_question_text(["objective", "risk"], context, None, {})
+    assert "A few things to plan this:" in combined
+    assert _question_text("objective", context, None, {}) in combined
+    assert _question_text("risk", context, None, {}) in combined
+
+
+def test_consolidated_question_text_uses_reason_as_a_batch_prefix():
+    context = InvestmentContext()
+    combined = _consolidated_question_text(
+        ["objective", "risk"], context, "I couldn't confirm any of that — could you try again?", {}
+    )
+    assert combined.startswith("I couldn't confirm any of that — could you try again?")
+
+
+def test_investment_answer_extraction_rejects_unknown_fields():
+    with pytest.raises(Exception):
+        InvestmentAnswerExtraction(is_escape=False, made_up_field="x")

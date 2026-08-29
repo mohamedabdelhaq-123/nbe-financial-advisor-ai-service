@@ -5,11 +5,14 @@ from __future__ import annotations
 import re
 import uuid
 from decimal import Decimal, InvalidOperation
+from typing import Literal
 
 from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.types import interrupt
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.config import settings
+from app.core.logging import get_logger
 from app.features.chat.guards import with_disclaimer
 from app.features.chat.schemas import (
     InvestmentPlanAllocationPayload,
@@ -22,8 +25,24 @@ from app.features.investment_plan.ranking import RankedInstrument, rank_instrume
 from app.features.investment_plan.schemas import InvestmentContext, PricedInstrument
 from app.features.market_data.service import fetch_quotes
 
+logger = get_logger(__name__)
+
 MAX_VALIDATION_ATTEMPTS = 3
 MAX_CONFIRMED_AMOUNT = Decimal("1000000000")
+# The five scalar fields extraction can fill from one free-form message.
+# "instruments" (the last _QUESTION_ORDER entry) is deliberately excluded —
+# it depends on the live curated catalogue and stays on the deterministic
+# regex/alias matcher below (_parse_answer), not LLM extraction. Escape
+# detection (see InvestmentAnswerExtraction) is likewise scoped to this
+# scalar phase only for now — the instruments-only phase has no escape path
+# yet, a known, deliberate limitation of this iteration.
+_SCALAR_QUESTION_IDS = (
+    "confirmed_amount",
+    "objective",
+    "risk",
+    "horizon",
+    "liquidity",
+)
 _AMOUNT_TRANSLATION = str.maketrans(
     "٠١٢٣٤٥٦٧٨٩٫٬",
     "0123456789.,",
@@ -81,6 +100,155 @@ _QUESTION_ORDER = (
     "liquidity",
     "instruments",
 )
+
+
+class InvestmentAnswerExtraction(BaseModel):
+    """Structured extraction of investment-planning answers from one
+    free-form message, given which of _SCALAR_QUESTION_IDS are still
+    missing. All five scalar fields are optional — a message may state
+    zero, one, or several at once (e.g. an amount and an implied horizon in
+    the same sentence) — investment_plan_node only ever merges in whichever
+    of them are still missing, so a value for an already-answered field is
+    simply ignored rather than overwriting it.
+
+    is_escape signals the message doesn't attempt to state any of the five
+    fields at all, and instead reads as a request to abandon or redirect
+    the conversation (e.g. "let's forget about this", "what are my
+    transactions") — investment_plan_node hands control back to Maestro for
+    exactly this turn instead of force-fitting the message as an invalid
+    answer. See graph.py's investment_plan -> maestro edge.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    is_escape: bool = Field(
+        description=(
+            "True if the message does not state any of the fields below and "
+            "instead reads as a request to abandon or redirect the "
+            "conversation, rather than an attempt to answer."
+        )
+    )
+    confirmed_amount: float | None = Field(
+        default=None,
+        description=(
+            "A single unambiguous EGP amount stated in the message. Null if "
+            "no amount is stated, or the amount is ambiguous (e.g. a range)."
+        ),
+    )
+    objective: Literal["preserve_value", "balanced_growth", "income"] | None = Field(
+        default=None, description="What the money should do for the user, or null."
+    )
+    risk: Literal["low", "moderate", "high"] | None = Field(
+        default=None, description="Comfort with price movement, or null."
+    )
+    horizon: Literal["short", "medium", "long"] | None = Field(
+        default=None, description="When the money might be needed, or null."
+    )
+    liquidity: Literal["low", "medium", "high"] | None = Field(
+        default=None, description="How quickly access might be needed, or null."
+    )
+
+
+# Mock mode has no real model to call, but unlike plan/service.py's
+# extract_stated_goal (a strictly-additive convenience that's fine to be
+# inert offline), extraction is now the *only* path that ever fills a
+# scalar answer — an inert mock branch would make investment planning's
+# scalar phase entirely non-functional offline/in CI, not just untested.
+# So mock mode reuses _parse_answer's existing, already-proven per-field
+# regex/alias matching independently against each still-missing field
+# instead of calling a model — the deterministic offline substitute for
+# "does this message support this field", one field at a time, same as a
+# real extraction call would judge each field.
+_MOCK_ESCAPE_KEYWORDS = ("forget", "cancel", "never mind", "nevermind", "stop this")
+
+
+def _mock_extract_investment_answers(
+    text: str, missing_fields: list[str], context: InvestmentContext, answers: dict
+) -> InvestmentAnswerExtraction:
+    fields: dict[str, float | str] = {}
+    for field_id in missing_fields:
+        parsed, error = _parse_answer(field_id, text, context, answers)
+        if error is not None or parsed is None:
+            continue
+        fields[field_id] = float(parsed) if field_id == "confirmed_amount" else parsed
+    is_escape = not fields and any(keyword in text.casefold() for keyword in _MOCK_ESCAPE_KEYWORDS)
+    return InvestmentAnswerExtraction(is_escape=is_escape, **fields)  # type: ignore[arg-type]
+
+
+async def _extract_investment_answers(
+    text: str, missing_fields: list[str], context: InvestmentContext, answers: dict
+) -> InvestmentAnswerExtraction | None:
+    """Runs the structured extraction call for one resumed message against
+    whichever scalar fields are still missing. Returns None on any
+    real-provider failure, which falls back to investment_plan_node's
+    existing invalid-attempt handling rather than raising and losing the
+    user's turn."""
+    if settings.chat_model.use_mock:
+        return _mock_extract_investment_answers(text, missing_fields, context, answers)
+
+    from langchain_core.messages import HumanMessage as LLMHumanMessage
+    from langchain_core.messages import SystemMessage
+
+    from app.core.llm import get_chat_model
+    from app.features.chat.prompts import (
+        get_investment_extraction_human_prompt,
+        get_investment_extraction_system_prompt,
+    )
+
+    try:
+        system_prompt = get_investment_extraction_system_prompt().render()
+        human_prompt = get_investment_extraction_human_prompt().render(
+            message=text, missing_fields=missing_fields
+        )
+        structured_llm = get_chat_model().with_structured_output(InvestmentAnswerExtraction)
+        raw_result = await structured_llm.ainvoke(
+            [SystemMessage(content=system_prompt), LLMHumanMessage(content=human_prompt)]
+        )
+        return (
+            raw_result
+            if isinstance(raw_result, InvestmentAnswerExtraction)
+            else InvestmentAnswerExtraction.model_validate(raw_result)
+        )
+    except Exception:
+        logger.exception("investment_answer_extraction_failed")
+        return None
+
+
+def _validate_extracted_amount(value: float) -> Decimal | None:
+    """Applies the same bounds this field always enforced (see
+    _parse_answer's confirmed_amount branch) to an LLM-extracted value — an
+    out-of-range or non-finite extraction is treated as not having been
+    extracted at all, rather than silently accepted or erroring the turn."""
+    try:
+        amount = Decimal(str(value))
+    except (InvalidOperation, ValueError):
+        return None
+    if not amount.is_finite() or amount <= 0 or amount > MAX_CONFIRMED_AMOUNT:
+        return None
+    return amount.quantize(Decimal("0.01"))
+
+
+def _consolidated_question_text(
+    missing_scalar_ids: list[str],
+    context: InvestmentContext,
+    reason: str | None,
+    answers: dict,
+) -> str:
+    """Builds one question covering every still-missing scalar field —
+    reusing _question_text's existing per-field phrasing (including the
+    surplus-aware amount framing) rather than duplicating it, joined into
+    one message when more than one field remains. `reason` (set only when
+    the previous turn's message stated none of the missing fields at all —
+    see investment_plan_node) applies to the whole batch rather than one
+    specific field, since a consolidated question doesn't attribute failure
+    to a single field."""
+    if len(missing_scalar_ids) == 1:
+        return _question_text(missing_scalar_ids[0], context, reason, answers)
+    parts = [_question_text(field_id, context, None, answers) for field_id in missing_scalar_ids]
+    body = "\n\n".join(parts)
+    if reason:
+        return f"{reason}\n\n{body}"
+    return f"A few things to plan this:\n\n{body}"
 
 
 def _match_reason_text(ranked: RankedInstrument, answers: dict) -> str:
@@ -359,7 +527,90 @@ async def investment_plan_node(state: ConversationState) -> dict:
     attempts = state.get("investment_validation_attempts", 0)
     reason = state.get("investment_validation_reason")
 
-    question_id = next((item for item in _QUESTION_ORDER if item not in answers), None)
+    missing = [item for item in _QUESTION_ORDER if item not in answers]
+    scalar_missing = [item for item in missing if item != "instruments"]
+
+    if scalar_missing:
+        raw = interrupt(
+            {
+                "question_id": "investment_scalars",
+                "text": _consolidated_question_text(scalar_missing, context, reason, answers),
+            }
+        )
+        extraction = await _extract_investment_answers(str(raw), scalar_missing, context, answers)
+
+        if extraction is not None and extraction.is_escape:
+            # Hand this turn back to Maestro instead of force-fitting the
+            # message as an invalid answer — see graph.py's
+            # investment_plan -> maestro edge. investment_answers is
+            # deliberately untouched: coming back to investment planning
+            # later (PR 1's guard) resumes right where this left off.
+            return {
+                "messages": [HumanMessage(content=str(raw))],
+                "stage": "investment_plan_escaped",
+                "investment_validation_attempts": 0,
+                "investment_validation_reason": None,
+            }
+
+        filled_any = False
+        if extraction is not None:
+            for field_id in scalar_missing:
+                value = getattr(extraction, field_id)
+                if value is None:
+                    continue
+                if field_id == "confirmed_amount":
+                    decimal_value = _validate_extracted_amount(value)
+                    if decimal_value is None:
+                        continue
+                    answers[field_id] = str(decimal_value)
+                else:
+                    answers[field_id] = value
+                filled_any = True
+
+        if not filled_any:
+            # Not an escape, and nothing this turn's message stated matched
+            # any still-missing field — same MAX_VALIDATION_ATTEMPTS budget
+            # as before, but now shared across the whole batch of missing
+            # fields rather than one specific field: any turn that makes
+            # partial progress (filled_any=True) resets it, so a user who
+            # keeps supplying *something* useful never gets cut off.
+            attempts += 1
+            if attempts >= MAX_VALIDATION_ATTEMPTS:
+                return {
+                    "messages": [
+                        AIMessage(
+                            content=(
+                                "I couldn't confirm that part of the investment scenario, so I "
+                                "stopped without requesting prices or creating an allocation."
+                            )
+                        )
+                    ],
+                    "stage": "investment_plan_cancelled",
+                    "investment_validation_attempts": 0,
+                    "investment_validation_reason": None,
+                }
+            return {
+                "messages": [HumanMessage(content=str(raw))],
+                "stage": "investment_planning",
+                "investment_validation_attempts": attempts,
+                "investment_validation_reason": (
+                    "I couldn't confirm any of that — could you try again?"
+                ),
+            }
+
+        return {
+            "messages": [HumanMessage(content=str(raw))],
+            "investment_answers": answers,
+            "stage": "investment_planning",
+            "investment_validation_attempts": 0,
+            "investment_validation_reason": None,
+        }
+
+    # Only "instruments" can remain here — stays on the deterministic
+    # catalogue-aware matcher (_parse_answer), unchanged from before this
+    # feature: it depends on live curated-instrument data extraction has no
+    # access to, and is deliberately deferred (see _SCALAR_QUESTION_IDS).
+    question_id = missing[0] if missing else None
     if question_id is not None:
         raw = interrupt(
             {
