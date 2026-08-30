@@ -52,7 +52,11 @@ _AMOUNT_TRANSLATION = str.maketrans(
     "٠١٢٣٤٥٦٧٨٩٫٬",
     "0123456789.,",
 )
-_AMOUNT_PATTERN = re.compile(r"(?<![\d.,])[-+]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?![\d.,kKmM])")
+_AMOUNT_PATTERN = re.compile(r"(?<![\w.,])[-+]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?![\w.,])")
+_BALANCE_PERCENT_PATTERN = re.compile(
+    r"(?<![\d.])(\d+(?:\.\d+)?)\s*(?:%|٪|percent\b|per\s+cent\b)",
+    re.IGNORECASE,
+)
 _UNIT_LABELS = {
     "gram_24k": "gram of 24K gold",
     "fund_unit": "fund unit",
@@ -195,8 +199,37 @@ async def _extract_investment_answers(
     output would otherwise be indistinguishable, in the outer
     stream_mode="messages" stream, from a genuine specialist reply,
     corrupting both the agent_selected event and the token stream."""
+    remaining_fields = list(missing_fields)
+    deterministic_amount: float | None = None
+    relative_amount_recognized = False
+    if "confirmed_amount" in remaining_fields:
+        relative_amount, relative_error = _parse_balance_relative_amount(text, context)
+        if relative_amount is not None or relative_error is not None:
+            # A percentage/fraction must never fall through and be mistaken
+            # for a literal amount ("30%" becoming 30 EGP). Valid relative
+            # amounts are calculated locally with Decimal; invalid ones stay
+            # unanswered and are reprompted.
+            relative_amount_recognized = True
+            remaining_fields.remove("confirmed_amount")
+            if relative_amount is not None:
+                deterministic_amount = float(relative_amount)
+
     if settings.chat_model.use_mock:
-        return _mock_extract_investment_answers(text, missing_fields, context, answers)
+        result = _mock_extract_investment_answers(text, remaining_fields, context, answers)
+        if relative_amount_recognized:
+            return result.model_copy(
+                update={
+                    "confirmed_amount": deterministic_amount,
+                    "is_escape": False if deterministic_amount is not None else result.is_escape,
+                }
+            )
+        return result
+
+    if not remaining_fields:
+        return InvestmentAnswerExtraction(
+            is_escape=False,
+            confirmed_amount=deterministic_amount,
+        )
 
     from langchain_core.messages import HumanMessage as LLMHumanMessage
     from langchain_core.messages import SystemMessage
@@ -210,20 +243,33 @@ async def _extract_investment_answers(
     try:
         system_prompt = get_investment_extraction_system_prompt().render()
         human_prompt = get_investment_extraction_human_prompt().render(
-            message=text, missing_fields=missing_fields
+            message=text, missing_fields=remaining_fields
         )
         structured_llm = get_chat_model().with_structured_output(InvestmentAnswerExtraction)
         raw_result = await structured_llm.ainvoke(
             [SystemMessage(content=system_prompt), LLMHumanMessage(content=human_prompt)],
             config={"tags": [INTERNAL_CALL_TAG]},
         )
-        return (
+        result = (
             raw_result
             if isinstance(raw_result, InvestmentAnswerExtraction)
             else InvestmentAnswerExtraction.model_validate(raw_result)
         )
+        if relative_amount_recognized:
+            return result.model_copy(
+                update={
+                    "confirmed_amount": deterministic_amount,
+                    "is_escape": False if deterministic_amount is not None else result.is_escape,
+                }
+            )
+        return result
     except Exception:
         logger.exception("investment_answer_extraction_failed")
+        if deterministic_amount is not None:
+            return InvestmentAnswerExtraction(
+                is_escape=False,
+                confirmed_amount=deterministic_amount,
+            )
         return None
 
 
@@ -349,6 +395,57 @@ def _validate_extracted_amount(value: float) -> Decimal | None:
     if not amount.is_finite() or amount <= 0 or amount > MAX_CONFIRMED_AMOUNT:
         return None
     return amount.quantize(Decimal("0.01"))
+
+
+def _merge_extracted_answers(
+    extraction: InvestmentAnswerExtraction | None,
+    missing_fields: list[str],
+    answers: dict,
+) -> bool:
+    """Merge only valid, still-missing scalar facts into questionnaire state."""
+    if extraction is None:
+        return False
+    filled_any = False
+    for field_id in missing_fields:
+        value = getattr(extraction, field_id)
+        if value is None:
+            continue
+        if field_id == "confirmed_amount":
+            decimal_value = _validate_extracted_amount(value)
+            if decimal_value is None:
+                continue
+            answers[field_id] = str(decimal_value)
+        else:
+            answers[field_id] = value
+        filled_any = True
+    return filled_any
+
+
+async def extract_initial_investment_answers(
+    text: str,
+    context: InvestmentContext,
+) -> dict:
+    """Capture facts from the request that first opened the questionnaire.
+
+    LangGraph pauses the investment node before it receives a resume value,
+    so without this handoff a request such as "invest 30% in gold" is used
+    only for routing and both facts disappear. Maestro calls this once after
+    deriving the live investment context and persists the result before the
+    first interrupt.
+    """
+    answers: dict = {}
+    extraction = await _extract_investment_answers(
+        text,
+        list(_SCALAR_QUESTION_IDS),
+        context,
+        answers,
+    )
+    _merge_extracted_answers(extraction, list(_SCALAR_QUESTION_IDS), answers)
+
+    selected, error = _parse_answer("instruments", text, context, answers)
+    if error is None and selected:
+        answers["instruments"] = selected
+    return answers
 
 
 # Short labels for the numbered list a multi-field question renders as —
@@ -536,6 +633,10 @@ def _money_display(value: Decimal | None) -> str:
     return "not available" if value is None else f"{value:,.0f}"
 
 
+def _balance_display(value: Decimal) -> str:
+    return f"{value:,.2f}"
+
+
 def _question_text(
     question_id: str,
     context: InvestmentContext,
@@ -544,7 +645,21 @@ def _question_text(
 ) -> str:
     if question_id == "confirmed_amount":
         if reason:
-            return f"{reason}\n\nTry one amount, such as **1,200 EGP**."
+            relative_hint = (
+                ", **30%**, or **half of my balance**"
+                if context.current_balance is not None
+                else ""
+            )
+            return f"{reason}\n\nTry one amount, such as **1,200 EGP**{relative_hint}."
+        if context.current_balance is not None:
+            currency = context.current_balance_currency or "EGP"
+            return (
+                f"Your current {currency} balance is "
+                f"**{_balance_display(context.current_balance)} {currency}**.\n\n"
+                "How much should this plan use? You can give an exact amount, "
+                "a percentage such as **30%**, or a fraction such as "
+                "**half of my balance**."
+            )
         if context.estimated_monthly_surplus is None:
             return (
                 "I could not estimate money left from your recent data.\n\n"
@@ -563,8 +678,7 @@ def _question_text(
         if reason:
             return f"{reason}\n\nTry **low**, **moderate**, or **high**."
         return (
-            "How much price movement are you comfortable with: "
-            "**low**, **moderate**, or **high**?"
+            "How much price movement are you comfortable with: **low**, **moderate**, or **high**?"
         )
     if question_id == "objective":
         if reason:
@@ -581,8 +695,7 @@ def _question_text(
         if reason:
             return f"{reason}\n\nTry **quickly**, **some flexibility**, or **not soon**."
         return (
-            "How quickly might you need access: **quickly**, "
-            "**some flexibility**, or **not soon**?"
+            "How quickly might you need access: **quickly**, **some flexibility**, or **not soon**?"
         )
 
     ranked = rank_instruments(context.instruments[: settings.market_data.max_batch_size], answers)
@@ -623,6 +736,58 @@ def _parse_natural_choice(question_id: str, cleaned: str) -> str | None:
     return matches.pop() if len(matches) == 1 else None
 
 
+def _parse_balance_relative_amount(
+    raw: str,
+    context: InvestmentContext,
+) -> tuple[Decimal | None, str | None]:
+    """Resolve a percentage/fraction of the live EGP balance locally.
+
+    Returning an error also signals that relative wording was recognized, so
+    callers can prevent a percentage such as ``30%`` from falling through to
+    the literal-number parser and becoming 30 EGP.
+    """
+    normalized = raw.translate(_AMOUNT_TRANSLATION)
+    lowered = normalized.casefold()
+    candidates: list[Decimal] = [
+        Decimal(match) for match in _BALANCE_PERCENT_PATTERN.findall(normalized)
+    ]
+
+    balance_mentioned = bool(re.search(r"\bbalance\b", lowered))
+    compact = re.sub(r"[^\w\s]+", " ", lowered)
+    compact = re.sub(r"\s+", " ", compact).strip()
+
+    if re.search(r"\bhalf\b", lowered) and (
+        balance_mentioned or compact in {"half", "a half", "one half"}
+    ):
+        candidates.append(Decimal("50"))
+    if re.search(r"\bquarter\b", lowered) and (
+        balance_mentioned or compact in {"quarter", "a quarter", "one quarter"}
+    ):
+        candidates.append(Decimal("25"))
+    if re.search(r"\b(?:all|everything|full|whole)\b", lowered) and (
+        balance_mentioned or compact in {"all", "everything"}
+    ):
+        candidates.append(Decimal("100"))
+
+    if not candidates:
+        return None, None
+    if len(candidates) != 1:
+        return None, "Please provide one percentage or fraction of your balance."
+
+    percentage = candidates[0]
+    if not percentage.is_finite() or percentage <= 0 or percentage > 100:
+        return None, "The balance percentage must be greater than 0 and no more than 100%."
+    if context.current_balance is None:
+        return None, "I couldn't determine your current EGP balance for that calculation."
+    if context.current_balance <= 0:
+        return None, "Your current EGP balance must be greater than zero for that calculation."
+
+    amount = (context.current_balance * percentage / Decimal("100")).quantize(Decimal("0.01"))
+    if amount > MAX_CONFIRMED_AMOUNT:
+        return None, "The calculated amount must not exceed 1,000,000,000 EGP."
+    return amount, None
+
+
 def _parse_answer(
     question_id: str,
     raw: str,
@@ -631,6 +796,12 @@ def _parse_answer(
 ):
     cleaned = raw.strip()
     if question_id == "confirmed_amount":
+        relative_amount, relative_error = _parse_balance_relative_amount(cleaned, context)
+        if relative_amount is not None or relative_error is not None:
+            return (
+                str(relative_amount) if relative_amount is not None else None,
+                relative_error,
+            )
         normalized_amount = cleaned.translate(_AMOUNT_TRANSLATION)
         matches = _AMOUNT_PATTERN.findall(normalized_amount)
         if len(matches) != 1:
@@ -816,20 +987,7 @@ async def investment_plan_node(state: ConversationState) -> dict:
                 "investment_validation_reason": None,
             }
 
-        filled_any = False
-        if extraction is not None:
-            for field_id in scalar_missing:
-                value = getattr(extraction, field_id)
-                if value is None:
-                    continue
-                if field_id == "confirmed_amount":
-                    decimal_value = _validate_extracted_amount(value)
-                    if decimal_value is None:
-                        continue
-                    answers[field_id] = str(decimal_value)
-                else:
-                    answers[field_id] = value
-                filled_any = True
+        filled_any = _merge_extracted_answers(extraction, scalar_missing, answers)
 
         if not filled_any:
             # Not an escape, and nothing this turn's message stated matched

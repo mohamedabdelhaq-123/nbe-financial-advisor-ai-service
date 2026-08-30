@@ -77,6 +77,14 @@ def _no_real_backend_or_own_db(monkeypatch):
         _failing_list_curated_instruments,
     )
 
+    async def _no_current_balances(*_args, **_kwargs):
+        return []
+
+    monkeypatch.setattr(
+        "app.tools.transactions.calculate_current_balances",
+        _no_current_balances,
+    )
+
 
 @pytest.mark.asyncio
 async def test_scalar_phase_asks_one_consolidated_question_then_fills_from_one_message():
@@ -98,6 +106,79 @@ async def test_scalar_phase_asks_one_consolidated_question_then_fills_from_one_m
     assert snap.values["investment_answers"].get("objective") == "balanced_growth"
     assert snap.values["investment_answers"].get("horizon") == "long"
     assert snap.interrupts, "risk/liquidity/amount are still missing"
+
+
+@pytest.mark.asyncio
+async def test_initial_request_preserves_balance_percentage_and_gold(monkeypatch):
+    gold = _curated_instrument("gold", "24K Gold")
+
+    async def _live_curated_instruments():
+        return [gold]
+
+    async def _live_balance(*_args, **_kwargs):
+        return [
+            {
+                "currency": "EGP",
+                "current_balance": 1000164018.51,
+                "accounts": [],
+            }
+        ]
+
+    monkeypatch.setattr(
+        "app.features.investment_plan.context.list_curated_instruments",
+        _live_curated_instruments,
+    )
+    monkeypatch.setattr(
+        "app.tools.transactions.calculate_current_balances",
+        _live_balance,
+    )
+
+    graph, config = await _fresh_graph_and_config()
+    await graph.ainvoke(_initial_state("I want to invest 30% in gold"), config)
+
+    snap = await graph.aget_state(config)
+    answers = snap.values["investment_answers"]
+    assert answers["confirmed_amount"] == "300049205.55"
+    assert answers["instruments"] == [str(gold.id)]
+    assert snap.interrupts
+    assert "How much should this plan use?" not in snap.interrupts[0].value["text"]
+
+
+@pytest.mark.asyncio
+async def test_resumed_dense_answer_calculates_half_the_live_balance(monkeypatch):
+    async def _live_balance(*_args, **_kwargs):
+        return [
+            {
+                "currency": "EGP",
+                "current_balance": 1000164018.51,
+                "accounts": [],
+            }
+        ]
+
+    monkeypatch.setattr(
+        "app.tools.transactions.calculate_current_balances",
+        _live_balance,
+    )
+
+    graph, config = await _fresh_graph_and_config()
+    await graph.ainvoke(_initial_state("help me invest some money"), config)
+    await graph.ainvoke(
+        Command(
+            resume=(
+                "amount = half of my current balance, goal = grow, risk = high, "
+                "horizon = short, liquidity = quickly"
+            )
+        ),
+        config,
+    )
+
+    snap = await graph.aget_state(config)
+    answers = snap.values["investment_answers"]
+    assert answers["confirmed_amount"] == "500082009.26"
+    assert answers["objective"] == "balanced_growth"
+    assert answers["risk"] == "high"
+    assert answers["horizon"] == "short"
+    assert answers["liquidity"] == "high"
 
 
 @pytest.mark.asyncio

@@ -103,11 +103,37 @@ async def _derive_surplus(user_id: uuid.UUID) -> dict:
         return {}
 
 
+async def _derive_current_balance(user_id: uuid.UUID) -> dict:
+    """Return the live EGP balance used as the planner's amount reference.
+
+    Investment opportunities are priced in EGP, so balances in other
+    currencies are deliberately not combined without an exchange rate. The
+    calculation itself is shared with the analysis agent to keep answers such
+    as "my balance" and "half my balance" on exactly the same ledger rule.
+    """
+    try:
+        from app.tools.transactions import calculate_current_balances
+
+        groups = await calculate_current_balances(user_id, currency="EGP")
+    except Exception:
+        logger.exception("derive_investment_balance_failed", user_id=str(user_id))
+        return {}
+
+    if not groups:
+        return {}
+    group = groups[0]
+    return {
+        "current_balance": Decimal(str(group["current_balance"])).quantize(Decimal("0.01")),
+        "current_balance_currency": str(group["currency"]),
+    }
+
+
 async def derive_investment_context(user_id: uuid.UUID) -> InvestmentContext:
     surplus = await _derive_surplus(user_id)
+    balance = await _derive_current_balance(user_id)
     try:
         instruments = await list_curated_instruments()
     except Exception:
         logger.exception("derive_investment_catalog_failed", user_id=str(user_id))
         instruments = []
-    return InvestmentContext(**surplus, instruments=instruments)
+    return InvestmentContext(**surplus, **balance, instruments=instruments)

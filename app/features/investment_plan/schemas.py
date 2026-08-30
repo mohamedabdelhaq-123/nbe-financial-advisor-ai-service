@@ -15,6 +15,8 @@ class InvestmentContext(BaseModel):
     estimated_monthly_surplus: Decimal | None = None
     currency: str | None = None
     months_used: int = 0
+    current_balance: Decimal | None = None
+    current_balance_currency: str | None = None
     instruments: list[CuratedInstrument] = Field(default_factory=list)
 
 

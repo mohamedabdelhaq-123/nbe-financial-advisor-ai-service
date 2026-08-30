@@ -233,8 +233,23 @@ async def _investment_context_update(state: ConversationState) -> dict:
 
     context = await derive_investment_context(state["user_id"])
     result: dict = {"investment_context": context.model_dump(mode="json")}
-    if not state.get("investment_answers"):
-        result["investment_answers"] = {}
+    from app.features.chat.agents.investment import extract_initial_investment_answers
+
+    last_message = state["messages"][-1] if state.get("messages") else None
+    initial_text = (
+        last_message.content
+        if isinstance(last_message, HumanMessage) and isinstance(last_message.content, str)
+        else ""
+    )
+    stated_answers = await extract_initial_investment_answers(initial_text, context)
+    existing_answers = dict(state.get("investment_answers") or {})
+    if not existing_answers:
+        result["investment_answers"] = stated_answers
+        result["investment_validation_attempts"] = 0
+        result["investment_validation_reason"] = None
+    elif stated_answers:
+        existing_answers.update(stated_answers)
+        result["investment_answers"] = existing_answers
         result["investment_validation_attempts"] = 0
         result["investment_validation_reason"] = None
     return result
@@ -270,13 +285,17 @@ async def maestro_node(state: ConversationState) -> dict:
             state.get("investment_answers"),
         )
         if selection:
-            answers = dict(state.get("investment_answers") or {})
+            context_update = await _investment_context_update(state)
+            answers = dict(
+                context_update.get("investment_answers") or state.get("investment_answers") or {}
+            )
             answers["instruments"] = selection
             decision = MaestroRoutingDecision(
                 outcome="route", route="investment_planning", confidence=1.0
             )
             return {
                 **_decision_state(decision),
+                **context_update,
                 "stage": "investment_planning",
                 "investment_answers": answers,
                 "investment_validation_attempts": 0,

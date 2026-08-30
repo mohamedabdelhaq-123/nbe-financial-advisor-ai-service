@@ -8,7 +8,6 @@ asserts on the typed widget that lands in the sink.
 
 import datetime
 import uuid
-from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from langchain_core.tools import tool
@@ -281,29 +280,28 @@ def _patch_planner_context(monkeypatch, context):
     monkeypatch.setattr("app.features.plan.context.derive_planner_context", _fake)
 
 
-def _patch_backend_rows(monkeypatch, *, net_worth=None, balances=()):
-    """Stubs both balance queries. `scalars().first()` serves the net-worth
-    lookup; `.all()` serves the per-account running-balance lookup."""
-    mock_result = MagicMock()
-    mock_result.scalars.return_value.first.return_value = net_worth
-    mock_result.all.return_value = [(uuid.uuid4(), b) for b in balances]
+def _patch_current_balance(monkeypatch, balance):
+    async def _fake(user_id, currency=None):
+        if balance is None:
+            return []
+        return [
+            {
+                "currency": currency or "EGP",
+                "current_balance": balance,
+                "accounts": [],
+            }
+        ]
 
-    session = MagicMock()
-    session.execute = AsyncMock(return_value=mock_result)
-
-    async def _gen():
-        yield session
-
-    monkeypatch.setattr("app.backend_db.get_backend_session", _gen)
+    monkeypatch.setattr("app.tools.widgets.calculate_current_balances", _fake)
 
 
 @pytest.mark.asyncio
-async def test_savings_projection_prefers_net_worth_snapshot(monkeypatch):
+async def test_savings_projection_uses_live_current_balance(monkeypatch):
     _patch_planner_context(
         monkeypatch,
         {"currency": "EGP", "avg_monthly_income": 12000.0, "avg_monthly_recurring_expense": 8500.0},
     )
-    _patch_backend_rows(monkeypatch, net_worth=48200.0, balances=(999.0,))
+    _patch_current_balance(monkeypatch, 48200.0)
 
     tools, sink = _tools()
     result = await _by_name(tools, "show_savings_projection").ainvoke({})
@@ -319,13 +317,12 @@ async def test_savings_projection_prefers_net_worth_snapshot(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_savings_projection_falls_back_to_running_balance(monkeypatch):
+async def test_savings_projection_uses_balance_total_across_accounts(monkeypatch):
     _patch_planner_context(
         monkeypatch,
         {"currency": "EGP", "avg_monthly_income": 5000.0, "avg_monthly_recurring_expense": 1000.0},
     )
-    # No net-worth snapshot -> sum the newest running balance per account.
-    _patch_backend_rows(monkeypatch, net_worth=None, balances=(1200.0, 800.0))
+    _patch_current_balance(monkeypatch, 2000.0)
 
     tools, sink = _tools()
     await _by_name(tools, "show_savings_projection").ainvoke({})
@@ -339,7 +336,7 @@ async def test_savings_projection_emits_no_widget_without_any_balance(monkeypatc
         monkeypatch,
         {"currency": "EGP", "avg_monthly_income": 5000.0, "avg_monthly_recurring_expense": 1000.0},
     )
-    _patch_backend_rows(monkeypatch, net_worth=None, balances=())
+    _patch_current_balance(monkeypatch, None)
 
     tools, sink = _tools()
     result = await _by_name(tools, "show_savings_projection").ainvoke({})
@@ -355,7 +352,7 @@ async def test_savings_projection_emits_no_widget_without_income_signal(monkeypa
         monkeypatch,
         {"currency": "EGP", "avg_monthly_income": None, "avg_monthly_recurring_expense": None},
     )
-    _patch_backend_rows(monkeypatch, net_worth=48200.0)
+    _patch_current_balance(monkeypatch, 48200.0)
 
     tools, sink = _tools()
     result = await _by_name(tools, "show_savings_projection").ainvoke({})
@@ -383,7 +380,7 @@ async def test_savings_projection_never_goes_negative(monkeypatch):
         monkeypatch,
         {"currency": "EGP", "avg_monthly_income": 1000.0, "avg_monthly_recurring_expense": 4000.0},
     )
-    _patch_backend_rows(monkeypatch, net_worth=500.0)
+    _patch_current_balance(monkeypatch, 500.0)
 
     tools, sink = _tools()
     await _by_name(tools, "show_savings_projection").ainvoke({})
@@ -398,11 +395,10 @@ async def test_savings_projection_reports_backend_failure(monkeypatch):
         {"currency": "EGP", "avg_monthly_income": 5000.0, "avg_monthly_recurring_expense": 1000.0},
     )
 
-    async def _boom():
+    async def _boom(user_id, currency=None):
         raise RuntimeError("db down")
-        yield  # pragma: no cover
 
-    monkeypatch.setattr("app.backend_db.get_backend_session", _boom)
+    monkeypatch.setattr("app.tools.widgets.calculate_current_balances", _boom)
 
     tools, sink = _tools()
     result = await _by_name(tools, "show_savings_projection").ainvoke({})

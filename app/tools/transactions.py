@@ -1,6 +1,6 @@
-"""Read-only transaction lookup and aggregation tools for the analysis agent.
+"""Read-only ledger lookup and aggregation tools for the analysis agent.
 
-All three tools are built per-request via `make_transaction_tools(user_id)`, which
+All tools are built per-request via `make_transaction_tools(user_id)`, which
 closes over the authenticated user_id from `ConversationState` rather than
 exposing it as a tool argument — the LLM chooses filters (category, date
 range, ...), never whose data it reads, so a hallucinated or adversarial
@@ -26,8 +26,8 @@ answers "how much did I spend" the same way the rest of the product does.
 `transaction_type` remains available for precise single-type filters (e.g.
 "how much did I pay in fees").
 
-`find_similar_transactions` is a third, semantic tool for the case the other
-two can't handle: a vague description with no clean filter ("that coffee
+`find_similar_transactions` is the semantic tool for the case the structured
+transaction tools can't handle: a vague description with no clean filter ("that coffee
 place last week", "my streaming subscriptions"). It ranks by cosine
 similarity against `Transaction.embedding` — populated from
 `f"{merchant}, {category}, {amount} {currency}, {date}"` by
@@ -45,10 +45,15 @@ from typing import Any, Literal
 
 from langchain_core.tools import BaseTool, tool
 from pydantic import BaseModel
-from sqlalchemy import func, select
+from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.orm import selectinload
 
-from app.backend_db.models import TRANSACTION_EMBEDDING_DIM, Category, Transaction
+from app.backend_db.models import (
+    TRANSACTION_EMBEDDING_DIM,
+    BankAccount,
+    Category,
+    Transaction,
+)
 from app.core.logging import get_logger
 
 logger = get_logger(__name__)
@@ -107,6 +112,109 @@ class SimilarTransactionRow(TransactionRow):
     similarity: float
 
 
+async def calculate_current_balances(
+    user_id: uuid.UUID,
+    currency: str | None = None,
+) -> list[dict]:
+    """Derive live balances for the user's active accounts, grouped by currency.
+
+    The newest non-null running balance on each account is the bank-stated
+    anchor. Every later amount-only transaction is applied by direction
+    (credit adds; debit/fee/transfer/NULL subtract). If an account has never
+    carried a stated balance, its complete ledger is applied from zero. This
+    deliberately matches Django's ``BankAccount.current_balance`` rule.
+    """
+    account_stmt = select(BankAccount).where(
+        BankAccount.user_id == user_id,
+        BankAccount.is_active.is_(True),
+    )
+    if currency is not None:
+        account_stmt = account_stmt.where(BankAccount.currency == currency.upper())
+    account_stmt = account_stmt.order_by(BankAccount.created_at, BankAccount.id)
+
+    grouped: dict[str, dict] = {}
+
+    from app.backend_db import get_backend_session
+
+    async for session in get_backend_session():
+        account_result = await session.execute(account_stmt)
+        accounts = account_result.scalars().all()
+
+        for account in accounts:
+            anchor_stmt = (
+                select(
+                    Transaction.balance,
+                    Transaction.transaction_date,
+                    Transaction.created_at,
+                )
+                .where(
+                    Transaction.account_id == account.id,
+                    Transaction.balance.is_not(None),
+                )
+                .order_by(
+                    Transaction.transaction_date.desc(),
+                    Transaction.created_at.desc(),
+                )
+                .limit(1)
+            )
+            anchor = (await session.execute(anchor_stmt)).first()
+
+            movement_filters = [Transaction.account_id == account.id]
+            base = decimal.Decimal("0")
+            anchor_date = None
+            if anchor is not None:
+                anchor_balance, anchor_date, anchor_created_at = anchor
+                base = decimal.Decimal(str(anchor_balance))
+                movement_filters.append(
+                    or_(
+                        Transaction.transaction_date > anchor_date,
+                        and_(
+                            Transaction.transaction_date == anchor_date,
+                            Transaction.created_at > anchor_created_at,
+                        ),
+                    )
+                )
+
+            signed_amount = case(
+                (Transaction.transaction_type == "credit", Transaction.amount),
+                else_=-Transaction.amount,
+            )
+            movement_stmt = select(
+                func.coalesce(func.sum(signed_amount), 0),
+                func.max(Transaction.transaction_date),
+            ).where(*movement_filters)
+            delta, latest_movement_date = (await session.execute(movement_stmt)).one()
+            current = base + decimal.Decimal(str(delta))
+            as_of_date = latest_movement_date or anchor_date
+
+            group = grouped.setdefault(
+                account.currency,
+                {
+                    "currency": account.currency,
+                    "current_balance": decimal.Decimal("0"),
+                    "accounts": [],
+                },
+            )
+            group["current_balance"] += current
+            group["accounts"].append(
+                {
+                    "account_id": str(account.id),
+                    "bank_name": account.bank_name,
+                    "account_number_last4": account.account_number[-4:],
+                    "current_balance": float(current),
+                    "as_of_date": as_of_date.isoformat() if as_of_date else None,
+                }
+            )
+
+    return [
+        {
+            **group,
+            "current_balance": float(group["current_balance"]),
+        }
+        for _, group in sorted(grouped.items())
+    ]
+
+
 def _parse_date(raw: str | None, field: str) -> datetime.date | None:
     if raw is None:
         return None
@@ -129,6 +237,41 @@ def make_transaction_tools(user_id: uuid.UUID) -> list[BaseTool]:
     resolved from ConversationState — see the closure note in the module
     docstring for why user_id is never a tool argument.
     """
+
+    @tool
+    async def get_current_balance(currency: str | None = None) -> dict:
+        """Return the user's live current balance across active bank accounts.
+
+        Always use this tool for questions such as "what is my balance?",
+        "how much money do I have right now?", or "what is in my account?".
+        Never derive a current balance by subtracting lifetime expenses from
+        lifetime income: transaction history can start with a non-zero bank
+        balance. Results are grouped by currency and include an account-level
+        breakdown.
+
+        Args:
+            currency: optional 3-letter currency code such as ``EGP``. Omit
+                to return one balance group for every currency held.
+        """
+        currency = _clean_optional(currency)
+        try:
+            groups = await calculate_current_balances(user_id, currency)
+        except Exception:
+            logger.exception("get_current_balance_tool_failed", user_id=str(user_id))
+            return {"error": "Backend is unavailable."}
+
+        if not groups:
+            return {
+                "groups": [],
+                "note": "No active bank accounts were found for this user.",
+            }
+        return {
+            "groups": groups,
+            "method": (
+                "Newest bank-stated running balance per account, plus every "
+                "newer credit and minus every newer outflow."
+            ),
+        }
 
     @tool
     async def get_transactions(
@@ -425,4 +568,9 @@ def make_transaction_tools(user_id: uuid.UUID) -> list[BaseTool]:
             ],
         }
 
-    return [get_transactions, compute_aggregate, find_similar_transactions]
+    return [
+        get_current_balance,
+        get_transactions,
+        compute_aggregate,
+        find_similar_transactions,
+    ]

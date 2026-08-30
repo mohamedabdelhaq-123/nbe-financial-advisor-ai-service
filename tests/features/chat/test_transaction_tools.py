@@ -13,6 +13,7 @@ reaches the query.
 import datetime
 import types
 import uuid
+from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -28,6 +29,84 @@ def test_clean_optional_normalizes_sentinel_strings(raw):
 @pytest.mark.parametrize("raw", ["EGP", "groceries", "usd"])
 def test_clean_optional_passes_through_real_values(raw):
     assert _clean_optional(raw) == raw
+
+
+@pytest.mark.asyncio
+async def test_get_current_balance_applies_newer_movements_after_stated_balance(monkeypatch):
+    account = types.SimpleNamespace(
+        id=uuid.uuid4(),
+        bank_name="NBE",
+        account_number="4213010248203200016",
+        currency="EGP",
+    )
+    account_result = MagicMock()
+    account_result.scalars.return_value.all.return_value = [account]
+
+    anchor_result = MagicMock()
+    anchor_result.first.return_value = (
+        Decimal("15118.51"),
+        datetime.date(2024, 10, 23),
+        datetime.datetime(2026, 8, 27, tzinfo=datetime.UTC),
+    )
+
+    movement_result = MagicMock()
+    # -1,100 +150,000 +1,000,000,000 after the statement anchor.
+    movement_result.one.return_value = (
+        Decimal("1000148900.00"),
+        datetime.date(2026, 8, 29),
+    )
+
+    session = MagicMock()
+    session.execute = AsyncMock(
+        side_effect=[account_result, anchor_result, movement_result]
+    )
+
+    async def _fake_get_backend_session():
+        yield session
+
+    monkeypatch.setattr("app.backend_db.get_backend_session", _fake_get_backend_session)
+
+    tools = make_transaction_tools(uuid.uuid4())
+    get_current_balance = next(t for t in tools if t.name == "get_current_balance")
+
+    result = await get_current_balance.ainvoke({})
+
+    assert result["groups"][0]["currency"] == "EGP"
+    assert result["groups"][0]["current_balance"] == pytest.approx(1000164018.51)
+    assert result["groups"][0]["accounts"][0]["account_number_last4"] == "0016"
+
+
+@pytest.mark.asyncio
+async def test_get_current_balance_derives_from_zero_without_stated_balance(monkeypatch):
+    account = types.SimpleNamespace(
+        id=uuid.uuid4(),
+        bank_name="Manual Bank",
+        account_number="1001",
+        currency="EGP",
+    )
+    account_result = MagicMock()
+    account_result.scalars.return_value.all.return_value = [account]
+    anchor_result = MagicMock()
+    anchor_result.first.return_value = None
+    movement_result = MagicMock()
+    movement_result.one.return_value = (Decimal("374.50"), datetime.date(2026, 8, 30))
+
+    session = MagicMock()
+    session.execute = AsyncMock(
+        side_effect=[account_result, anchor_result, movement_result]
+    )
+
+    async def _fake_get_backend_session():
+        yield session
+
+    monkeypatch.setattr("app.backend_db.get_backend_session", _fake_get_backend_session)
+
+    tools = make_transaction_tools(uuid.uuid4())
+    get_current_balance = next(t for t in tools if t.name == "get_current_balance")
+
+    result = await get_current_balance.ainvoke({})
+
+    assert result["groups"][0]["current_balance"] == pytest.approx(374.50)
 
 
 @pytest.mark.asyncio

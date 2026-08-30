@@ -15,6 +15,7 @@ from app.features.chat.agents.investment import (
     _parse_answer,
     _question_text,
     _validate_extracted_amount,
+    extract_initial_investment_answers,
     investment_plan_node,
 )
 from app.features.investment_plan.ranking import rank_instruments
@@ -142,11 +143,57 @@ def test_confirmed_amount_accepts_natural_single_amount(answer, expected):
     )
 
 
-@pytest.mark.parametrize("answer", ["between 1000 and 1200", "1.2k", "no amount yet"])
+@pytest.mark.parametrize(
+    "answer",
+    ["between 1000 and 1200", "1.2k", "no amount yet", "EGX30 Index ETF"],
+)
 def test_confirmed_amount_rejects_ambiguous_or_unsupported_amount(answer):
     parsed, error = _parse_answer("confirmed_amount", answer, InvestmentContext())
     assert parsed is None
     assert "one unambiguous" in error
+
+
+@pytest.mark.parametrize(
+    ("answer", "expected"),
+    [
+        ("invest 30% in gold", "300049205.55"),
+        ("half of my current balance", "500082009.26"),
+        ("one quarter of my balance", "250041004.63"),
+    ],
+)
+def test_confirmed_amount_resolves_live_balance_percentages_and_fractions(answer, expected):
+    context = InvestmentContext(
+        current_balance=Decimal("1000164018.51"),
+        current_balance_currency="EGP",
+    )
+
+    assert _parse_answer("confirmed_amount", answer, context) == (expected, None)
+
+
+def test_balance_percentage_without_live_balance_is_not_misread_as_literal_egp():
+    parsed, error = _parse_answer("confirmed_amount", "30%", InvestmentContext())
+
+    assert parsed is None
+    assert "current EGP balance" in error
+
+
+@pytest.mark.asyncio
+async def test_initial_request_preserves_relative_amount_and_instrument_choice():
+    instruments = [_instrument("gold"), _instrument("fund")]
+    context = InvestmentContext(
+        current_balance=Decimal("1000164018.51"),
+        current_balance_currency="EGP",
+        instruments=instruments,
+    )
+
+    answers = await extract_initial_investment_answers(
+        "I want to invest 30% in gold",
+        context,
+    )
+
+    gold = next(item for item in instruments if item.asset_class == "gold")
+    assert answers["confirmed_amount"] == "300049205.55"
+    assert answers["instruments"] == [str(gold.id)]
 
 
 def test_invalid_amount_reprompt_does_not_repeat_full_surplus_explanation():
@@ -184,6 +231,19 @@ def test_initial_amount_prompt_is_scannable_and_avoids_false_precision():
     assert "Income 26,745 − spending 3,855 − goals 6,746" in prompt
     assert "26745.15" not in prompt
     assert "not your account balance" in prompt
+
+
+def test_initial_amount_prompt_offers_live_balance_arithmetic():
+    context = InvestmentContext(
+        current_balance=Decimal("1000164018.51"),
+        current_balance_currency="EGP",
+    )
+
+    prompt = _question_text("confirmed_amount", context, None)
+
+    assert "1,000,164,018.51 EGP" in prompt
+    assert "**30%**" in prompt
+    assert "**half of my balance**" in prompt
 
 
 @pytest.mark.parametrize(
