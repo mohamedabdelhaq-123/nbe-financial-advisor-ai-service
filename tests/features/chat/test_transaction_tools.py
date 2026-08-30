@@ -57,9 +57,7 @@ async def test_get_current_balance_applies_newer_movements_after_stated_balance(
     )
 
     session = MagicMock()
-    session.execute = AsyncMock(
-        side_effect=[account_result, anchor_result, movement_result]
-    )
+    session.execute = AsyncMock(side_effect=[account_result, anchor_result, movement_result])
 
     async def _fake_get_backend_session():
         yield session
@@ -92,9 +90,7 @@ async def test_get_current_balance_derives_from_zero_without_stated_balance(monk
     movement_result.one.return_value = (Decimal("374.50"), datetime.date(2026, 8, 30))
 
     session = MagicMock()
-    session.execute = AsyncMock(
-        side_effect=[account_result, anchor_result, movement_result]
-    )
+    session.execute = AsyncMock(side_effect=[account_result, anchor_result, movement_result])
 
     async def _fake_get_backend_session():
         yield session
