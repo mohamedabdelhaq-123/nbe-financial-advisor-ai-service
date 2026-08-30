@@ -15,8 +15,8 @@ lookup at another user's data.
 The two data-shaped widgets delegate to the existing transaction tools rather
 than re-implementing their SQL: `compute_aggregate(group_by="category")` is
 already exactly a spending breakdown, and `get_transactions` is already exactly
-a transaction list. Only the savings projection needs its own queries, because
-no balance read path existed anywhere in the service before this.
+a transaction list. The savings projection delegates to the same live-balance
+calculation exposed to the analysis agent by `get_current_balance`.
 
 Each tool returns a plain dict observation to the model *in addition to*
 stashing the typed widget in the per-turn sink, so the model can narrate the
@@ -30,14 +30,11 @@ duplicated table — see that tool's docstring for why.
 
 from __future__ import annotations
 
-import decimal
 import uuid
 from typing import Literal
 
 from langchain_core.tools import BaseTool, tool
-from sqlalchemy import select
 
-from app.backend_db.models import NetWorthSnapshot, Transaction
 from app.core.logging import get_logger
 from app.features.chat.schemas import (
     CategorySpend,
@@ -53,6 +50,7 @@ from app.features.chat.schemas import (
 from app.tools.transactions import (
     _clean_optional,
     _parse_date,
+    calculate_current_balances,
     flow_for_type,
     make_transaction_tools,
 )
@@ -102,69 +100,6 @@ def _period_label(date_from: str | None, date_to: str | None) -> str:
         return f"{start.isoformat()} – {end.isoformat()}"
     anchor = start or end
     return anchor.strftime("%B %Y") if anchor else "Selected period"
-
-
-async def _latest_net_worth(user_id: uuid.UUID) -> float | None:
-    """Most recent `net_worth_snapshots.total_across_accounts`, if Django keeps
-    that table populated. It is the schema's own current-balance concept —
-    non-null and already summed across accounts — so it is preferred over the
-    per-row running balance below.
-
-    The table carries no currency column, so the caller pairs this with the
-    currency derived from the user's transactions. That is an assumption, but a
-    safe one: a snapshot totalling accounts the user does not transact in would
-    be meaningless to them anyway.
-    """
-    stmt = (
-        select(NetWorthSnapshot.total_across_accounts)
-        .where(NetWorthSnapshot.user_id == user_id)
-        .order_by(NetWorthSnapshot.as_of_date.desc())
-        .limit(1)
-    )
-    from app.backend_db import get_backend_session
-
-    async for session in get_backend_session():
-        result = await session.execute(stmt)
-        row = result.scalars().first()
-        if row is not None:
-            return float(row)
-    return None
-
-
-async def _latest_running_balance(user_id: uuid.UUID, currency: str) -> float | None:
-    """Fallback balance: the newest non-null `transactions.balance` per account,
-    summed over the given currency.
-
-    `balance` is the running balance a statement stated for that row, so it is
-    nullable (many statements state none) and only as fresh as the last ingested
-    statement. Taking one row per account via DISTINCT ON avoids double-counting
-    a user with several accounts.
-
-    Selects two columns rather than the ORM entity — Principle III puts
-    minimization at the query layer, and nothing here needs a whole transaction.
-    """
-    stmt = (
-        select(Transaction.account_id, Transaction.balance)
-        .where(
-            Transaction.user_id == user_id,
-            Transaction.currency == currency,
-            Transaction.balance.is_not(None),
-        )
-        .order_by(
-            Transaction.account_id,
-            Transaction.transaction_date.desc(),
-            Transaction.created_at.desc(),
-        )
-        .distinct(Transaction.account_id)
-    )
-    from app.backend_db import get_backend_session
-
-    async for session in get_backend_session():
-        result = await session.execute(stmt)
-        balances = [row[1] for row in result.all() if row[1] is not None]
-        if balances:
-            return float(sum(decimal.Decimal(str(b)) for b in balances))
-    return None
 
 
 def make_widget_tools(
@@ -372,9 +307,8 @@ def make_widget_tools(
             }
 
         try:
-            balance = await _latest_net_worth(user_id)
-            if balance is None:
-                balance = await _latest_running_balance(user_id, currency)
+            groups = await calculate_current_balances(user_id, currency)
+            balance = groups[0]["current_balance"] if groups else None
         except Exception:
             logger.exception("show_savings_projection_balance_lookup_failed", user_id=str(user_id))
             return {"error": "Backend is unavailable."}

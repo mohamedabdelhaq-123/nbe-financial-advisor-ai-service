@@ -109,6 +109,7 @@ _TOOL_NAMES = (
     "show_spending_breakdown",
     "show_transactions",
     "show_savings_projection",
+    "get_current_balance",
     "get_transactions",
     "compute_aggregate",
     "find_similar_transactions",

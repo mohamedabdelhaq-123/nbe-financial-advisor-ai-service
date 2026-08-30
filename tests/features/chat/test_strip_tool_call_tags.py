@@ -15,6 +15,7 @@ from app.features.chat.service import _strip_tool_call_tags
     [
         '<show_spending_breakdown date_from="2023-08-27" date_to="2026-08-27" />',
         '<show_transactions count="10"></show_transactions>',
+        '<get_current_balance currency="EGP" />',
         '<compute_aggregate op="sum" flow="expense" />',
         '<find_similar_transactions query="coffee last week" top_k="5" />',
     ],

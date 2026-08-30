@@ -17,6 +17,7 @@ from app.features.chat.agents.maestro import (
 )
 from app.features.chat.routing import MaestroRoutingDecision
 from app.features.chat.scope_guard import ScopeResult
+from app.features.investment_plan.schemas import InvestmentContext
 from redteam.runners.fake_llm import install_fake_chat_model
 
 
@@ -406,6 +407,7 @@ async def test_completed_investment_plan_accepts_catalogue_selection_change():
     instrument_id = uuid.uuid4()
     state = {
         "messages": [HumanMessage(content="EGX30 Index ETF")],
+        "user_id": uuid.uuid4(),
         "stage": "investment_plan_complete",
         "questions_asked": 0,
         "investment_context": {
@@ -448,6 +450,66 @@ async def test_completed_investment_plan_accepts_catalogue_selection_change():
     assert result["investment_answers"]["instruments"] == [str(instrument_id)]
     assert result["investment_answers"]["confirmed_amount"] == "1200.00"
     assert result["last_active_route"] == "investment_planning"
+
+
+@pytest.mark.asyncio
+async def test_completed_plan_change_recalculates_balance_percentage(monkeypatch):
+    instrument_id = uuid.uuid4()
+    context_data = {
+        "current_balance": "1000164018.51",
+        "current_balance_currency": "EGP",
+        "instruments": [
+            {
+                "id": str(instrument_id),
+                "product_id": str(uuid.uuid4()),
+                "code": "gold-24k",
+                "display_name": "24K Gold (per gram)",
+                "asset_class": "gold",
+                "provider_symbol": "GOLD_24K",
+                "price_type": "spot",
+                "price_currency": "EGP",
+                "unit": "gram_24k",
+                "minimum_increment": "0.01",
+                "fractional_units_supported": True,
+                "max_quote_age_seconds": 259200,
+                "aliases": ["gold", "24k gold"],
+                "objectives": ["preserve_value", "balanced_growth"],
+                "risk_level": "moderate",
+                "horizons": ["medium", "long"],
+                "liquidity_level": "medium",
+            }
+        ],
+    }
+
+    async def _live_context(_user_id):
+        return InvestmentContext.model_validate(context_data)
+
+    monkeypatch.setattr(
+        "app.features.investment_plan.context.derive_investment_context",
+        _live_context,
+    )
+    state = {
+        "messages": [HumanMessage(content="I want to invest 30% in gold")],
+        "user_id": uuid.uuid4(),
+        "stage": "investment_plan_complete",
+        "questions_asked": 0,
+        "investment_context": context_data,
+        "investment_answers": {
+            "confirmed_amount": "5000000.00",
+            "objective": "balanced_growth",
+            "risk": "high",
+            "horizon": "short",
+            "liquidity": "high",
+            "instruments": [str(uuid.uuid4())],
+        },
+    }
+
+    result = await maestro_node(state)
+
+    assert result["intent"] == "investment_planning"
+    assert result["stage"] == "investment_planning"
+    assert result["investment_answers"]["confirmed_amount"] == "300049205.55"
+    assert result["investment_answers"]["instruments"] == [str(instrument_id)]
 
 
 @pytest.mark.asyncio
